@@ -1,0 +1,66 @@
+{
+  "name": "Specter Chat",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/common-utils:2": {
+      "installZsh": true,
+      "configureZshAsDefaultShell": true,
+      "installOhMyZsh": true,
+      "upgradePackages": true
+    },
+    "ghcr.io/devcontainers/features/git:1": {
+      "version": "latest"
+    }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "Dart-Code.dart-code",
+        "Dart-Code.flutter",
+        "nash.awesome-flutter-snippets",
+        "jeroen-meijer.pubspec-assist",
+        "alexisvt.flutter-snippets",
+        "usernamehw.errorlens",
+        "eamodio.gitlens",
+        "gruntfuggly.todo-tree",
+        "esbenp.prettier-vscode",
+        "Anthropic.claude-code"
+      ],
+      "settings": {
+        "dart.flutterSdkPath": "/usr/local/flutter",
+        "dart.sdkPath": "/usr/local/flutter/bin/cache/dart-sdk",
+        "editor.formatOnSave": true,
+        "[dart]": {
+          "editor.formatOnSave": true,
+          "editor.selectionHighlight": false,
+          "editor.suggestSelection": "first",
+          "editor.tabCompletion": "onlySnippets",
+          "editor.wordBasedSuggestions": "off"
+        },
+        "dart.lineLength": 80
+      }
+    }
+  },
+  "postCreateCommand": "cd /workspace && flutter create --platforms=linux --org com.specter . && flutter pub get && dart run build_runner build --delete-conflicting-outputs",
+  "remoteUser": "vscode",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
+  "workspaceFolder": "/workspace",
+  "runArgs": [],
+  "forwardPorts": [
+    1234,
+    3000
+  ],
+  "portsAttributes": {
+    "1234": {
+      "label": "LLM API",
+      "onAutoForward": "silent"
+    },
+    "3000": {
+      "label": "MCP Server",
+      "onAutoForward": "silent"
+    }
+  }
+}

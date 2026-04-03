@@ -20,6 +20,9 @@ pubspec.lock
 *.swp
 *.swo
 
+# Claude
+.claude/
+
 # OS
 .DS_Store
 Thumbs.db

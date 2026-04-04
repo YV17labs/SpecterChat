@@ -23,6 +23,17 @@ pubspec.lock
 # Claude
 .claude/
 
+# Platform build artifacts
+macos/Flutter/ephemeral/
+macos/Pods/
+macos/Flutter/GeneratedPluginRegistrant.swift
+
+# Drift generated files (schema dumps are kept, test helpers are generated)
+test/database/generated_migrations/
+
+# DevTools
+devtools_options.yaml
+
 # OS
 .DS_Store
 Thumbs.db

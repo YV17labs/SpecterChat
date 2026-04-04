@@ -1,7 +1,9 @@
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('placeholder test', () {
-    expect(1 + 1, equals(2));
+  // Widget tests placeholder.
+  // TODO: add widget tests for MessageBubble, SettingsPanel, ChatView.
+  test('placeholder', () {
+    expect(true, isTrue);
   });
 }

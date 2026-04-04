@@ -1,14 +1,15 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../models/app_settings.dart';
+import '../services/i_llm_service.dart';
 import '../services/llm_service.dart';
 import 'settings_provider.dart';
 
-final llmServiceProvider = Provider<LlmService>((ref) {
-  final settings = ref.watch(settingsProvider);
-  return LlmService(
-    apiSettings: settings.api,
-    generationSettings: settings.generation,
+final llmServiceProvider = Provider<ILlmService>((ref) {
+  final api = ref.watch(settingsProvider.select((s) => s.api));
+  final generation = ref.watch(settingsProvider.select((s) => s.generation));
+  return LlmService.fromSettings(
+    apiSettings: api,
+    generationSettings: generation,
   );
 });
 

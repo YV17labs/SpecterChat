@@ -1,20 +1,26 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:logging/logging.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/app_settings.dart';
 
+final _log = Logger('SettingsProvider');
+
 final settingsProvider =
-    StateNotifierProvider<SettingsNotifier, AppSettings>((ref) {
-  return SettingsNotifier();
-});
+    NotifierProvider<SettingsNotifier, AppSettings>(SettingsNotifier.new);
 
-class SettingsNotifier extends StateNotifier<AppSettings> {
+class SettingsNotifier extends Notifier<AppSettings> {
   static const _key = 'app_settings';
+  Timer? _saveTimer;
 
-  SettingsNotifier() : super(const AppSettings()) {
+  @override
+  AppSettings build() {
+    ref.onDispose(() => _saveTimer?.cancel());
     _load();
+    return const AppSettings();
   }
 
   Future<void> _load() async {
@@ -22,45 +28,60 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     final json = prefs.getString(_key);
     if (json != null) {
       try {
-        state = AppSettings.fromJson(jsonDecode(json));
-      } catch (_) {
-        // Corrupted settings, use defaults
+        var loaded = AppSettings.fromJson(jsonDecode(json));
+        // Reset runtime-only MCP state — actual connections don't
+        // survive an app restart.
+        loaded = loaded.copyWith(
+          mcpServers: loaded.mcpServers
+              .map((s) => s.copyWith(
+                    connected: false,
+                    tools: [],
+                    instructions: '',
+                  ))
+              .toList(),
+        );
+        state = loaded;
+      } catch (e, st) {
+        _log.warning('Corrupted settings JSON, using defaults', e, st);
       }
     }
   }
 
-  Future<void> _save() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_key, jsonEncode(state.toJson()));
+  void _scheduleSave() {
+    _saveTimer?.cancel();
+    _saveTimer = Timer(const Duration(milliseconds: 500), () async {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_key, jsonEncode(state.toJson()));
+    });
   }
 
   void updateApi(ApiSettings api) {
     state = state.copyWith(api: api);
-    _save();
+    _scheduleSave();
   }
 
   void updateGeneration(GenerationSettings generation) {
     state = state.copyWith(generation: generation);
-    _save();
+    _scheduleSave();
   }
 
   void updateDefaultSystemPrompt(String prompt) {
     state = state.copyWith(defaultSystemPrompt: prompt);
-    _save();
+    _scheduleSave();
   }
 
   void addMcpServer(McpServerConfig server) {
     state = state.copyWith(
       mcpServers: [...state.mcpServers, server],
     );
-    _save();
+    _scheduleSave();
   }
 
   void removeMcpServer(String serverId) {
     state = state.copyWith(
       mcpServers: state.mcpServers.where((s) => s.id != serverId).toList(),
     );
-    _save();
+    _scheduleSave();
   }
 
   void updateMcpServer(McpServerConfig server) {
@@ -69,6 +90,6 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
           .map((s) => s.id == server.id ? server : s)
           .toList(),
     );
-    _save();
+    _scheduleSave();
   }
 }

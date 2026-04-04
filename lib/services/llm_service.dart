@@ -1,53 +1,42 @@
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
+import 'package:logging/logging.dart';
+
 import '../models/app_settings.dart';
+import 'i_llm_service.dart';
 
-/// Represents a streamed chunk from the LLM.
-sealed class StreamEvent {}
+export 'i_llm_service.dart' show
+    StreamEvent, ContentDelta, ThinkingDelta,
+    ToolCallDelta, StreamDone, StreamError;
 
-class ContentDelta extends StreamEvent {
-  final String text;
-  ContentDelta(this.text);
-}
-
-class ThinkingDelta extends StreamEvent {
-  final String text;
-  ThinkingDelta(this.text);
-}
-
-class ToolCallDelta extends StreamEvent {
-  final int index;
-  final String? id;
-  final String? name;
-  final String argumentsDelta;
-  ToolCallDelta({
-    required this.index,
-    this.id,
-    this.name,
-    required this.argumentsDelta,
-  });
-}
-
-class StreamDone extends StreamEvent {}
-
-class StreamError extends StreamEvent {
-  final String message;
-  StreamError(this.message);
-}
+final _log = Logger('LlmService');
 
 /// Service for communicating with OpenAI-compatible LLM APIs.
-class LlmService {
-  Dio _dio;
-  ApiSettings _apiSettings;
-  GenerationSettings _generationSettings;
+class LlmService implements ILlmService {
+  final Dio _dio;
+  final ApiSettings _apiSettings;
+  final GenerationSettings _generationSettings;
 
   LlmService({
+    required Dio dio,
     required ApiSettings apiSettings,
     required GenerationSettings generationSettings,
-  })  : _apiSettings = apiSettings,
-        _generationSettings = generationSettings,
-        _dio = _createDio(apiSettings);
+  })  : _dio = dio,
+        _apiSettings = apiSettings,
+        _generationSettings = generationSettings;
+
+  /// Factory that creates a production [LlmService] with a configured [Dio].
+  factory LlmService.fromSettings({
+    required ApiSettings apiSettings,
+    required GenerationSettings generationSettings,
+  }) {
+    return LlmService(
+      dio: _createDio(apiSettings),
+      apiSettings: apiSettings,
+      generationSettings: generationSettings,
+    );
+  }
 
   static Dio _createDio(ApiSettings settings) {
     return Dio(BaseOptions(
@@ -62,20 +51,7 @@ class LlmService {
     ));
   }
 
-  void updateSettings({
-    ApiSettings? apiSettings,
-    GenerationSettings? generationSettings,
-  }) {
-    if (apiSettings != null) {
-      _apiSettings = apiSettings;
-      _dio = _createDio(apiSettings);
-    }
-    if (generationSettings != null) {
-      _generationSettings = generationSettings;
-    }
-  }
-
-  /// Fetch available models from /v1/models.
+  @override
   Future<List<String>> fetchModels() async {
     try {
       final response = await _dio.get('/models');
@@ -86,11 +62,12 @@ class LlmService {
         ..sort();
       return models;
     } on DioException catch (e) {
+      _log.warning('Failed to fetch models', e);
       throw LlmException('Failed to fetch models: ${e.message}');
     }
   }
 
-  /// Send a chat completion request with streaming.
+  @override
   Stream<StreamEvent> streamChatCompletion({
     required List<Map<String, dynamic>> messages,
     List<Map<String, dynamic>>? tools,
@@ -100,6 +77,7 @@ class LlmService {
       'model': _apiSettings.selectedModel,
       'messages': messages,
       'stream': true,
+      'stream_options': {'include_usage': true},
       'temperature': _generationSettings.temperature,
       'top_p': _generationSettings.topP,
       'max_tokens': _generationSettings.maxTokens,
@@ -110,6 +88,9 @@ class LlmService {
     if (_generationSettings.topK > 0) {
       body['top_k'] = _generationSettings.topK;
     }
+    if (_generationSettings.minP > 0.0) {
+      body['min_p'] = _generationSettings.minP;
+    }
     if (_generationSettings.repeatPenalty != 1.0) {
       body['repeat_penalty'] = _generationSettings.repeatPenalty;
     }
@@ -117,6 +98,7 @@ class LlmService {
       body['tools'] = tools;
       body['tool_choice'] = 'auto';
     }
+
 
     try {
       final response = await _dio.post(
@@ -127,15 +109,18 @@ class LlmService {
       );
 
       final stream = response.data.stream as Stream<List<int>>;
-      String buffer = '';
+      final sseBuffer = StringBuffer();
 
       await for (final chunk in stream) {
         if (cancelToken?.isCancelled ?? false) break;
 
-        buffer += utf8.decode(chunk);
-        final lines = buffer.split('\n');
-        // Keep the last potentially incomplete line in the buffer
-        buffer = lines.removeLast();
+        sseBuffer.write(utf8.decode(chunk));
+        final accumulated = sseBuffer.toString();
+        final lines = accumulated.split('\n');
+        // Keep the last potentially incomplete line in the buffer.
+        sseBuffer
+          ..clear()
+          ..write(lines.removeLast());
 
         for (final line in lines) {
           final trimmed = line.trim();
@@ -149,6 +134,15 @@ class LlmService {
 
           try {
             final json = jsonDecode(data) as Map<String, dynamic>;
+            // Parse usage info from the final chunk.
+            final usage = json['usage'] as Map<String, dynamic>?;
+            if (usage != null) {
+              yield StreamUsage(
+                promptTokens: usage['prompt_tokens'] as int? ?? 0,
+                completionTokens: usage['completion_tokens'] as int? ?? 0,
+              );
+            }
+
             final choices = json['choices'] as List?;
             if (choices == null || choices.isEmpty) continue;
 
@@ -184,7 +178,7 @@ class LlmService {
               }
             }
           } catch (e) {
-            // Skip malformed JSON lines
+            _log.fine('Skipping malformed SSE JSON line: $data');
             continue;
           }
         }
@@ -193,12 +187,15 @@ class LlmService {
       yield StreamDone();
     } on DioException catch (e) {
       if (e.type == DioExceptionType.cancel) {
+        _log.info('Stream cancelled by user');
         yield StreamDone();
       } else {
+        _log.severe('API stream error: ${e.response?.statusCode}', e);
         yield StreamError(
             'API error: ${e.response?.statusCode} ${e.message}');
       }
-    } catch (e) {
+    } catch (e, st) {
+      _log.severe('Unexpected stream error', e, st);
       yield StreamError('Unexpected error: $e');
     }
   }

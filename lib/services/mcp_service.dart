@@ -1,50 +1,46 @@
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
+import 'package:logging/logging.dart';
+
 import '../models/app_settings.dart';
 import '../utils/id_gen.dart';
+import 'i_mcp_service.dart';
 
-/// Result of an MCP tool call.
-class McpToolResult {
-  final List<McpContent> content;
-  final bool isError;
+export 'i_mcp_service.dart' show
+    McpToolResult, McpContent, McpTextContent, McpImageContent;
 
-  McpToolResult({required this.content, this.isError = false});
-}
+final _log = Logger('McpService');
 
-sealed class McpContent {}
-
-class McpTextContent extends McpContent {
-  final String text;
-  McpTextContent(this.text);
-}
-
-class McpImageContent extends McpContent {
-  final String base64Data;
-  final String mimeType;
-  McpImageContent({required this.base64Data, required this.mimeType});
+Dio _defaultDioFactory(String baseUrl) {
+  return Dio(BaseOptions(
+    baseUrl: baseUrl,
+    headers: {'Content-Type': 'application/json'},
+    connectTimeout: const Duration(seconds: 30),
+    receiveTimeout: const Duration(minutes: 2),
+  ));
 }
 
 /// Client for a single MCP server using Streamable HTTP transport.
+///
+/// Accepts an optional [Dio] for testability. If not provided, creates
+/// one internally via the [DioFactory].
 class McpClient {
   final String serverUrl;
   final Dio _dio;
   String? _sessionId;
   bool _initialized = false;
 
-  McpClient({required this.serverUrl})
-      : _dio = Dio(BaseOptions(
-          baseUrl: serverUrl,
-          headers: {'Content-Type': 'application/json'},
-          connectTimeout: const Duration(seconds: 30),
-          receiveTimeout: const Duration(minutes: 2),
-        ));
+  McpClient({required this.serverUrl, Dio? dio})
+      : _dio = dio ?? _defaultDioFactory(serverUrl);
 
   bool get isConnected => _initialized;
+  String? get instructions => _instructions;
 
-  /// Initialize the MCP connection.
+  String? _instructions;
+
   Future<void> initialize() async {
-    final response = await _sendRequest('initialize', {
+    final result = await _sendRequest('initialize', {
       'protocolVersion': '2025-03-26',
       'capabilities': {},
       'clientInfo': {
@@ -53,13 +49,12 @@ class McpClient {
       },
     });
 
+    _instructions = result['instructions'] as String?;
     _initialized = true;
 
-    // Send initialized notification
     await _sendNotification('notifications/initialized', {});
   }
 
-  /// List available tools from the server.
   Future<List<McpToolInfo>> listTools() async {
     final response = await _sendRequest('tools/list', {});
     final tools = (response['tools'] as List?) ?? [];
@@ -74,7 +69,6 @@ class McpClient {
     }).toList();
   }
 
-  /// Call a tool on the MCP server.
   Future<McpToolResult> callTool(
       String name, Map<String, dynamic> arguments) async {
     final response = await _sendRequest('tools/call', {
@@ -101,11 +95,20 @@ class McpClient {
     return McpToolResult(content: content, isError: isError);
   }
 
-  /// Disconnect from the server.
   void disconnect() {
     _initialized = false;
     _sessionId = null;
     _dio.close();
+  }
+
+  Options _requestOptions() {
+    final headers = <String, String>{
+      'Accept': 'application/json, text/event-stream',
+    };
+    if (_sessionId != null) {
+      headers['Mcp-Session-Id'] = _sessionId!;
+    }
+    return Options(headers: headers, responseType: ResponseType.plain);
   }
 
   Future<Map<String, dynamic>> _sendRequest(
@@ -118,35 +121,54 @@ class McpClient {
       'params': params,
     };
 
-    final headers = <String, String>{};
-    if (_sessionId != null) {
-      headers['Mcp-Session-Id'] = _sessionId!;
-    }
-
     final response = await _dio.post(
       '',
       data: body,
-      options: Options(headers: headers),
+      options: _requestOptions(),
     );
 
-    // Capture session ID from response
     final sessionHeader = response.headers.value('Mcp-Session-Id');
     if (sessionHeader != null) {
       _sessionId = sessionHeader;
     }
 
-    final data = response.data;
-    if (data is Map<String, dynamic>) {
-      if (data.containsKey('error')) {
-        final error = data['error'] as Map<String, dynamic>;
-        throw McpException(
-          error['message'] as String? ?? 'Unknown MCP error',
-          code: error['code'] as int? ?? -1,
-        );
-      }
-      return data['result'] as Map<String, dynamic>? ?? {};
-    }
+    final contentType =
+        response.headers.value('content-type') ?? 'application/json';
+    final data = _parseResponse(response.data as String, contentType);
 
+    if (data.containsKey('error')) {
+      final error = data['error'] as Map<String, dynamic>;
+      throw McpException(
+        error['message'] as String? ?? 'Unknown MCP error',
+        code: error['code'] as int? ?? -1,
+      );
+    }
+    return data['result'] as Map<String, dynamic>? ?? {};
+  }
+
+  /// Parse a response that may be JSON or SSE (text/event-stream).
+  Map<String, dynamic> _parseResponse(String body, String contentType) {
+    if (contentType.contains('text/event-stream')) {
+      // Parse SSE: look for "data:" lines containing our JSON-RPC response.
+      for (final line in body.split('\n')) {
+        final trimmed = line.trim();
+        if (trimmed.startsWith('data:')) {
+          final jsonStr = trimmed.substring(5).trim();
+          if (jsonStr.isEmpty) continue;
+          try {
+            final parsed = jsonDecode(jsonStr);
+            if (parsed is Map<String, dynamic>) return parsed;
+          } catch (e) {
+            _log.fine('Skipping malformed SSE JSON: $jsonStr');
+            continue;
+          }
+        }
+      }
+      return {};
+    }
+    // Plain JSON response.
+    final parsed = jsonDecode(body);
+    if (parsed is Map<String, dynamic>) return parsed;
     return {};
   }
 
@@ -158,44 +180,55 @@ class McpClient {
       'params': params,
     };
 
-    final headers = <String, String>{};
-    if (_sessionId != null) {
-      headers['Mcp-Session-Id'] = _sessionId!;
-    }
-
     await _dio.post(
       '',
       data: body,
-      options: Options(headers: headers),
+      options: _requestOptions(),
     );
   }
 }
 
-/// Manages multiple MCP server connections.
-class McpService {
-  final Map<String, McpClient> _clients = {};
+/// Factory function type for creating [McpClient] instances.
+///
+/// Allows injection of test doubles for [McpClient].
+typedef McpClientFactory = McpClient Function(String serverUrl);
 
-  /// Connect to an MCP server.
-  Future<List<McpToolInfo>> connect(McpServerConfig config) async {
-    final client = McpClient(serverUrl: config.url);
+/// Manages multiple MCP server connections.
+///
+/// Accepts an optional [McpClientFactory] for testability.
+class McpService implements IMcpService {
+  final Map<String, McpClient> _clients = {};
+  final McpClientFactory _clientFactory;
+
+  McpService({McpClientFactory? clientFactory})
+      : _clientFactory =
+            clientFactory ?? ((url) => McpClient(serverUrl: url));
+
+  @override
+  Future<McpConnectResult> connect(McpServerConfig config) async {
+    final client = _clientFactory(config.url);
     try {
       await client.initialize();
       final tools = await client.listTools();
       _clients[config.id] = client;
-      return tools;
-    } catch (e) {
+      return McpConnectResult(
+        tools: tools,
+        instructions: client.instructions ?? '',
+      );
+    } catch (e, st) {
+      _log.severe('Failed to connect MCP server: ${config.url}', e, st);
       client.disconnect();
       rethrow;
     }
   }
 
-  /// Disconnect from an MCP server.
+  @override
   void disconnect(String serverId) {
     _clients[serverId]?.disconnect();
     _clients.remove(serverId);
   }
 
-  /// Disconnect from all servers.
+  @override
   void disconnectAll() {
     for (final client in _clients.values) {
       client.disconnect();
@@ -203,12 +236,12 @@ class McpService {
     _clients.clear();
   }
 
-  /// Check if a server is connected.
+  @override
   bool isConnected(String serverId) {
     return _clients[serverId]?.isConnected ?? false;
   }
 
-  /// Call a tool, routing to the correct server.
+  @override
   Future<McpToolResult> callTool(
     String serverId,
     String toolName,

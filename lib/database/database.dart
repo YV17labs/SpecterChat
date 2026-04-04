@@ -24,6 +24,10 @@ class Messages extends Table {
       text().references(Conversations, #id)();
   TextColumn get role => text()();
   TextColumn get content => text()(); // JSON-encoded List<ContentBlock>
+  IntColumn get completionTokens =>
+      integer().withDefault(const Constant(0))();
+  IntColumn get durationMs =>
+      integer().withDefault(const Constant(0))();
   DateTimeColumn get createdAt => dateTime()();
 
   @override
@@ -32,10 +36,47 @@ class Messages extends Table {
 
 @DriftDatabase(tables: [Conversations, Messages])
 class AppDatabase extends _$AppDatabase {
+  /// Production constructor — uses file-backed SQLite.
   AppDatabase() : super(_openConnection());
 
+  /// Test constructor — accepts any [QueryExecutor] (e.g. in-memory).
+  AppDatabase.forTesting(super.executor);
+
+  // ---------------------------------------------------------------
+  // Schema version history
+  // ---------------------------------------------------------------
+  // v1 — Initial schema: conversations + messages tables.
+  // v2 — Add index on messages.conversation_id for query performance.
+  // v3 — Add completion_tokens + duration_ms columns to messages.
+  // ---------------------------------------------------------------
+
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 3;
+
+  static const _createConversationIdIndex =
+      'CREATE INDEX IF NOT EXISTS idx_messages_conversation_id '
+      'ON messages (conversation_id)';
+
+  @override
+  MigrationStrategy get migration => MigrationStrategy(
+        onCreate: (Migrator m) async {
+          await m.createAll();
+          await customStatement(_createConversationIdIndex);
+        },
+        onUpgrade: (Migrator m, int from, int to) async {
+          if (from < 2) {
+            await customStatement(_createConversationIdIndex);
+          }
+          if (from < 3) {
+            await m.addColumn(messages, messages.completionTokens);
+            await m.addColumn(messages, messages.durationMs);
+          }
+        },
+        beforeOpen: (details) async {
+          // Enforce foreign-key constraints at runtime.
+          await customStatement('PRAGMA foreign_keys = ON');
+        },
+      );
 
   // --- Conversations ---
 

@@ -1,4 +1,3 @@
-import 'dart:convert';
 
 import 'package:freezed_annotation/freezed_annotation.dart';
 
@@ -36,6 +35,7 @@ sealed class ContentBlock with _$ContentBlock {
     required String content,
     String? imageBase64,
     String? imageMimeType,
+    @Default('') String rawResponse,
   }) = ToolResultContentBlock;
 
   const factory ContentBlock.thinking({
@@ -56,6 +56,8 @@ abstract class Message with _$Message {
     required List<ContentBlock> content,
     required DateTime createdAt,
     @Default(false) bool isStreaming,
+    @Default(0) int completionTokens,
+    @Default(0) int durationMs,
   }) = _Message;
 
   factory Message.fromJson(Map<String, dynamic> json) =>
@@ -99,23 +101,22 @@ extension MessageToApi on Message {
       // Check for tool calls
       final toolCalls = content.whereType<ToolCallContentBlock>().toList();
       if (toolCalls.isNotEmpty) {
-        final apiToolCalls = toolCalls
-            .map((tc) => {
-                  return {
-                    'id': tc.id,
-                    'type': 'function',
-                    'function': {
-                      'name': tc.name,
-                      'arguments': tc.arguments,
-                    },
-                  };
-                })
-            .toList();
+        final apiToolCalls = toolCalls.map((tc) {
+          return {
+            'id': tc.id,
+            'type': 'function',
+            'function': {
+              'name': tc.name,
+              'arguments':
+                  tc.arguments.trim().isEmpty ? '{}' : tc.arguments,
+            },
+          };
+        }).toList();
 
         final textParts = content.whereType<TextContentBlock>().toList();
         return {
           'role': 'assistant',
-          if (textParts.isNotEmpty) 'content': textParts.first.text,
+          'content': textParts.isNotEmpty ? textParts.first.text : null,
           'tool_calls': apiToolCalls,
         };
       }

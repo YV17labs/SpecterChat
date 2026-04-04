@@ -9,6 +9,7 @@ abstract class ApiSettings with _$ApiSettings {
     @Default('http://localhost:1234/v1') String baseUrl,
     @Default('') String apiKey,
     @Default('') String selectedModel,
+    @Default(32768) int contextLength,
   }) = _ApiSettings;
 
   factory ApiSettings.fromJson(Map<String, dynamic> json) =>
@@ -23,6 +24,7 @@ abstract class GenerationSettings with _$GenerationSettings {
     @Default(0) int topK,
     @Default(4096) int maxTokens,
     @Default(1.0) double repeatPenalty,
+    @Default(0.0) double minP,
     @Default(0.0) double frequencyPenalty,
     @Default(0.0) double presencePenalty,
   }) = _GenerationSettings;
@@ -40,6 +42,7 @@ abstract class McpServerConfig with _$McpServerConfig {
     @Default(true) bool enabled,
     @Default(false) bool connected,
     @Default([]) List<McpToolInfo> tools,
+    @Default('') String instructions,
   }) = _McpServerConfig;
 
   factory McpServerConfig.fromJson(Map<String, dynamic> json) =>

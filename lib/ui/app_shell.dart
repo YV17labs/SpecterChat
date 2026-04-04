@@ -1,22 +1,40 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../providers/app_lifecycle_provider.dart';
 import 'sidebar_left/conversation_list.dart';
 import 'chat/chat_view.dart';
 import 'sidebar_right/settings_panel.dart';
 
-class AppShell extends StatefulWidget {
+class AppShell extends ConsumerStatefulWidget {
   const AppShell({super.key});
 
   @override
-  State<AppShell> createState() => _AppShellState();
+  ConsumerState<AppShell> createState() => _AppShellState();
 }
 
-class _AppShellState extends State<AppShell> {
+class _AppShellState extends ConsumerState<AppShell> {
   bool _leftSidebarCollapsed = false;
   bool _rightSidebarCollapsed = false;
+  late final AppLifecycleNotifier _lifecycle;
 
   static const double _leftSidebarWidth = 260;
   static const double _rightSidebarWidth = 320;
+
+  @override
+  void initState() {
+    super.initState();
+    _lifecycle = AppLifecycleNotifier(ref);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _lifecycle.initialize();
+    });
+  }
+
+  @override
+  void dispose() {
+    _lifecycle.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {

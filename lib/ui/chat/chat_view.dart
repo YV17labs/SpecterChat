@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../models/message.dart';
 import '../../providers/chat_provider.dart';
 import '../../providers/conversation_provider.dart';
+import '../../providers/settings_provider.dart';
 import '../widgets/message_bubble.dart';
 
 class ChatView extends ConsumerStatefulWidget {
@@ -18,17 +19,47 @@ class _ChatViewState extends ConsumerState<ChatView> {
   final _inputController = TextEditingController();
   final _scrollController = ScrollController();
   final _inputFocusNode = FocusNode();
+  bool _userHasScrolledUp = false;
+  String? _lastConversationId;
+  List<Message>? _cachedMessages;
+  List<List<Message>>? _cachedGrouped;
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_onScroll);
+  }
 
   @override
   void dispose() {
+    _scrollController.removeListener(_onScroll);
     _inputController.dispose();
     _scrollController.dispose();
     _inputFocusNode.dispose();
     super.dispose();
   }
 
-  void _scrollToBottom() {
+  /// Distance from the bottom within which we auto-follow new content.
+  static const _autoFollowThreshold = 150.0;
+
+  void _onScroll() {
+    if (!_scrollController.hasClients) return;
+    final pos = _scrollController.position;
+    final nearBottom =
+        pos.maxScrollExtent - pos.pixels <= _autoFollowThreshold;
+    if (nearBottom != !_userHasScrolledUp) {
+      setState(() => _userHasScrolledUp = !nearBottom);
+    }
+  }
+
+  bool _scrollPending = false;
+
+  void _scrollToBottom({bool force = false}) {
+    if (!force && _userHasScrolledUp) return;
+    if (_scrollPending) return;
+    _scrollPending = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scrollPending = false;
       if (_scrollController.hasClients) {
         _scrollController.animateTo(
           _scrollController.position.maxScrollExtent,
@@ -43,7 +74,16 @@ class _ChatViewState extends ConsumerState<ChatView> {
   Widget build(BuildContext context) {
     final conversationId =
         ref.watch(selectedConversationIdProvider);
-    final chatState = ref.watch(chatProvider);
+    if (conversationId != _lastConversationId) {
+      _lastConversationId = conversationId;
+      _userHasScrolledUp = false;
+    }
+    final streamingMessages = ref.watch(
+        chatProvider.select((s) => s.streamingMessages));
+    final isGenerating = ref.watch(
+        chatProvider.select((s) => s.isGenerating));
+    final error = ref.watch(
+        chatProvider.select((s) => s.error));
 
     if (conversationId == null) {
       return _EmptyState();
@@ -54,37 +94,84 @@ class _ChatViewState extends ConsumerState<ChatView> {
 
     return Column(
       children: [
-        // Chat header
         _ChatHeader(conversationId: conversationId),
 
         const Divider(height: 1),
 
-        // Messages
         Expanded(
           child: messagesAsync.when(
             data: (messages) {
-              final allMessages = [
-                ...messages,
-                ...chatState.streamingMessages,
-              ];
-
-              if (allMessages.isEmpty) {
+              if (messages.isEmpty && streamingMessages.isEmpty) {
                 return _WelcomeMessage();
               }
 
               _scrollToBottom();
 
-              return ListView.builder(
-                controller: _scrollController,
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                itemCount: allMessages.length,
-                itemBuilder: (context, index) {
-                  final msg = allMessages[index];
-                  return MessageBubble(
-                    key: ValueKey(msg.id),
-                    message: msg,
-                  );
-                },
+              // Memoize grouping of persisted messages — only
+              // recompute when the DB list identity changes.
+              if (!identical(messages, _cachedMessages)) {
+                _cachedMessages = messages;
+                _cachedGrouped = _groupMessages(messages);
+              }
+              // Append streaming messages without re-grouping everything.
+              final grouped = [
+                ..._cachedGrouped!,
+                if (streamingMessages.isNotEmpty)
+                  streamingMessages,
+              ];
+
+              return Stack(
+                children: [
+                  ListView.builder(
+                    controller: _scrollController,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    itemCount: grouped.length,
+                    itemBuilder: (context, index) {
+                      final group = grouped[index];
+                      if (group.length == 1) {
+                        return MessageBubble(
+                          key: ValueKey(group.first.id),
+                          message: group.first,
+                        );
+                      }
+                      // Assistant + tool results merged.
+                      return MessageBubble(
+                        key: ValueKey(group.first.id),
+                        message: group.first,
+                        toolResults: group.sublist(1),
+                      );
+                    },
+                  ),
+                  if (_userHasScrolledUp)
+                    Positioned(
+                      bottom: 12,
+                      left: 0,
+                      right: 0,
+                      child: Center(
+                        child: Material(
+                          elevation: 4,
+                          shape: const CircleBorder(),
+                          color: Theme.of(context)
+                              .colorScheme
+                              .primaryContainer,
+                          child: InkWell(
+                            customBorder: const CircleBorder(),
+                            onTap: () => _scrollToBottom(force: true),
+                            child: Padding(
+                              padding: const EdgeInsets.all(10),
+                              child: Icon(
+                                Icons.keyboard_arrow_down,
+                                size: 22,
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onPrimaryContainer,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
               );
             },
             loading: () => const Center(
@@ -95,7 +182,7 @@ class _ChatViewState extends ConsumerState<ChatView> {
         ),
 
         // Error display
-        if (chatState.error != null)
+        if (error != null)
           Container(
             width: double.infinity,
             padding:
@@ -110,7 +197,7 @@ class _ChatViewState extends ConsumerState<ChatView> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    chatState.error!,
+                    error,
                     style: TextStyle(
                       fontSize: 13,
                       color: Theme.of(context)
@@ -118,6 +205,17 @@ class _ChatViewState extends ConsumerState<ChatView> {
                           .onErrorContainer,
                     ),
                   ),
+                ),
+                IconButton(
+                  icon: Icon(Icons.close, size: 16,
+                      color: Theme.of(context)
+                          .colorScheme
+                          .onErrorContainer),
+                  onPressed: () => ref.read(chatProvider.notifier)
+                      .clearError(),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                      maxWidth: 24, maxHeight: 24),
                 ),
               ],
             ),
@@ -129,7 +227,7 @@ class _ChatViewState extends ConsumerState<ChatView> {
         _InputArea(
           controller: _inputController,
           focusNode: _inputFocusNode,
-          isGenerating: chatState.isGenerating,
+          isGenerating: isGenerating,
           onSend: () => _sendMessage(conversationId),
           onStop: () =>
               ref.read(chatProvider.notifier).stopGeneration(),
@@ -138,11 +236,27 @@ class _ChatViewState extends ConsumerState<ChatView> {
     );
   }
 
+  /// Group tool-result messages with their preceding assistant message.
+  static List<List<Message>> _groupMessages(List<Message> messages) {
+    final groups = <List<Message>>[];
+    for (final msg in messages) {
+      if (msg.role == MessageRole.tool && groups.isNotEmpty) {
+        // Attach to the last group (should be an assistant).
+        groups.last.add(msg);
+      } else {
+        groups.add([msg]);
+      }
+    }
+    return groups;
+  }
+
   void _sendMessage(String conversationId) {
     final text = _inputController.text.trim();
     if (text.isEmpty) return;
 
     _inputController.clear();
+    setState(() => _userHasScrolledUp = false);
+    _scrollToBottom(force: true);
     ref
         .read(chatProvider.notifier)
         .sendMessage(conversationId, text);
@@ -157,6 +271,13 @@ class _ChatHeader extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final conversation = ref.watch(selectedConversationProvider);
+    final used = ref.watch(
+        chatProvider.select((s) => s.totalTokens));
+    final contextLength = ref.watch(
+        settingsProvider.select((s) => s.api.contextLength));
+    final ratio = contextLength > 0
+        ? (used / contextLength).clamp(0.0, 1.0)
+        : 0.0;
 
     return Container(
       padding:
@@ -176,6 +297,10 @@ class _ChatHeader extends ConsumerWidget {
               overflow: TextOverflow.ellipsis,
             ),
           ),
+          if (used > 0) ...[
+            const SizedBox(width: 12),
+            _ContextGauge(ratio: ratio, used: used, total: contextLength),
+          ],
         ],
       ),
     );
@@ -258,7 +383,7 @@ class _WelcomeMessage extends StatelessWidget {
   }
 }
 
-class _InputArea extends StatefulWidget {
+class _InputArea extends StatelessWidget {
   final TextEditingController controller;
   final FocusNode focusNode;
   final bool isGenerating;
@@ -274,19 +399,6 @@ class _InputArea extends StatefulWidget {
   });
 
   @override
-  State<_InputArea> createState() => _InputAreaState();
-}
-
-class _InputAreaState extends State<_InputArea> {
-  final _keyboardFocusNode = FocusNode();
-
-  @override
-  void dispose() {
-    _keyboardFocusNode.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(12),
@@ -294,19 +406,20 @@ class _InputAreaState extends State<_InputArea> {
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           Expanded(
-            child: KeyboardListener(
-              focusNode: _keyboardFocusNode,
-              onKeyEvent: (event) {
+            child: Focus(
+              onKeyEvent: (node, event) {
                 if (event is KeyDownEvent &&
                     event.logicalKey == LogicalKeyboardKey.enter &&
                     !HardwareKeyboard.instance.isShiftPressed &&
-                    !widget.isGenerating) {
-                  widget.onSend();
+                    !isGenerating) {
+                  onSend();
+                  return KeyEventResult.handled;
                 }
+                return KeyEventResult.ignored;
               },
               child: TextField(
-                controller: widget.controller,
-                focusNode: widget.focusNode,
+                controller: controller,
+                focusNode: focusNode,
                 maxLines: 6,
                 minLines: 1,
                 decoration: InputDecoration(
@@ -333,14 +446,14 @@ class _InputAreaState extends State<_InputArea> {
                       .colorScheme
                       .surfaceContainerHighest,
                 ),
-                enabled: !widget.isGenerating,
+                enabled: !isGenerating,
               ),
             ),
           ),
           const SizedBox(width: 8),
-          widget.isGenerating
+          isGenerating
               ? IconButton.filled(
-                  onPressed: widget.onStop,
+                  onPressed: onStop,
                   icon: const Icon(Icons.stop),
                   tooltip: 'Stop generation',
                   style: IconButton.styleFrom(
@@ -351,12 +464,76 @@ class _InputAreaState extends State<_InputArea> {
                   ),
                 )
               : IconButton.filled(
-                  onPressed: widget.onSend,
+                  onPressed: onSend,
                   icon: const Icon(Icons.send),
                   tooltip: 'Send (Enter)',
                 ),
         ],
       ),
     );
+  }
+}
+
+class _ContextGauge extends StatelessWidget {
+  final double ratio;
+  final int used;
+  final int total;
+
+  const _ContextGauge({
+    required this.ratio,
+    required this.used,
+    required this.total,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = ratio < 0.7
+        ? Theme.of(context).colorScheme.primary
+        : ratio < 0.9
+            ? Colors.orange
+            : Theme.of(context).colorScheme.error;
+
+    final label = '${_formatTokens(used)} / ${_formatTokens(total)}';
+
+    return Tooltip(
+      message: '$used / $total tokens (${(ratio * 100).round()}%)',
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: 60,
+            height: 6,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(3),
+              child: LinearProgressIndicator(
+                value: ratio,
+                backgroundColor: Theme.of(context)
+                    .colorScheme
+                    .surfaceContainerHighest,
+                color: color,
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 11,
+              color: Theme.of(context)
+                  .colorScheme
+                  .onSurface
+                  .withOpacity(0.5),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static String _formatTokens(int tokens) {
+    if (tokens >= 1000) {
+      return '${(tokens / 1000).toStringAsFixed(1)}K';
+    }
+    return tokens.toString();
   }
 }

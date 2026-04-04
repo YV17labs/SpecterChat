@@ -151,7 +151,7 @@ class _ConversationListState extends ConsumerState<ConversationList> {
                     onTap: () => ref
                         .read(selectedConversationIdProvider
                             .notifier)
-                        .state = conv.id,
+                        .select(conv.id),
                     onRename: () => _renameConversation(conv),
                     onDelete: () => _deleteConversation(conv),
                   );
@@ -169,13 +169,13 @@ class _ConversationListState extends ConsumerState<ConversationList> {
 
   Future<void> _createNewChat() async {
     final settings = ref.read(settingsProvider);
-    final actions = ref.read(conversationActionsProvider);
+    final actions = ref.read(conversationRepositoryProvider);
     final id = await actions.createConversation(
       systemPrompt: settings.defaultSystemPrompt.isNotEmpty
           ? settings.defaultSystemPrompt
           : null,
     );
-    ref.read(selectedConversationIdProvider.notifier).state = id;
+    ref.read(selectedConversationIdProvider.notifier).select(id);
   }
 
   Future<void> _renameConversation(Conversation conv) async {
@@ -207,7 +207,7 @@ class _ConversationListState extends ConsumerState<ConversationList> {
 
     if (newTitle != null && newTitle.isNotEmpty) {
       await ref
-          .read(conversationActionsProvider)
+          .read(conversationRepositoryProvider)
           .renameConversation(conv.id, newTitle);
     }
   }
@@ -237,11 +237,11 @@ class _ConversationListState extends ConsumerState<ConversationList> {
     if (confirm == true) {
       final selectedId = ref.read(selectedConversationIdProvider);
       if (selectedId == conv.id) {
-        ref.read(selectedConversationIdProvider.notifier).state =
-            null;
+        ref.read(selectedConversationIdProvider.notifier).select(
+            null);
       }
       await ref
-          .read(conversationActionsProvider)
+          .read(conversationRepositoryProvider)
           .deleteConversation(conv.id);
     }
   }
@@ -291,7 +291,10 @@ class _ConversationTile extends StatelessWidget {
                     ),
                   ),
                 ),
-                PopupMenuButton<String>(
+                SizedBox(
+                  width: 28,
+                  height: 28,
+                  child: PopupMenuButton<String>(
                   icon: Icon(
                     Icons.more_horiz,
                     size: 16,
@@ -301,8 +304,7 @@ class _ConversationTile extends StatelessWidget {
                         .withOpacity(0.5),
                   ),
                   padding: EdgeInsets.zero,
-                  constraints:
-                      const BoxConstraints(maxWidth: 36, maxHeight: 28),
+                  iconSize: 16,
                   itemBuilder: (context) => [
                     const PopupMenuItem(
                       value: 'rename',
@@ -329,7 +331,7 @@ class _ConversationTile extends StatelessWidget {
                     if (value == 'rename') onRename();
                     if (value == 'delete') onDelete();
                   },
-                ),
+                )),
               ],
             ),
           ),

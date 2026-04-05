@@ -73,12 +73,15 @@ class ChatNotifier extends Notifier<ChatState> {
   @override
   ChatState build() {
     // Cancel any in-flight generation and reset state on conversation switch.
-    ref.listen(selectedConversationIdProvider, (_, _) {
-      _cancelToken?.cancel();
-      _stopStreamingThrottle();
-      state = const ChatState();
+    ref.listen(selectedConversationIdProvider, (prev, next) {
+      if (prev != next) {
+        _cancelToken?.cancel();
+        _stopStreamingThrottle();
+        state = const ChatState();
+      }
     });
     ref.onDispose(() {
+      _log.info('ChatNotifier disposed — cancelling in-flight work');
       _cancelToken?.cancel();
       _streamingThrottle?.cancel();
     });

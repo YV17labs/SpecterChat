@@ -136,7 +136,7 @@ Widget _maybeCopyWrapper(
       return _HoverCopyWrapper(copyText: copyText, child: child);
     }
   }
-  if (message.role == MessageRole.assistant) {
+  if (message.role == MessageRole.assistant && !message.isStreaming) {
     final copyText = _extractCopyText(message);
     if (copyText.isNotEmpty) {
       return _HoverCopyWrapper(copyText: copyText, child: child);

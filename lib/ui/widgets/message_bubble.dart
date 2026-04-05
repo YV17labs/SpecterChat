@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../models/message.dart';
 import 'content_blocks.dart';
@@ -32,42 +33,46 @@ class MessageBubble extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  constraints: BoxConstraints(
-                    maxWidth:
-                        MediaQuery.of(context).size.width * 0.65,
-                  ),
-                  decoration: BoxDecoration(
-                    color: isUser
-                        ? Theme.of(context).colorScheme.primaryContainer
-                        : Theme.of(context)
-                            .colorScheme
-                            .surfaceContainerHigh,
-                    borderRadius: BorderRadius.only(
-                      topLeft: const Radius.circular(16),
-                      topRight: const Radius.circular(16),
-                      bottomLeft:
-                          isUser ? const Radius.circular(16) : Radius.zero,
-                      bottomRight:
-                          isUser ? Radius.zero : const Radius.circular(16),
+                _maybeCopyWrapper(
+                  context,
+                  message,
+                  child: Container(
+                    constraints: BoxConstraints(
+                      maxWidth:
+                          MediaQuery.of(context).size.width * 0.65,
                     ),
-                  ),
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      for (final block in message.content)
-                        _ContentBlockWidget(block: block),
-                      if (message.isStreaming) const _StreamingIndicator(),
-                      if (!message.isStreaming &&
-                          message.role == MessageRole.assistant &&
-                          message.completionTokens > 0)
-                        _MessageStats(
-                          tokens: message.completionTokens,
-                          durationMs: message.durationMs,
-                        ),
-                    ],
+                    decoration: BoxDecoration(
+                      color: isUser
+                          ? Theme.of(context).colorScheme.primaryContainer
+                          : Theme.of(context)
+                              .colorScheme
+                              .surfaceContainerHigh,
+                      borderRadius: BorderRadius.only(
+                        topLeft: const Radius.circular(16),
+                        topRight: const Radius.circular(16),
+                        bottomLeft:
+                            isUser ? const Radius.circular(16) : Radius.zero,
+                        bottomRight:
+                            isUser ? Radius.zero : const Radius.circular(16),
+                      ),
+                    ),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        for (final block in message.content)
+                          _ContentBlockWidget(block: block),
+                        if (message.isStreaming) const _StreamingIndicator(),
+                        if (!message.isStreaming &&
+                            message.role == MessageRole.assistant &&
+                            message.completionTokens > 0)
+                          _MessageStats(
+                            tokens: message.completionTokens,
+                            durationMs: message.durationMs,
+                          ),
+                      ],
+                    ),
                   ),
                 ),
                 // Tool results rendered inside the same bubble group.
@@ -103,6 +108,101 @@ class MessageBubble extends StatelessWidget {
             const SizedBox(width: 8),
             const _Avatar(isAssistant: false),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Extracts text content from a message for clipboard copy.
+String _extractCopyText(Message message) {
+  final parts = <String>[];
+  for (final block in message.content) {
+    if (block is TextContentBlock && block.text.trim().isNotEmpty) {
+      parts.add(block.text.trim());
+    }
+  }
+  return parts.join('\n');
+}
+
+/// Wraps the child with a copy button only for user messages
+/// and assistant messages that have a real text response
+/// (not just thinking + tool calls).
+Widget _maybeCopyWrapper(
+    BuildContext context, Message message, {required Widget child}) {
+  if (message.role == MessageRole.user) {
+    final copyText = _extractCopyText(message);
+    if (copyText.isNotEmpty) {
+      return _HoverCopyWrapper(copyText: copyText, child: child);
+    }
+  }
+  if (message.role == MessageRole.assistant) {
+    final copyText = _extractCopyText(message);
+    if (copyText.isNotEmpty) {
+      return _HoverCopyWrapper(copyText: copyText, child: child);
+    }
+  }
+  return child;
+}
+
+/// Shows a copy button on hover, positioned at the top-right of the child.
+class _HoverCopyWrapper extends StatefulWidget {
+  final String copyText;
+  final Widget child;
+
+  const _HoverCopyWrapper({required this.copyText, required this.child});
+
+  @override
+  State<_HoverCopyWrapper> createState() => _HoverCopyWrapperState();
+}
+
+class _HoverCopyWrapperState extends State<_HoverCopyWrapper> {
+  bool _hovering = false;
+  bool _copied = false;
+
+  void _copy() {
+    Clipboard.setData(ClipboardData(text: widget.copyText));
+    setState(() => _copied = true);
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted) setState(() => _copied = false);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovering = true),
+      onExit: (_) => setState(() => _hovering = false),
+      child: Stack(
+        alignment: Alignment.centerRight,
+        children: [
+          widget.child,
+          if (_hovering)
+            Positioned(
+              bottom: 8,
+              right: 8,
+              child: IconButton(
+                icon: Icon(
+                  _copied ? Icons.check : Icons.copy,
+                  size: 14,
+                  color: Theme.of(context)
+                      .colorScheme
+                      .onSurface
+                      .withOpacity(0.5),
+                ),
+                onPressed: _copy,
+                padding: EdgeInsets.zero,
+                constraints:
+                    const BoxConstraints(maxWidth: 24, maxHeight: 24),
+                tooltip: _copied ? 'Copied!' : 'Copy',
+                style: IconButton.styleFrom(
+                  backgroundColor: Theme.of(context)
+                      .colorScheme
+                      .surface
+                      .withOpacity(0.8),
+                ),
+              ),
+            ),
         ],
       ),
     );

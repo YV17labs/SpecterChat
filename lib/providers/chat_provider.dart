@@ -164,8 +164,6 @@ class ChatNotifier extends Notifier<ChatState> {
   // Private — streaming
   // ---------------------------------------------------------------------------
 
-  static const _maxToolRounds = 10;
-
   Future<void> _streamResponse({
     required String conversationId,
     required List<Map<String, dynamic>> apiMessages,
@@ -174,7 +172,6 @@ class ChatNotifier extends Notifier<ChatState> {
     required IMcpService mcpService,
     required AppSettings settings,
     required IConversationRepository repo,
-    int toolRound = 0,
   }) async {
     final contentBuffer = StringBuffer();
     final thinkingBuffer = StringBuffer();
@@ -184,9 +181,11 @@ class ChatNotifier extends Notifier<ChatState> {
 
     final assistantId = generateId();
 
-    // Show a streaming placeholder while waiting for the first token.
+    // Show a streaming placeholder immediately (3-dot animation).
     _scheduleStreamingUpdate(
         assistantId, conversationId, contentBuffer, thinkingBuffer, toolCalls);
+    _lastFlushedContentLen = -1;
+    _flushStreamingUpdate();
 
     await for (final event in llm.streamChatCompletion(
       messages: apiMessages,
@@ -254,15 +253,6 @@ class ChatNotifier extends Notifier<ChatState> {
           state = state.copyWith(streamingMessages: []);
 
           if (toolCalls.isNotEmpty) {
-            if (toolRound >= _maxToolRounds) {
-              _log.warning('Tool call loop limit reached '
-                  '($_maxToolRounds rounds)');
-              state = state.copyWith(
-                error: 'Tool call loop limit reached. '
-                    'The model keeps calling tools without finishing.',
-              );
-              return;
-            }
             await _continueWithToolResults(
               conversationId: conversationId,
               toolCalls: toolCalls,
@@ -271,7 +261,6 @@ class ChatNotifier extends Notifier<ChatState> {
               llm: llm,
               mcpTools: mcpTools,
               repo: repo,
-              toolRound: toolRound + 1,
             );
           } else {
             _autoTitleIfNeeded(
@@ -307,7 +296,6 @@ class ChatNotifier extends Notifier<ChatState> {
     required ILlmService llm,
     required List<Map<String, dynamic>> mcpTools,
     required IConversationRepository repo,
-    required int toolRound,
   }) async {
     await _toolExecutor.executeAndSave(
       conversationId: conversationId,
@@ -338,7 +326,6 @@ class ChatNotifier extends Notifier<ChatState> {
       mcpService: mcpService,
       settings: settingsNow,
       repo: repo,
-      toolRound: toolRound,
     );
   }
 

@@ -75,33 +75,51 @@ class ChatLogic {
       });
     }
 
-    for (final msg in history) {
+    // Pending image content parts collected from consecutive tool results.
+    // Flushed as a single user message once the tool-result run ends,
+    // so we never break the required tool-message sequence (OpenAI spec
+    // mandates all tool results appear consecutively after the assistant
+    // tool_calls message).
+    var pendingImageParts = <Map<String, dynamic>>[];
+
+    for (var i = 0; i < history.length; i++) {
+      final msg = history[i];
       messages.add(msg.toApiMessage());
 
-      // Forward tool result images to the model as user messages
-      // so vision-capable models can analyze them.
+      // Collect images from tool results — the spec only allows text in
+      // tool-role content, so images must go in a separate user message.
       if (msg.role == MessageRole.tool) {
         for (final block in msg.content) {
           if (block is ToolResultContentBlock &&
               block.imageBase64 != null) {
-            messages.add({
-              'role': 'user',
-              'content': [
-                {
-                  'type': 'image_url',
-                  'image_url': {
-                    'url':
-                        'data:${block.imageMimeType ?? "image/png"};base64,${block.imageBase64}',
-                  },
-                },
-                {
-                  'type': 'text',
-                  'text':
-                      'Here is the image result from tool "${block.toolName}".',
-                },
-              ],
+            pendingImageParts.add({
+              'type': 'image_url',
+              'image_url': {
+                'url':
+                    'data:${block.imageMimeType ?? "image/png"};base64,${block.imageBase64}',
+              },
+            });
+            pendingImageParts.add({
+              'type': 'text',
+              'text': block.content.isNotEmpty
+                  ? block.content
+                  : 'Image result from tool "${block.toolName}".',
             });
           }
+        }
+      }
+
+      // Flush pending images when the consecutive tool-result run ends
+      // (next message is not a tool, or we reached the end of history).
+      if (pendingImageParts.isNotEmpty) {
+        final nextIsNotTool = i + 1 >= history.length ||
+            history[i + 1].role != MessageRole.tool;
+        if (nextIsNotTool) {
+          messages.add({
+            'role': 'user',
+            'content': pendingImageParts,
+          });
+          pendingImageParts = <Map<String, dynamic>>[];
         }
       }
     }

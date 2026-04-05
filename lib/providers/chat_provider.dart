@@ -112,12 +112,12 @@ class ChatNotifier extends Notifier<ChatState> {
       await repo.saveMessage(userMessage);
 
       final conversation = ref.read(selectedConversationProvider);
-      final historyAsync =
-          ref.read(conversationMessagesProvider(conversationId));
-      final history = historyAsync.value ?? [];
+      // Use direct DB read to ensure the just-saved user message
+      // is included (stream provider may not have emitted yet).
+      final history = await repo.getMessages(conversationId);
 
       final apiMessages = _logic.buildApiMessages(
-        history: [...history, userMessage],
+        history: history,
         systemPrompt: _buildSystemPrompt(
           conversation?.systemPrompt ?? settings.defaultSystemPrompt,
         ),

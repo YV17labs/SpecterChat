@@ -99,6 +99,10 @@ class LlmService implements ILlmService {
       body['tool_choice'] = 'auto';
     }
 
+    if (_log.isLoggable(Level.INFO)) {
+      _log.info('POST ${_dio.options.baseUrl}/chat/completions\n'
+          '${const JsonEncoder.withIndent('  ').convert(_sanitizeForLog(body))}');
+    }
 
     try {
       final response = await _dio.post(
@@ -198,6 +202,24 @@ class LlmService implements ILlmService {
       _log.severe('Unexpected stream error', e, st);
       yield StreamError('Unexpected error: $e');
     }
+  }
+
+  /// Replace large base64 strings with a short summary for logging.
+  static Object? _sanitizeForLog(Object? value) {
+    if (value is String && value.length > 200) {
+      if (value.startsWith('data:')) {
+        final sizeKb = (value.length * 3 / 4 / 1024).round();
+        return '<base64 ~${sizeKb}KB>';
+      }
+      return '${value.substring(0, 100)}... (${value.length} chars)';
+    }
+    if (value is Map) {
+      return value.map((k, v) => MapEntry(k, _sanitizeForLog(v)));
+    }
+    if (value is List) {
+      return value.map(_sanitizeForLog).toList();
+    }
+    return value;
   }
 }
 

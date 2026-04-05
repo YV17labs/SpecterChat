@@ -57,6 +57,7 @@ class ToolExecutor {
           toolCallId: tc.id!,
           toolName: tc.name!,
           result: result,
+          arguments: arguments,
         );
       } catch (e, st) {
         _log.warning('Tool execution failed: ${tc.name}', e, st);
@@ -81,6 +82,7 @@ class ToolExecutor {
     required String toolCallId,
     required String toolName,
     required McpToolResult result,
+    required Map<String, dynamic> arguments,
   }) {
     final contentBlocks = <ContentBlock>[];
     final textParts = <String>[];
@@ -103,6 +105,23 @@ class ToolExecutor {
             'mimeType': mimeType,
             'data': '<base64 ~${sizeKb}KB>',
           });
+      }
+    }
+
+    // When the result contains an image, add a description that tells the
+    // model whether the screenshot carries exploitable XY coordinates.
+    if (imageBase64 != null) {
+      final annotateValue = arguments['annotate'];
+      final isAnnotated =
+          annotateValue == true || annotateValue == 'true';
+      if (isAnnotated) {
+        textParts.add(
+          'Annotated screenshot: colored boxes with (x, y) coordinate '
+          'labels mark each detected UI element. Use these coordinates '
+          'for click/scroll actions.',
+        );
+      } else if (textParts.isEmpty) {
+        textParts.add('Raw screenshot without annotations.');
       }
     }
 

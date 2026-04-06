@@ -81,12 +81,39 @@ class ChatNotifier extends Notifier<ChatState> {
         state = const ChatState();
       }
     });
+    // Restore token count when conversation data becomes available.
+    ref.listen(selectedConversationProvider, (prev, next) {
+      if (next != null && prev?.id != next.id) {
+        _restoreTokens();
+      }
+    });
     ref.onDispose(() {
       _log.info('ChatNotifier disposed — cancelling in-flight work');
       _cancelToken?.cancel();
       _streamingThrottle?.cancel();
     });
     return const ChatState();
+  }
+
+  /// Restore token count from DB or estimate from message history.
+  void _restoreTokens() {
+    final conversation = ref.read(selectedConversationProvider);
+    if (conversation == null) return;
+    if (conversation.lastPromptTokens > 0) {
+      state = ChatState(promptTokens: conversation.lastPromptTokens);
+      return;
+    }
+    // Legacy conversations without lastPromptTokens — estimate from
+    // completion tokens already stored on each message.
+    final repo = ref.read(conversationRepositoryProvider);
+    repo.getMessages(conversation.id).then((messages) {
+      if (ref.read(selectedConversationIdProvider) != conversation.id) return;
+      final estimated =
+          messages.fold<int>(0, (sum, m) => sum + m.completionTokens);
+      if (estimated > 0 && state.promptTokens == 0) {
+        state = state.copyWith(promptTokens: estimated);
+      }
+    }).ignore();
   }
 
   /// Send a user message and stream the assistant's response.
@@ -242,6 +269,14 @@ class ChatNotifier extends Notifier<ChatState> {
             await repo.saveMessage(assistantMessage);
           }
           state = state.copyWith(streamingMessages: []);
+
+          // Persist latest prompt token count for context gauge restoration.
+          if (state.promptTokens > 0) {
+            repo
+                .updateLastPromptTokens(
+                    conversationId, state.promptTokens)
+                .ignore();
+          }
 
           if (toolCalls.isNotEmpty) {
             await _continueWithToolResults(

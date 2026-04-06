@@ -14,6 +14,8 @@ class Conversations extends Table {
   DateTimeColumn get updatedAt => dateTime()();
   TextColumn get systemPrompt => text().nullable()();
   TextColumn get settings => text().nullable()();
+  IntColumn get lastPromptTokens =>
+      integer().withDefault(const Constant(0))();
 
   @override
   Set<Column> get primaryKey => {id};
@@ -49,10 +51,12 @@ class AppDatabase extends _$AppDatabase {
   // v1 — Initial schema: conversations + messages tables.
   // v2 — Add index on messages.conversation_id for query performance.
   // v3 — Add completion_tokens + duration_ms columns to messages.
+  // v4 — Add settings JSON column to conversations.
+  // v5 — Add last_prompt_tokens column to conversations.
   // ---------------------------------------------------------------
 
   @override
-  int get schemaVersion => 4;
+  int get schemaVersion => 5;
 
   static const _createConversationIdIndex =
       'CREATE INDEX IF NOT EXISTS idx_messages_conversation_id '
@@ -74,6 +78,10 @@ class AppDatabase extends _$AppDatabase {
           }
           if (from < 4) {
             await m.addColumn(conversations, conversations.settings);
+          }
+          if (from < 5) {
+            await m.addColumn(
+                conversations, conversations.lastPromptTokens);
           }
         },
         beforeOpen: (details) async {

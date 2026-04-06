@@ -16,6 +16,7 @@ abstract class Conversation with _$Conversation {
     required DateTime updatedAt,
     String? systemPrompt,
     ConversationSettings? settings,
+    @Default(0) int lastPromptTokens,
   }) = _Conversation;
 
   factory Conversation.fromJson(Map<String, dynamic> json) =>

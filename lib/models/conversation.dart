@@ -1,5 +1,7 @@
 import 'package:freezed_annotation/freezed_annotation.dart';
 
+import 'conversation_settings.dart';
+
 part 'conversation.freezed.dart';
 part 'conversation.g.dart';
 
@@ -13,6 +15,7 @@ abstract class Conversation with _$Conversation {
     required DateTime createdAt,
     required DateTime updatedAt,
     String? systemPrompt,
+    ConversationSettings? settings,
   }) = _Conversation;
 
   factory Conversation.fromJson(Map<String, dynamic> json) =>

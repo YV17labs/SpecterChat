@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/app_settings.dart';
 import '../services/i_mcp_service.dart';
 import '../services/mcp_service.dart';
+import 'effective_settings_provider.dart';
 import 'settings_provider.dart';
 
 final mcpServiceProvider = Provider<IMcpService>((ref) {
@@ -11,13 +12,15 @@ final mcpServiceProvider = Provider<IMcpService>((ref) {
   return service;
 });
 
-/// All enabled MCP tools in OpenAI format.
+/// MCP tools in OpenAI format, filtered by per-conversation enabled servers.
 final mcpToolsProvider = Provider<List<Map<String, dynamic>>>((ref) {
   final servers = ref.watch(settingsProvider.select((s) => s.mcpServers));
+  final enabledIds = ref.watch(
+      effectiveSettingsProvider.select((s) => s.enabledMcpServerIds));
   final allTools = <McpToolInfo>[];
 
   for (final server in servers) {
-    if (server.enabled && server.connected) {
+    if (enabledIds.contains(server.id) && server.connected) {
       allTools.addAll(server.tools);
     }
   }
@@ -25,13 +28,17 @@ final mcpToolsProvider = Provider<List<Map<String, dynamic>>>((ref) {
   return McpService.toolsToOpenAiFormat(allTools);
 });
 
-/// Aggregated MCP server instructions for inclusion in the system prompt.
+/// Aggregated MCP server instructions, filtered by per-conversation enabled servers.
 final mcpInstructionsProvider = Provider<String>((ref) {
   final servers = ref.watch(settingsProvider.select((s) => s.mcpServers));
+  final enabledIds = ref.watch(
+      effectiveSettingsProvider.select((s) => s.enabledMcpServerIds));
   final parts = <String>[];
 
   for (final server in servers) {
-    if (server.enabled && server.connected && server.instructions.isNotEmpty) {
+    if (enabledIds.contains(server.id) &&
+        server.connected &&
+        server.instructions.isNotEmpty) {
       parts.add('## MCP Server: ${server.name}\n${server.instructions}');
     }
   }

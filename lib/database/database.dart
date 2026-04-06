@@ -13,6 +13,7 @@ class Conversations extends Table {
   DateTimeColumn get createdAt => dateTime()();
   DateTimeColumn get updatedAt => dateTime()();
   TextColumn get systemPrompt => text().nullable()();
+  TextColumn get settings => text().nullable()();
 
   @override
   Set<Column> get primaryKey => {id};
@@ -51,7 +52,7 @@ class AppDatabase extends _$AppDatabase {
   // ---------------------------------------------------------------
 
   @override
-  int get schemaVersion => 3;
+  int get schemaVersion => 4;
 
   static const _createConversationIdIndex =
       'CREATE INDEX IF NOT EXISTS idx_messages_conversation_id '
@@ -70,6 +71,9 @@ class AppDatabase extends _$AppDatabase {
           if (from < 3) {
             await m.addColumn(messages, messages.completionTokens);
             await m.addColumn(messages, messages.durationMs);
+          }
+          if (from < 4) {
+            await m.addColumn(conversations, conversations.settings);
           }
         },
         beforeOpen: (details) async {

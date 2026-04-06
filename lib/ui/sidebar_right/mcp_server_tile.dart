@@ -11,10 +11,24 @@ final _log = Logger('McpServerTile');
 class McpServerTile extends ConsumerWidget {
   final McpServerConfig server;
 
-  const McpServerTile({super.key, required this.server});
+  /// Whether this server is enabled for the current conversation.
+  /// `null` means no conversation is selected (global mode).
+  final bool? enabledInConversation;
+
+  /// Called when the user toggles the per-conversation enable switch.
+  final ValueChanged<bool>? onToggleConversation;
+
+  const McpServerTile({
+    super.key,
+    required this.server,
+    this.enabledInConversation,
+    this.onToggleConversation,
+  });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final isConversationMode = enabledInConversation != null;
+
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: ExpansionTile(
@@ -46,6 +60,14 @@ class McpServerTile extends ConsumerWidget {
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // Per-conversation enable/disable toggle
+            if (isConversationMode)
+              Switch(
+                value: enabledInConversation!,
+                onChanged: onToggleConversation,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            // Connect/disconnect button
             IconButton(
               icon: Icon(
                 server.connected ? Icons.link_off : Icons.link,
@@ -54,18 +76,20 @@ class McpServerTile extends ConsumerWidget {
               tooltip: server.connected ? 'Disconnect' : 'Connect',
               onPressed: () => _toggleConnection(ref, server),
             ),
-            IconButton(
-              icon: const Icon(Icons.delete, size: 16),
-              tooltip: 'Remove',
-              onPressed: () {
-                if (server.connected) {
-                  ref.read(mcpServiceProvider).disconnect(server.id);
-                }
-                ref
-                    .read(settingsProvider.notifier)
-                    .removeMcpServer(server.id);
-              },
-            ),
+            // Remove button (global only)
+            if (!isConversationMode)
+              IconButton(
+                icon: const Icon(Icons.delete, size: 16),
+                tooltip: 'Remove',
+                onPressed: () {
+                  if (server.connected) {
+                    ref.read(mcpServiceProvider).disconnect(server.id);
+                  }
+                  ref
+                      .read(settingsProvider.notifier)
+                      .removeMcpServer(server.id);
+                },
+              ),
           ],
         ),
         children: [

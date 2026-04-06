@@ -1,4 +1,5 @@
 import '../models/conversation.dart';
+import '../models/conversation_settings.dart';
 import '../models/message.dart';
 
 /// Contract for conversation and message persistence.
@@ -10,6 +11,8 @@ abstract interface class IConversationRepository {
   Stream<List<Conversation>> watchAllConversations();
   Future<String> createConversation({String? systemPrompt});
   Future<void> renameConversation(String id, String title);
+  Future<void> updateConversationSettings(
+      String id, ConversationSettings? settings);
   Future<void> deleteConversation(String id);
 
   // --- Messages ---

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:drift/drift.dart' show Value;
 
 import '../models/conversation.dart' as model;
+import '../models/conversation_settings.dart';
 import '../models/message.dart' as model;
 import '../utils/id_gen.dart';
 import 'database.dart' as db;
@@ -17,14 +18,28 @@ class ConversationRepository implements IConversationRepository {
   @override
   Stream<List<model.Conversation>> watchAllConversations() {
     return _database.watchAllConversations().map((rows) => rows
-        .map((r) => model.Conversation(
-              id: r.id,
-              title: r.title,
-              createdAt: r.createdAt,
-              updatedAt: r.updatedAt,
-              systemPrompt: r.systemPrompt,
-            ))
+        .map(_dbConversationToModel)
         .toList());
+  }
+
+  static model.Conversation _dbConversationToModel(db.Conversation r) {
+    ConversationSettings? settings;
+    if (r.settings != null) {
+      try {
+        settings = ConversationSettings.fromJson(
+            jsonDecode(r.settings!) as Map<String, dynamic>);
+      } catch (_) {
+        // Corrupted JSON — ignore, use defaults.
+      }
+    }
+    return model.Conversation(
+      id: r.id,
+      title: r.title,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+      systemPrompt: r.systemPrompt,
+      settings: settings,
+    );
   }
 
   @override
@@ -46,6 +61,17 @@ class ConversationRepository implements IConversationRepository {
     await _database.updateConversation(db.ConversationsCompanion(
       id: Value(id),
       title: Value(title),
+      updatedAt: Value(DateTime.now()),
+    ));
+  }
+
+  @override
+  Future<void> updateConversationSettings(
+      String id, ConversationSettings? settings) async {
+    await _database.updateConversation(db.ConversationsCompanion(
+      id: Value(id),
+      settings: Value(
+          settings != null ? jsonEncode(settings.toJson()) : null),
       updatedAt: Value(DateTime.now()),
     ));
   }

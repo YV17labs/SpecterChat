@@ -1,7 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../models/app_settings.dart';
+import '../../models/conversation_settings.dart';
+import '../../providers/conversation_provider.dart';
+import '../../providers/effective_settings_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../utils/id_gen.dart';
 import '../widgets/settings_fields.dart';
@@ -24,6 +29,7 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
   late TextEditingController _contextLengthController;
 
   bool _didSyncFromLoad = false;
+  Timer? _conversationSettingsDebounce;
 
   @override
   void initState() {
@@ -47,12 +53,7 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
     sub = ref.listenManual(settingsProvider, (prev, next) {
       if (!_didSyncFromLoad) {
         _didSyncFromLoad = true;
-        _baseUrlController.text = next.api.baseUrl;
-        _apiKeyController.text = next.api.apiKey;
-        _systemPromptController.text = next.defaultSystemPrompt;
-        _topKController.text = next.generation.topK.toString();
-        _maxTokensController.text = next.generation.maxTokens.toString();
-        _contextLengthController.text = next.api.contextLength.toString();
+        _syncControllers();
         sub.close();
       }
     });
@@ -66,17 +67,71 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
     _topKController.dispose();
     _maxTokensController.dispose();
     _contextLengthController.dispose();
+    _conversationSettingsDebounce?.cancel();
     super.dispose();
+  }
+
+  /// Sync text controllers from the effective settings.
+  void _syncControllers() {
+    final effective = ref.read(effectiveSettingsProvider);
+    final global = ref.read(settingsProvider);
+    _baseUrlController.text = global.api.baseUrl;
+    _apiKeyController.text = global.api.apiKey;
+    _contextLengthController.text = global.api.contextLength.toString();
+    _systemPromptController.text = effective.systemPrompt;
+    _topKController.text = effective.generation.topK.toString();
+    _maxTokensController.text = effective.generation.maxTokens.toString();
   }
 
   @override
   Widget build(BuildContext context) {
     final settings = ref.watch(settingsProvider);
+    final effective = ref.watch(effectiveSettingsProvider);
+    final hasConversation = effective.hasConversation;
+
+    // Re-sync text controllers when switching conversations.
+    ref.listen(selectedConversationIdProvider, (prev, next) {
+      if (prev != next) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _syncControllers();
+        });
+      }
+    });
 
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        // --- API Connection ---
+        // --- Scope indicator ---
+        if (hasConversation) ...[
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.primaryContainer,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.chat_bubble_outline,
+                    size: 14,
+                    color: Theme.of(context).colorScheme.onPrimaryContainer),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Editing settings for this conversation',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color:
+                          Theme.of(context).colorScheme.onPrimaryContainer,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+        ],
+
+        // --- API Connection (always global) ---
         const SectionHeader(title: 'API Connection'),
         const SizedBox(height: 8),
         LabeledField(
@@ -135,25 +190,21 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
         const SizedBox(height: 8),
         SliderField(
           label: 'Temperature',
-          value: settings.generation.temperature,
+          value: effective.generation.temperature,
           min: 0,
           max: 2,
           divisions: 40,
-          onChanged: (v) => ref
-              .read(settingsProvider.notifier)
-              .updateGeneration(
-                  settings.generation.copyWith(temperature: v)),
+          onChanged: (v) => _updateGeneration(
+              effective.generation.copyWith(temperature: v)),
         ),
         SliderField(
           label: 'Top-P',
-          value: settings.generation.topP,
+          value: effective.generation.topP,
           min: 0,
           max: 1,
           divisions: 20,
-          onChanged: (v) => ref
-              .read(settingsProvider.notifier)
-              .updateGeneration(
-                  settings.generation.copyWith(topP: v)),
+          onChanged: (v) => _updateGeneration(
+              effective.generation.copyWith(topP: v)),
         ),
         LabeledField(
           label: 'Top-K',
@@ -166,8 +217,8 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
               onChanged: (v) {
                 final val = int.tryParse(v);
                 if (val != null) {
-                  ref.read(settingsProvider.notifier).updateGeneration(
-                      settings.generation.copyWith(topK: val));
+                  _updateGeneration(
+                      effective.generation.copyWith(topK: val));
                 }
               },
             ),
@@ -185,8 +236,8 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
               onChanged: (v) {
                 final val = int.tryParse(v);
                 if (val != null) {
-                  ref.read(settingsProvider.notifier).updateGeneration(
-                      settings.generation.copyWith(maxTokens: val));
+                  _updateGeneration(
+                      effective.generation.copyWith(maxTokens: val));
                 }
               },
             ),
@@ -195,47 +246,39 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
         const SizedBox(height: 8),
         SliderField(
           label: 'Min-P',
-          value: settings.generation.minP,
+          value: effective.generation.minP,
           min: 0,
           max: 1,
           divisions: 20,
-          onChanged: (v) => ref
-              .read(settingsProvider.notifier)
-              .updateGeneration(
-                  settings.generation.copyWith(minP: v)),
+          onChanged: (v) => _updateGeneration(
+              effective.generation.copyWith(minP: v)),
         ),
         SliderField(
           label: 'Repeat Penalty',
-          value: settings.generation.repeatPenalty,
+          value: effective.generation.repeatPenalty,
           min: 1,
           max: 2,
           divisions: 20,
-          onChanged: (v) => ref
-              .read(settingsProvider.notifier)
-              .updateGeneration(
-                  settings.generation.copyWith(repeatPenalty: v)),
+          onChanged: (v) => _updateGeneration(
+              effective.generation.copyWith(repeatPenalty: v)),
         ),
         SliderField(
           label: 'Frequency Penalty',
-          value: settings.generation.frequencyPenalty,
+          value: effective.generation.frequencyPenalty,
           min: 0,
           max: 2,
           divisions: 40,
-          onChanged: (v) => ref
-              .read(settingsProvider.notifier)
-              .updateGeneration(
-                  settings.generation.copyWith(frequencyPenalty: v)),
+          onChanged: (v) => _updateGeneration(
+              effective.generation.copyWith(frequencyPenalty: v)),
         ),
         SliderField(
           label: 'Presence Penalty',
-          value: settings.generation.presencePenalty,
+          value: effective.generation.presencePenalty,
           min: 0,
           max: 2,
           divisions: 40,
-          onChanged: (v) => ref
-              .read(settingsProvider.notifier)
-              .updateGeneration(
-                  settings.generation.copyWith(presencePenalty: v)),
+          onChanged: (v) => _updateGeneration(
+              effective.generation.copyWith(presencePenalty: v)),
         ),
 
         const Divider(height: 32),
@@ -249,11 +292,7 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
               context, 'You are a helpful assistant...'),
           maxLines: 5,
           minLines: 3,
-          onChanged: (value) {
-            ref
-                .read(settingsProvider.notifier)
-                .updateDefaultSystemPrompt(value);
-          },
+          onChanged: (value) => _updateSystemPrompt(value),
         ),
 
         const Divider(height: 32),
@@ -285,10 +324,78 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
             ),
           )
         else
-          ...settings.mcpServers
-              .map((server) => McpServerTile(server: server)),
+          ...settings.mcpServers.map((server) => McpServerTile(
+                server: server,
+                enabledInConversation: hasConversation
+                    ? effective.enabledMcpServerIds.contains(server.id)
+                    : null,
+                onToggleConversation: hasConversation
+                    ? (enabled) => _toggleMcpServerForConversation(
+                        server.id, enabled)
+                    : null,
+              )),
       ],
     );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Write helpers — route to conversation overrides or global settings
+  // ---------------------------------------------------------------------------
+
+  void _updateGeneration(GenerationSettings generation) {
+    final conversation = ref.read(selectedConversationProvider);
+    if (conversation != null) {
+      _updateConversationSettings(
+        (s) => s.copyWith(generation: generation),
+      );
+    } else {
+      ref.read(settingsProvider.notifier).updateGeneration(generation);
+    }
+  }
+
+  void _updateSystemPrompt(String prompt) {
+    final conversation = ref.read(selectedConversationProvider);
+    if (conversation != null) {
+      _updateConversationSettings(
+        (s) => s.copyWith(systemPrompt: prompt),
+      );
+    } else {
+      ref.read(settingsProvider.notifier).updateDefaultSystemPrompt(prompt);
+    }
+  }
+
+  void _toggleMcpServerForConversation(String serverId, bool enabled) {
+    _updateConversationSettings((s) {
+      final ids = List<String>.from(s.enabledMcpServerIds ?? []);
+      if (enabled) {
+        if (!ids.contains(serverId)) ids.add(serverId);
+      } else {
+        ids.remove(serverId);
+      }
+      return s.copyWith(enabledMcpServerIds: ids);
+    });
+  }
+
+  ConversationSettings? _pendingConversationSettings;
+
+  void _updateConversationSettings(
+      ConversationSettings Function(ConversationSettings) update) {
+    final conversation = ref.read(selectedConversationProvider);
+    if (conversation == null) return;
+    final current =
+        _pendingConversationSettings ??
+        conversation.settings ??
+        const ConversationSettings();
+    final updated = update(current);
+    _pendingConversationSettings = updated;
+    _conversationSettingsDebounce?.cancel();
+    _conversationSettingsDebounce =
+        Timer(const Duration(milliseconds: 500), () {
+      _pendingConversationSettings = null;
+      ref
+          .read(conversationRepositoryProvider)
+          .updateConversationSettings(conversation.id, updated);
+    });
   }
 
   Future<void> _addMcpServer() async {

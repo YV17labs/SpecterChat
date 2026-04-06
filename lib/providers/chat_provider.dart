@@ -14,6 +14,7 @@ import '../services/i_mcp_service.dart';
 import '../services/tool_executor.dart';
 import '../utils/id_gen.dart';
 import 'conversation_provider.dart';
+import 'effective_settings_provider.dart';
 import 'llm_provider.dart';
 import 'mcp_provider.dart';
 import 'settings_provider.dart';
@@ -361,14 +362,12 @@ class ChatNotifier extends Notifier<ChatState> {
     int hallucinationRetry = 0,
   }) async {
     final history = await repo.getMessages(conversationId);
-    final conversation = ref.read(selectedConversationProvider);
+    final effective = ref.read(effectiveSettingsProvider);
     final settingsNow = ref.read(settingsProvider);
 
     final apiMessages = _logic.buildApiMessages(
       history: history,
-      systemPrompt: _buildSystemPrompt(
-        conversation?.systemPrompt ?? settingsNow.defaultSystemPrompt,
-      ),
+      systemPrompt: _buildSystemPrompt(effective.systemPrompt),
     );
 
     await _streamResponse(

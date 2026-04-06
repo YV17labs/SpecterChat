@@ -1,6 +1,21 @@
-# Specter Chat
+<p align="center">
+  <img src="assets/logo.svg" width="128" height="128" alt="Specter Chat logo">
+</p>
 
-A lightweight, cross-platform desktop chat client with MCP (Model Context Protocol) support. Built with Flutter.
+<h1 align="center">Specter Chat</h1>
+
+<p align="center">
+  A lightweight, cross-platform desktop chat client with MCP (Model Context Protocol) support.<br>
+  Built with Flutter.
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/platform-macOS%20|%20Linux%20|%20Windows-blue" alt="Platforms">
+  <img src="https://img.shields.io/badge/flutter-%3E%3D3.29-02569B?logo=flutter" alt="Flutter">
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
+</p>
+
+---
 
 Specter connects to any OpenAI-compatible API (Ollama, LM Studio, vLLM, llama.cpp server, etc.) and lets you interact with MCP servers to extend your model's capabilities with external tools.
 
@@ -37,7 +52,7 @@ Existing chat clients fail at one critical thing: when an MCP tool returns an im
 ### macOS
 
 ```bash
-git clone https://github.com/your-org/specterchat.git
+git clone https://github.com/YV17labs/specterchat.git
 cd specterchat
 flutter pub get
 dart run build_runner build --delete-conflicting-outputs

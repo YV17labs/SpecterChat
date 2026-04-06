@@ -10,6 +10,7 @@ import '../models/conversation.dart';
 import '../models/message.dart';
 import '../services/chat_logic.dart';
 import '../services/i_llm_service.dart';
+import '../services/llm_hooks/llm_hooks.dart' as llm_hooks;
 import '../services/i_mcp_service.dart';
 import '../services/tool_executor.dart';
 import '../utils/id_gen.dart';
@@ -251,8 +252,9 @@ class ChatNotifier extends Notifier<ChatState> {
           _stopStreamingThrottle();
           stopwatch.stop();
           final contentString = contentBuffer.toString();
+          final thinkingString = thinkingBuffer.toString();
           final hasContent = contentString.isNotEmpty ||
-              thinkingBuffer.isNotEmpty ||
+              thinkingString.isNotEmpty ||
               toolCalls.isNotEmpty;
 
           if (hasContent) {
@@ -260,7 +262,7 @@ class ChatNotifier extends Notifier<ChatState> {
               id: assistantId,
               conversationId: conversationId,
               content: contentString,
-              thinking: thinkingBuffer.toString(),
+              thinking: thinkingString,
               toolCalls: toolCalls,
               isStreaming: false,
               completionTokens: completionTokens,
@@ -278,7 +280,11 @@ class ChatNotifier extends Notifier<ChatState> {
                 .ignore();
           }
 
-          if (toolCalls.isNotEmpty) {
+          final modelName = settings.api.selectedModel;
+          final hasHallucination = llm_hooks.detectHallucination(
+              modelName, contentString, thinkingString);
+
+          if (toolCalls.isNotEmpty && !hasHallucination) {
             await _continueWithToolResults(
               conversationId: conversationId,
               toolCalls: toolCalls,
@@ -288,12 +294,12 @@ class ChatNotifier extends Notifier<ChatState> {
               mcpTools: mcpTools,
               repo: repo,
             );
-          } else if (hallucinationRetry < ChatLogic.maxHallucinationRetries &&
-              ChatLogic.detectHallucination(contentString)) {
+          } else if (hallucinationRetry < llm_hooks.maxHallucinationRetries &&
+              hasHallucination) {
             _log.warning(
               'Hallucinated tool-call XML detected '
               '(attempt ${hallucinationRetry + 1}/'
-              '${ChatLogic.maxHallucinationRetries})',
+              '${llm_hooks.maxHallucinationRetries})',
             );
             await _retryAfterHallucination(
               conversationId: conversationId,
@@ -366,12 +372,14 @@ class ChatNotifier extends Notifier<ChatState> {
     required IConversationRepository repo,
     required int hallucinationRetry,
   }) async {
+    final modelName = ref.read(settingsProvider).api.selectedModel;
     final correctionMessage = Message(
       id: generateId(),
       conversationId: conversationId,
       role: MessageRole.user,
       content: [
-        const ContentBlock.text(text: ChatLogic.hallucinationCorrection),
+        ContentBlock.text(
+            text: llm_hooks.hallucinationCorrection(modelName)),
       ],
       createdAt: DateTime.now(),
     );

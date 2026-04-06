@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../models/message.dart';
-import '../../services/chat_logic.dart';
+import '../../services/llm_hooks/llm_hooks.dart' as llm_hooks;
 import 'content_blocks.dart';
 
 // Auto-correction bubble colors.
@@ -28,7 +28,7 @@ class MessageBubble extends StatelessWidget {
         .whereType<TextContentBlock>()
         .map((b) => b.text)
         .join();
-    return text == ChatLogic.hallucinationCorrection;
+    return text.startsWith(llm_hooks.correctionPrefix);
   }
 
   @override

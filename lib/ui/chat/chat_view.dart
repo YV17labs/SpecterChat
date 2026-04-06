@@ -5,7 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../models/message.dart';
 import '../../providers/chat_provider.dart';
 import '../../providers/conversation_provider.dart';
-import '../../providers/settings_provider.dart';
+import '../../providers/effective_settings_provider.dart';
 import '../widgets/message_bubble.dart';
 
 class ChatView extends ConsumerStatefulWidget {
@@ -53,16 +53,30 @@ class _ChatViewState extends ConsumerState<ChatView> {
   }
 
   bool _scrollPending = false;
+  bool _needsInitialScroll = false;
 
-  void _scrollToBottom({bool force = false}) {
+  void _scrollToBottom({bool force = false, bool jump = false}) {
     if (!force && _userHasScrolledUp) return;
     if (_scrollPending) return;
     _scrollPending = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _scrollPending = false;
-      if (_scrollController.hasClients) {
+      if (!_scrollController.hasClients) return;
+      final target = _scrollController.position.maxScrollExtent;
+      if (jump) {
+        _scrollController.jumpTo(target);
+        // Variable-height items may not be fully laid out yet.
+        // Re-check after the next frame and correct if needed.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!_scrollController.hasClients) return;
+          final updated = _scrollController.position.maxScrollExtent;
+          if (updated > target) {
+            _scrollController.jumpTo(updated);
+          }
+        });
+      } else {
         _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
+          target,
           duration: const Duration(milliseconds: 200),
           curve: Curves.easeOut,
         );
@@ -77,6 +91,7 @@ class _ChatViewState extends ConsumerState<ChatView> {
     if (conversationId != _lastConversationId) {
       _lastConversationId = conversationId;
       _userHasScrolledUp = false;
+      _needsInitialScroll = true;
     }
     final streamingMessages = ref.watch(
         chatProvider.select((s) => s.streamingMessages));
@@ -105,7 +120,12 @@ class _ChatViewState extends ConsumerState<ChatView> {
                 return _WelcomeMessage();
               }
 
-              _scrollToBottom();
+              if (_needsInitialScroll) {
+                _needsInitialScroll = false;
+                _scrollToBottom(force: true, jump: true);
+              } else {
+                _scrollToBottom();
+              }
 
               // Memoize grouping of persisted messages — only
               // recompute when the DB list identity changes.
@@ -272,9 +292,9 @@ class _ChatHeader extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final conversation = ref.watch(selectedConversationProvider);
     final used = ref.watch(
-        chatProvider.select((s) => s.totalTokens));
+        chatProvider.select((s) => s.promptTokens));
     final contextLength = ref.watch(
-        settingsProvider.select((s) => s.api.contextLength));
+        effectiveSettingsProvider.select((s) => s.contextLength));
     final ratio = contextLength > 0
         ? (used / contextLength).clamp(0.0, 1.0)
         : 0.0;

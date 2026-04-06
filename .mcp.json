@@ -2,7 +2,7 @@
   "mcpServers": {
     "ghostdesk": {
       "type": "http",
-      "url": "http://host.docker.internal:3001/mcp"
+      "url": "http://localhost:3001/mcp"
     }
   }
 }

@@ -152,6 +152,7 @@ class _ConversationListState extends ConsumerState<ConversationList> {
                         .read(selectedConversationIdProvider
                             .notifier)
                         .select(conv.id),
+                    onDuplicate: () => _duplicateConversation(conv),
                     onRename: () => _renameConversation(conv),
                     onDelete: () => _deleteConversation(conv),
                   );
@@ -175,6 +176,17 @@ class _ConversationListState extends ConsumerState<ConversationList> {
           ? settings.defaultSystemPrompt
           : null,
     );
+    if (!mounted) return;
+    ref.read(selectedConversationIdProvider.notifier).select(id);
+  }
+
+  Future<void> _duplicateConversation(Conversation conv) async {
+    final repo = ref.read(conversationRepositoryProvider);
+    final id = await repo.createConversation(
+      systemPrompt: conv.systemPrompt,
+      settings: conv.settings,
+    );
+    if (!mounted) return;
     ref.read(selectedConversationIdProvider.notifier).select(id);
   }
 
@@ -251,6 +263,7 @@ class _ConversationTile extends StatelessWidget {
   final Conversation conversation;
   final bool isSelected;
   final VoidCallback onTap;
+  final VoidCallback onDuplicate;
   final VoidCallback onRename;
   final VoidCallback onDelete;
 
@@ -258,6 +271,7 @@ class _ConversationTile extends StatelessWidget {
     required this.conversation,
     required this.isSelected,
     required this.onTap,
+    required this.onDuplicate,
     required this.onRename,
     required this.onDelete,
   });
@@ -307,6 +321,16 @@ class _ConversationTile extends StatelessWidget {
                   iconSize: 16,
                   itemBuilder: (context) => [
                     const PopupMenuItem(
+                      value: 'duplicate',
+                      child: Row(
+                        children: [
+                          Icon(Icons.add_circle_outline, size: 16),
+                          SizedBox(width: 8),
+                          Text('New from this'),
+                        ],
+                      ),
+                    ),
+                    const PopupMenuItem(
                       value: 'rename',
                       child: Row(
                         children: [
@@ -328,6 +352,7 @@ class _ConversationTile extends StatelessWidget {
                     ),
                   ],
                   onSelected: (value) {
+                    if (value == 'duplicate') onDuplicate();
                     if (value == 'rename') onRename();
                     if (value == 'delete') onDelete();
                   },

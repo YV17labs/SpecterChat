@@ -9,10 +9,14 @@ import '../models/message.dart';
 abstract interface class IConversationRepository {
   // --- Conversations ---
   Stream<List<Conversation>> watchAllConversations();
-  Future<String> createConversation({String? systemPrompt});
+  Future<String> createConversation({
+    String? systemPrompt,
+    ConversationSettings? settings,
+  });
   Future<void> renameConversation(String id, String title);
   Future<void> updateConversationSettings(
       String id, ConversationSettings? settings);
+  Future<void> updateLastPromptTokens(String id, int tokens);
   Future<void> deleteConversation(String id);
 
   // --- Messages ---

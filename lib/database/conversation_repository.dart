@@ -10,6 +10,9 @@ import 'database.dart' as db;
 import 'i_conversation_repository.dart';
 
 /// Drift-backed implementation of [IConversationRepository].
+String? _encodeSettings(ConversationSettings? settings) =>
+    settings != null ? jsonEncode(settings.toJson()) : null;
+
 class ConversationRepository implements IConversationRepository {
   final db.AppDatabase _database;
 
@@ -39,11 +42,15 @@ class ConversationRepository implements IConversationRepository {
       updatedAt: r.updatedAt,
       systemPrompt: r.systemPrompt,
       settings: settings,
+      lastPromptTokens: r.lastPromptTokens,
     );
   }
 
   @override
-  Future<String> createConversation({String? systemPrompt}) async {
+  Future<String> createConversation({
+    String? systemPrompt,
+    ConversationSettings? settings,
+  }) async {
     final id = generateId();
     final now = DateTime.now();
     await _database.insertConversation(db.ConversationsCompanion.insert(
@@ -52,6 +59,8 @@ class ConversationRepository implements IConversationRepository {
       createdAt: now,
       updatedAt: now,
       systemPrompt: Value(systemPrompt),
+      settings: Value(
+          _encodeSettings(settings)),
     ));
     return id;
   }
@@ -71,8 +80,16 @@ class ConversationRepository implements IConversationRepository {
     await _database.updateConversation(db.ConversationsCompanion(
       id: Value(id),
       settings: Value(
-          settings != null ? jsonEncode(settings.toJson()) : null),
+          _encodeSettings(settings)),
       updatedAt: Value(DateTime.now()),
+    ));
+  }
+
+  @override
+  Future<void> updateLastPromptTokens(String id, int tokens) async {
+    await _database.updateConversation(db.ConversationsCompanion(
+      id: Value(id),
+      lastPromptTokens: Value(tokens),
     ));
   }
 

@@ -1,5 +1,5 @@
 {
-  "name": "Specter Chat",
+  "name": "SpecterChat",
   "build": {
     "dockerfile": "Dockerfile",
     "context": ".."

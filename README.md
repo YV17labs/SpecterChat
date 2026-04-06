@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="assets/logo.svg" width="128" height="128" alt="Specter Chat logo">
+  <img src="assets/logo.svg" width="128" height="128" alt="SpecterChat logo">
 </p>
 
-<h1 align="center">Specter Chat</h1>
+<h1 align="center">SpecterChat</h1>
 
 <p align="center">
   A lightweight, cross-platform desktop chat client with MCP (Model Context Protocol) support.<br>
@@ -17,11 +17,11 @@
 
 ---
 
-Specter connects to any OpenAI-compatible API (Ollama, LM Studio, vLLM, llama.cpp server, etc.) and lets you interact with MCP servers to extend your model's capabilities with external tools.
+SpecterChat connects to any OpenAI-compatible API (Ollama, LM Studio, vLLM, llama.cpp server, etc.) and lets you interact with MCP servers to extend your model's capabilities with external tools.
 
-## Why Specter?
+## Why SpecterChat?
 
-Existing chat clients fail at one critical thing: when an MCP tool returns an image, they either don't display it or don't forward it to the model. Specter solves this — images from MCP tools are rendered inline **and** sent back to the model as base64 so it can actually see them.
+Existing chat clients fail at one critical thing: when an MCP tool returns an image, they either don't display it or don't forward it to the model. SpecterChat solves this — images from MCP tools are rendered inline **and** sent back to the model as base64 so it can actually see them.
 
 ## Features
 
@@ -122,7 +122,7 @@ flutter build linux --release
 
 ## Database & Migrations
 
-Specter uses **Drift** (SQLite ORM) with a versioned migration strategy.
+SpecterChat uses **Drift** (SQLite ORM) with a versioned migration strategy.
 
 - Schema version history and migration steps are documented in `CLAUDE.md`
 - Foreign key constraints are enforced at runtime (`PRAGMA foreign_keys = ON`)

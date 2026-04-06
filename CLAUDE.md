@@ -1,7 +1,7 @@
-# Specter Chat - Development Guide
+# SpecterChat - Development Guide
 
 ## Project Overview
-Specter is a lightweight cross-platform MCP chat client built with Flutter/Dart.
+SpecterChat is a lightweight cross-platform MCP chat client built with Flutter/Dart.
 Desktop only — **macOS first**, then Windows and Linux.
 
 ## Tech Stack

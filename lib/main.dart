@@ -37,7 +37,7 @@ void main() async {
     size: Size(1280, 800),
     minimumSize: Size(800, 500),
     center: true,
-    title: 'Specter Chat',
+    title: 'SpecterChat',
     titleBarStyle: TitleBarStyle.normal,
   );
 
@@ -55,7 +55,7 @@ class SpecterApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Specter Chat',
+      title: 'SpecterChat',
       debugShowCheckedModeBanner: false,
       theme: SpecterTheme.darkTheme,
       home: const AppShell(),

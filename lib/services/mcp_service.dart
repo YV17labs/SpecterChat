@@ -44,7 +44,7 @@ class McpClient {
       'protocolVersion': '2025-03-26',
       'capabilities': {},
       'clientInfo': {
-        'name': 'Specter Chat',
+        'name': 'SpecterChat',
         'version': '0.1.0',
       },
     });

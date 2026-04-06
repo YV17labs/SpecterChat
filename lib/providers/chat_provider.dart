@@ -98,7 +98,6 @@ class ChatNotifier extends Notifier<ChatState> {
     try {
       final repo = ref.read(conversationRepositoryProvider);
       final llm = ref.read(llmServiceProvider);
-      final settings = ref.read(settingsProvider);
       final mcpService = ref.read(mcpServiceProvider);
       final mcpTools = ref.read(mcpToolsProvider);
 
@@ -111,27 +110,13 @@ class ChatNotifier extends Notifier<ChatState> {
       );
       await repo.saveMessage(userMessage);
 
-      final conversation = ref.read(selectedConversationProvider);
-      // Use direct DB read to ensure the just-saved user message
-      // is included (stream provider may not have emitted yet).
-      final history = await repo.getMessages(conversationId);
-
-      final apiMessages = _logic.buildApiMessages(
-        history: history,
-        systemPrompt: _buildSystemPrompt(
-          conversation?.systemPrompt ?? settings.defaultSystemPrompt,
-        ),
-      );
-
       _cancelToken = CancelToken();
 
-      await _streamResponse(
+      await _rebuildAndStream(
         conversationId: conversationId,
-        apiMessages: apiMessages,
         llm: llm,
         mcpTools: mcpTools,
         mcpService: mcpService,
-        settings: settings,
         repo: repo,
       );
     } catch (e, st) {
@@ -175,6 +160,7 @@ class ChatNotifier extends Notifier<ChatState> {
     required IMcpService mcpService,
     required AppSettings settings,
     required IConversationRepository repo,
+    int hallucinationRetry = 0,
   }) async {
     final contentBuffer = StringBuffer();
     final thinkingBuffer = StringBuffer();
@@ -236,7 +222,8 @@ class ChatNotifier extends Notifier<ChatState> {
         case StreamDone():
           _stopStreamingThrottle();
           stopwatch.stop();
-          final hasContent = contentBuffer.isNotEmpty ||
+          final contentString = contentBuffer.toString();
+          final hasContent = contentString.isNotEmpty ||
               thinkingBuffer.isNotEmpty ||
               toolCalls.isNotEmpty;
 
@@ -244,7 +231,7 @@ class ChatNotifier extends Notifier<ChatState> {
             final assistantMessage = _logic.buildAssistantMessage(
               id: assistantId,
               conversationId: conversationId,
-              content: contentBuffer.toString(),
+              content: contentString,
               thinking: thinkingBuffer.toString(),
               toolCalls: toolCalls,
               isStreaming: false,
@@ -265,9 +252,23 @@ class ChatNotifier extends Notifier<ChatState> {
               mcpTools: mcpTools,
               repo: repo,
             );
+          } else if (hallucinationRetry < ChatLogic.maxHallucinationRetries &&
+              ChatLogic.detectHallucination(contentString)) {
+            _log.warning(
+              'Hallucinated tool-call XML detected '
+              '(attempt ${hallucinationRetry + 1}/'
+              '${ChatLogic.maxHallucinationRetries})',
+            );
+            await _retryAfterHallucination(
+              conversationId: conversationId,
+              llm: llm,
+              mcpTools: mcpTools,
+              mcpService: mcpService,
+              repo: repo,
+              hallucinationRetry: hallucinationRetry + 1,
+            );
           } else {
-            _autoTitleIfNeeded(
-                conversationId, contentBuffer.toString(), repo)
+            _autoTitleIfNeeded(conversationId, contentString, repo)
                 .ignore();
           }
           return;
@@ -308,8 +309,57 @@ class ChatNotifier extends Notifier<ChatState> {
       repo: repo,
     );
 
-    // Direct DB read to ensure tool results are included (stream
-    // provider may not have emitted yet).
+    await _rebuildAndStream(
+      conversationId: conversationId,
+      llm: llm,
+      mcpTools: mcpTools,
+      mcpService: mcpService,
+      repo: repo,
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Private — hallucination recovery
+  // ---------------------------------------------------------------------------
+
+  Future<void> _retryAfterHallucination({
+    required String conversationId,
+    required ILlmService llm,
+    required List<Map<String, dynamic>> mcpTools,
+    required IMcpService mcpService,
+    required IConversationRepository repo,
+    required int hallucinationRetry,
+  }) async {
+    final correctionMessage = Message(
+      id: generateId(),
+      conversationId: conversationId,
+      role: MessageRole.user,
+      content: [
+        const ContentBlock.text(text: ChatLogic.hallucinationCorrection),
+      ],
+      createdAt: DateTime.now(),
+    );
+    await repo.saveMessage(correctionMessage);
+
+    await _rebuildAndStream(
+      conversationId: conversationId,
+      llm: llm,
+      mcpTools: mcpTools,
+      mcpService: mcpService,
+      repo: repo,
+      hallucinationRetry: hallucinationRetry,
+    );
+  }
+
+  /// Re-read history from DB, rebuild API messages, and stream a new response.
+  Future<void> _rebuildAndStream({
+    required String conversationId,
+    required ILlmService llm,
+    required List<Map<String, dynamic>> mcpTools,
+    required IMcpService mcpService,
+    required IConversationRepository repo,
+    int hallucinationRetry = 0,
+  }) async {
     final history = await repo.getMessages(conversationId);
     final conversation = ref.read(selectedConversationProvider);
     final settingsNow = ref.read(settingsProvider);
@@ -329,6 +379,7 @@ class ChatNotifier extends Notifier<ChatState> {
       mcpService: mcpService,
       settings: settingsNow,
       repo: repo,
+      hallucinationRetry: hallucinationRetry,
     );
   }
 

@@ -2,7 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../models/message.dart';
+import '../../services/chat_logic.dart';
 import 'content_blocks.dart';
+
+// Auto-correction bubble colors.
+const _correctionBg = Color(0x26FFC107); // amber @ 0.15
+const _correctionBorder = Color(0x66FFC107); // amber @ 0.4
+const _correctionAvatarBg = Color(0x33FFC107); // amber @ 0.2
+const _correctionAccent = Color(0xFFFFCA28); // amber.shade300
 
 class MessageBubble extends StatelessWidget {
   final Message message;
@@ -14,19 +21,36 @@ class MessageBubble extends StatelessWidget {
     this.toolResults = const [],
   });
 
+  /// Whether this message is an auto-injected hallucination correction.
+  bool get _isAutoCorrection {
+    if (message.role != MessageRole.user) return false;
+    final text = message.content
+        .whereType<TextContentBlock>()
+        .map((b) => b.text)
+        .join();
+    return text == ChatLogic.hallucinationCorrection;
+  }
+
   @override
   Widget build(BuildContext context) {
     final isUser = message.role == MessageRole.user;
+    final isAutoCorrection = _isAutoCorrection;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       child: Row(
         mainAxisAlignment:
-            isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
+            isUser && !isAutoCorrection
+                ? MainAxisAlignment.end
+                : MainAxisAlignment.start,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (!isUser) ...[
-            const _Avatar(isAssistant: true),
+            const _Avatar(kind: _AvatarKind.assistant),
+            const SizedBox(width: 8),
+          ],
+          if (isAutoCorrection) ...[
+            const _Avatar(kind: _AvatarKind.autoCorrection),
             const SizedBox(width: 8),
           ],
           Flexible(
@@ -42,18 +66,30 @@ class MessageBubble extends StatelessWidget {
                           MediaQuery.of(context).size.width * 0.65,
                     ),
                     decoration: BoxDecoration(
-                      color: isUser
-                          ? Theme.of(context).colorScheme.primaryContainer
-                          : Theme.of(context)
-                              .colorScheme
-                              .surfaceContainerHigh,
+                      color: isAutoCorrection
+                          ? _correctionBg
+                          : isUser
+                              ? Theme.of(context).colorScheme.primaryContainer
+                              : Theme.of(context)
+                                  .colorScheme
+                                  .surfaceContainerHigh,
+                      border: isAutoCorrection
+                          ? Border.all(
+                              color: _correctionBorder,
+                              width: 1,
+                            )
+                          : null,
                       borderRadius: BorderRadius.only(
                         topLeft: const Radius.circular(16),
                         topRight: const Radius.circular(16),
                         bottomLeft:
-                            isUser ? const Radius.circular(16) : Radius.zero,
+                            isUser && !isAutoCorrection
+                                ? const Radius.circular(16)
+                                : Radius.zero,
                         bottomRight:
-                            isUser ? Radius.zero : const Radius.circular(16),
+                            isUser && !isAutoCorrection
+                                ? Radius.zero
+                                : const Radius.circular(16),
                       ),
                     ),
                     padding:
@@ -61,6 +97,18 @@ class MessageBubble extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        if (isAutoCorrection)
+                          const Padding(
+                            padding: EdgeInsets.only(bottom: 4),
+                            child: Text(
+                              'Auto-correction',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: _correctionAccent,
+                              ),
+                            ),
+                          ),
                         for (final block in message.content)
                           _ContentBlockWidget(block: block),
                         if (message.isStreaming) const _StreamingIndicator(),
@@ -106,7 +154,7 @@ class MessageBubble extends StatelessWidget {
           ),
           if (isUser) ...[
             const SizedBox(width: 8),
-            const _Avatar(isAssistant: false),
+            const _Avatar(kind: _AvatarKind.user),
           ],
         ],
       ),
@@ -209,14 +257,29 @@ class _HoverCopyWrapperState extends State<_HoverCopyWrapper> {
   }
 }
 
-class _Avatar extends StatelessWidget {
-  final bool isAssistant;
+enum _AvatarKind { user, assistant, autoCorrection }
 
-  const _Avatar({required this.isAssistant});
+class _Avatar extends StatelessWidget {
+  final _AvatarKind kind;
+
+  const _Avatar({required this.kind});
 
   @override
   Widget build(BuildContext context) {
+    if (kind == _AvatarKind.autoCorrection) {
+      return const CircleAvatar(
+        radius: 16,
+        backgroundColor: _correctionAvatarBg,
+        child: Icon(
+          Icons.auto_fix_high,
+          size: 18,
+          color: _correctionAccent,
+        ),
+      );
+    }
+
     final cs = Theme.of(context).colorScheme;
+    final isAssistant = kind == _AvatarKind.assistant;
     return CircleAvatar(
       radius: 16,
       backgroundColor: isAssistant ? cs.secondary : cs.primary,

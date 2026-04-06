@@ -16,6 +16,29 @@ class ToolCallAccumulator {
 class ChatLogic {
   const ChatLogic();
 
+  /// Patterns that small models hallucinate instead of using real tool calls.
+  static final _hallucinationPatterns = [
+    RegExp(r'<tool_call>', caseSensitive: false),
+    RegExp(r'<function=\w+', caseSensitive: false),
+    RegExp(r'<invoke\s', caseSensitive: false),
+  ];
+
+  /// Maximum number of automatic retries when hallucination is detected.
+  static const maxHallucinationRetries = 2;
+
+  /// Returns `true` if [content] contains hallucinated tool-call XML
+  /// that the model produced as raw text instead of real tool calls.
+  static bool detectHallucination(String content) {
+    return _hallucinationPatterns.any((p) => p.hasMatch(content));
+  }
+
+  /// Correction message sent back to the model after a hallucination.
+  static const hallucinationCorrection =
+      'Your previous response contained raw XML tool-call syntax '
+      '(<tool_call>, <function=…>) instead of an actual tool call. '
+      'This is not valid. Please answer the question directly in plain '
+      'text, or use the provided tools properly via function calling.';
+
   /// Build an assistant [Message] from accumulated stream buffers.
   Message buildAssistantMessage({
     required String id,

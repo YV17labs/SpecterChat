@@ -1,12 +1,5 @@
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:logging/logging.dart';
-
-import 'mcp_provider.dart';
-import 'settings_provider.dart';
-
-final _log = Logger('AppLifecycle');
-
 /// Application lifecycle events.
 enum AppEvent { started, resumed, paused }
 
@@ -25,8 +18,8 @@ class AppLifecycleNotifier extends WidgetsBindingObserver {
 
   /// Event → handler registry. Add new lifecycle actions here.
   static final Map<AppEvent, List<AppEventHandler>> _handlers = {
-    AppEvent.started: [_reconnectMcpServers],
-    AppEvent.resumed: [_reconnectMcpServers],
+    AppEvent.started: [],
+    AppEvent.resumed: [],
   };
 
   /// Call once after the first frame to fire [AppEvent.started].
@@ -59,32 +52,5 @@ class AppLifecycleNotifier extends WidgetsBindingObserver {
     for (final handler in handlers) {
       handler(_ref).ignore();
     }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Event handlers
-  // ---------------------------------------------------------------------------
-
-  /// Reconnect all enabled MCP servers that aren't currently connected.
-  static Future<void> _reconnectMcpServers(WidgetRef ref) async {
-    final settings = ref.read(settingsProvider);
-    final mcpService = ref.read(mcpServiceProvider);
-    final notifier = ref.read(settingsProvider.notifier);
-
-    await Future.wait(
-      settings.mcpServers
-          .where((s) => s.enabled && !s.connected)
-          .map((server) async {
-        try {
-          await connectMcpServer(
-            server: server,
-            mcpService: mcpService,
-            notifier: notifier,
-          );
-        } catch (e) {
-          _log.info('MCP server "${server.name}" unavailable on reconnect', e);
-        }
-      }),
-    );
   }
 }

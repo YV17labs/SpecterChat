@@ -84,44 +84,28 @@ class ToolExecutor {
     required McpToolResult result,
     required Map<String, dynamic> arguments,
   }) {
-    final contentBlocks = <ContentBlock>[];
-    final textParts = <String>[];
-    String? imageBase64;
-    String? imageMimeType;
-
+    final resultContent = <ContentBlock>[];
     final rawItems = <Map<String, dynamic>>[];
 
     for (final content in result.content) {
       switch (content) {
         case McpTextContent(:final text):
-          textParts.add(text);
+          resultContent.add(ContentBlock.text(text: text));
           rawItems.add({'type': 'text', 'text': text});
         case McpImageContent(:final base64Data, :final mimeType):
-          imageBase64 = base64Data;
-          imageMimeType = mimeType;
+          resultContent
+              .add(ContentBlock.image(base64Data: base64Data, mimeType: mimeType));
           final sizeKb = (base64Data.length * 3 / 4 / 1024).round();
           rawItems.add({
             'type': 'image',
             'mimeType': mimeType,
             'data': '<base64 ~${sizeKb}KB>',
           });
-      }
-    }
-
-    // When the result contains an image, add a description that tells the
-    // model whether the screenshot carries exploitable XY coordinates.
-    if (imageBase64 != null) {
-      final annotateValue = arguments['annotate'];
-      final isAnnotated =
-          annotateValue == true || annotateValue == 'true';
-      if (isAnnotated) {
-        textParts.add(
-          'Annotated screenshot: colored boxes with (x, y) coordinate '
-          'labels mark each detected UI element. Use these coordinates '
-          'for click/scroll actions.',
-        );
-      } else if (textParts.isEmpty) {
-        textParts.add('Raw screenshot without annotations.');
+        case McpUnsupportedContent(:final type, :final raw):
+          resultContent.add(ContentBlock.text(
+            text: '[Unsupported content type: $type]',
+          ));
+          rawItems.add(raw);
       }
     }
 
@@ -130,20 +114,18 @@ class ToolExecutor {
       'content': rawItems,
     });
 
-    contentBlocks.add(ContentBlock.toolResult(
-      toolCallId: toolCallId,
-      toolName: toolName,
-      content: textParts.join('\n'),
-      imageBase64: imageBase64,
-      imageMimeType: imageMimeType,
-      rawResponse: rawResponse,
-    ));
-
     return Message(
       id: generateId(),
       conversationId: conversationId,
       role: MessageRole.tool,
-      content: contentBlocks,
+      content: [
+        ContentBlock.toolResult(
+          toolCallId: toolCallId,
+          toolName: toolName,
+          resultContent: resultContent,
+          rawResponse: rawResponse,
+        ),
+      ],
       createdAt: DateTime.now(),
     );
   }
@@ -162,7 +144,7 @@ class ToolExecutor {
         ContentBlock.toolResult(
           toolCallId: toolCallId,
           toolName: toolName,
-          content: error,
+          resultContent: [ContentBlock.text(text: error)],
           rawResponse: _prettyJson.convert({
             'isError': true,
             'error': error,

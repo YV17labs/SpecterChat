@@ -83,13 +83,14 @@ class McpClient {
       final item = c as Map<String, dynamic>;
       final type = item['type'] as String? ?? 'text';
 
-      if (type == 'image') {
-        return McpImageContent(
-          base64Data: item['data'] as String,
-          mimeType: item['mimeType'] as String? ?? 'image/png',
-        );
-      }
-      return McpTextContent(item['text'] as String? ?? '');
+      return switch (type) {
+        'text' => McpTextContent(item['text'] as String? ?? ''),
+        'image' => McpImageContent(
+            base64Data: item['data'] as String,
+            mimeType: item['mimeType'] as String? ?? 'image/png',
+          ),
+        _ => McpUnsupportedContent(type: type, raw: item),
+      };
     }).toList();
 
     return McpToolResult(content: content, isError: isError);

@@ -103,10 +103,32 @@ class ConversationRepository implements IConversationRepository {
 
   static model.Message _dbMessageToModel(db.Message row) {
     final contentJson = jsonDecode(row.content) as List;
-    final content = contentJson
-        .map((c) =>
-            model.ContentBlock.fromJson(c as Map<String, dynamic>))
-        .toList();
+    final content = contentJson.map((c) {
+      final map = c as Map<String, dynamic>;
+      // Migrate old ToolResultContentBlock format (content/imageBase64 fields)
+      // to the new resultContent list.
+      if (map['runtimeType'] == 'toolResult' &&
+          !map.containsKey('resultContent')) {
+        final migrated = <Map<String, dynamic>>[];
+        final oldContent = map['content'] as String?;
+        if (oldContent != null && oldContent.isNotEmpty) {
+          migrated.add({'runtimeType': 'text', 'text': oldContent});
+        }
+        final oldImage = map['imageBase64'] as String?;
+        if (oldImage != null) {
+          migrated.add({
+            'runtimeType': 'image',
+            'base64Data': oldImage,
+            'mimeType': map['imageMimeType'] ?? 'image/png',
+          });
+        }
+        map['resultContent'] = migrated;
+        map.remove('content');
+        map.remove('imageBase64');
+        map.remove('imageMimeType');
+      }
+      return model.ContentBlock.fromJson(map);
+    }).toList();
 
     return model.Message(
       id: row.id,

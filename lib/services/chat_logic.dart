@@ -90,21 +90,23 @@ class ChatLogic {
       // tool-role content, so images must go in a separate user message.
       if (msg.role == MessageRole.tool) {
         for (final block in msg.content) {
-          if (block is ToolResultContentBlock &&
-              block.imageBase64 != null) {
-            pendingImageParts.add({
-              'type': 'image_url',
-              'image_url': {
-                'url':
-                    'data:${block.imageMimeType ?? "image/png"};base64,${block.imageBase64}',
-              },
-            });
-            pendingImageParts.add({
-              'type': 'text',
-              'text': block.content.isNotEmpty
-                  ? block.content
-                  : 'Image result from tool "${block.toolName}".',
-            });
+          if (block is ToolResultContentBlock) {
+            for (final inner in block.resultContent) {
+              if (inner is ImageContentBlock) {
+                pendingImageParts.add({
+                  'type': 'image_url',
+                  'image_url': {
+                    'url':
+                        'data:${inner.mimeType};base64,${inner.base64Data}',
+                  },
+                });
+                pendingImageParts.add({
+                  'type': 'text',
+                  'text':
+                      'Image result from tool "${block.toolName}".',
+                });
+              }
+            }
           }
         }
       }

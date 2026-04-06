@@ -278,16 +278,12 @@ class _ContentBlockWidget extends StatelessWidget {
         ToolCallBlock(name: name, arguments: arguments),
       ToolResultContentBlock(
         :final toolName,
-        :final content,
-        :final imageBase64,
-        :final imageMimeType,
+        :final resultContent,
         :final rawResponse
       ) =>
         ToolResultBlock(
           toolName: toolName,
-          content: content,
-          imageBase64: imageBase64,
-          imageMimeType: imageMimeType,
+          resultContent: resultContent,
           rawResponse: rawResponse,
         ),
       ThinkingContentBlock(:final text) => ThinkingBlock(text: text),

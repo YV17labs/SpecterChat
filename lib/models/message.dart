@@ -32,9 +32,7 @@ sealed class ContentBlock with _$ContentBlock {
   const factory ContentBlock.toolResult({
     required String toolCallId,
     required String toolName,
-    required String content,
-    String? imageBase64,
-    String? imageMimeType,
+    @Default(<ContentBlock>[]) List<ContentBlock> resultContent,
     @Default('') String rawResponse,
   }) = ToolResultContentBlock;
 
@@ -123,12 +121,18 @@ extension MessageToApi on Message {
     }
 
     if (role == MessageRole.tool) {
-      final result = content.whereType<ToolResultContentBlock>().first;
-      return {
-        'role': 'tool',
-        'tool_call_id': result.toolCallId,
-        'content': result.content,
-      };
+      final result = content.whereType<ToolResultContentBlock>().firstOrNull;
+      if (result != null) {
+        final texts = result.resultContent
+            .whereType<TextContentBlock>()
+            .map((t) => t.text)
+            .join('\n');
+        return {
+          'role': 'tool',
+          'tool_call_id': result.toolCallId,
+          'content': texts,
+        };
+      }
     }
 
     final apiContent = toApiContent();

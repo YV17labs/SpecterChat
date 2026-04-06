@@ -21,6 +21,13 @@ class McpImageContent extends McpContent {
   McpImageContent({required this.base64Data, required this.mimeType});
 }
 
+/// Preserves any content type not yet handled (audio, video, resource…).
+class McpUnsupportedContent extends McpContent {
+  final String type;
+  final Map<String, dynamic> raw;
+  McpUnsupportedContent({required this.type, required this.raw});
+}
+
 /// Result of connecting to an MCP server.
 class McpConnectResult {
   final List<McpToolInfo> tools;

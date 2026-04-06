@@ -25,7 +25,7 @@ class ModelSelector extends ConsumerWidget {
                 }
                 return DropdownButtonFormField<String>(
                   isExpanded: true,
-                  value: models.contains(settings.api.selectedModel)
+                  initialValue: models.contains(settings.api.selectedModel)
                       ? settings.api.selectedModel
                       : null,
                   decoration: settingsInputDecoration(context, ''),

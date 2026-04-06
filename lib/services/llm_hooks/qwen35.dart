@@ -3,6 +3,7 @@
 /// Qwen 3.5 frequently hallucinates tool calls as raw XML
 /// (`<tool_call>`, `<function=…>`) in content or thinking output
 /// instead of using the native tool-call mechanism.
+library;
 import 'llm_hook.dart';
 
 final _patterns = [

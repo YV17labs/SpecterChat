@@ -12,7 +12,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/platform-macOS%20|%20Linux%20|%20Windows-blue" alt="Platforms">
   <img src="https://img.shields.io/badge/flutter-%3E%3D3.29-02569B?logo=flutter" alt="Flutter">
-  <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
+  <img src="https://img.shields.io/badge/license-Proprietary-red" alt="License">
 </p>
 
 ---
@@ -159,4 +159,4 @@ Specter uses **Drift** (SQLite ORM) with a versioned migration strategy.
 
 ## License
 
-MIT
+Proprietary. Copyright (c) 2026 Yoann Vanitou / YV17Labs. All rights reserved. See [LICENSE](LICENSE) for details.

@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6C63FF"/>
+      <stop offset="100%" stop-color="#4A3FD4"/>
+    </linearGradient>
+    <linearGradient id="ghost" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#E8E6FF"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background rounded square -->
+  <rect x="0" y="0" width="512" height="512" rx="108" ry="108" fill="url(#bg)"/>
+
+  <!-- Ghost body -->
+  <path d="
+    M 256 100
+    C 170 100, 120 160, 120 240
+    L 120 370
+    C 120 380, 130 385, 138 378
+    L 158 358
+    C 164 352, 174 352, 180 358
+    L 200 378
+    C 206 384, 216 384, 222 378
+    L 242 358
+    C 248 352, 258 352, 264 358
+    L 284 378
+    C 290 384, 300 384, 306 378
+    L 326 358
+    C 332 352, 342 352, 348 358
+    L 368 378
+    C 376 385, 386 380, 386 370
+    L 386 240
+    C 386 160, 336 100, 256 100
+    Z
+  " fill="url(#ghost)" opacity="0.95"/>
+
+  <!-- Left eye -->
+  <ellipse cx="215" cy="220" rx="22" ry="26" fill="#6C63FF"/>
+  <ellipse cx="221" cy="214" rx="8" ry="10" fill="#FFFFFF"/>
+
+  <!-- Right eye -->
+  <ellipse cx="301" cy="220" rx="22" ry="26" fill="#6C63FF"/>
+  <ellipse cx="307" cy="214" rx="8" ry="10" fill="#FFFFFF"/>
+
+  <!-- Chat bubble -->
+  <path d="
+    M 330 130
+    C 330 108, 350 90, 380 90
+    L 430 90
+    C 460 90, 470 108, 470 130
+    L 470 160
+    C 470 182, 460 192, 430 192
+    L 380 192
+    L 355 215
+    L 360 192
+    C 340 190, 330 178, 330 160
+    Z
+  " fill="#FFFFFF" opacity="0.9"/>
+
+  <!-- Chat dots -->
+  <circle cx="380" cy="142" r="8" fill="#6C63FF"/>
+  <circle cx="408" cy="142" r="8" fill="#6C63FF"/>
+  <circle cx="436" cy="142" r="8" fill="#6C63FF"/>
+</svg>

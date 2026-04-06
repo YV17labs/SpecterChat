@@ -55,7 +55,24 @@ dev_dependencies:
   # Testing
   mocktail: ^1.0.4
   http_mock_adapter: ^0.6.1
+  flutter_launcher_icons: ^0.14.4
+
+flutter_launcher_icons:
+  image_path: "assets/logo.png"
+  android: false
+  ios: false
+  macos:
+    generate: true
+    image_path: "assets/logo.png"
+  windows:
+    generate: true
+    image_path: "assets/logo.png"
+  linux:
+    generate: true
+    image_path: "assets/logo.png"
 
 flutter:
   uses-material-design: true
-  assets: []
+  assets:
+    - assets/logo.png
+    - assets/logo.svg

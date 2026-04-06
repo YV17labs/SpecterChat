@@ -77,7 +77,7 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
     final global = ref.read(settingsProvider);
     _baseUrlController.text = global.api.baseUrl;
     _apiKeyController.text = global.api.apiKey;
-    _contextLengthController.text = global.api.contextLength.toString();
+    _contextLengthController.text = effective.contextLength.toString();
     _systemPromptController.text = effective.systemPrompt;
     _topKController.text = effective.generation.topK.toString();
     _maxTokensController.text = effective.generation.maxTokens.toString();
@@ -175,8 +175,7 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
               onChanged: (v) {
                 final val = int.tryParse(v);
                 if (val != null && val > 0) {
-                  ref.read(settingsProvider.notifier).updateApi(
-                      settings.api.copyWith(contextLength: val));
+                  _updateContextLength(val);
                 }
               },
             ),
@@ -350,6 +349,19 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
       );
     } else {
       ref.read(settingsProvider.notifier).updateGeneration(generation);
+    }
+  }
+
+  void _updateContextLength(int contextLength) {
+    final conversation = ref.read(selectedConversationProvider);
+    if (conversation != null) {
+      _updateConversationSettings(
+        (s) => s.copyWith(contextLength: contextLength),
+      );
+    } else {
+      final settings = ref.read(settingsProvider);
+      ref.read(settingsProvider.notifier).updateApi(
+          settings.api.copyWith(contextLength: contextLength));
     }
   }
 

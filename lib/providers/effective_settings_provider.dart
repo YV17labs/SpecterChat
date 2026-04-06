@@ -13,6 +13,7 @@ import 'settings_provider.dart';
 class EffectiveSettings {
   final String systemPrompt;
   final GenerationSettings generation;
+  final int contextLength;
   final List<String> enabledMcpServerIds;
 
   /// `true` when a conversation is selected (settings are per-conversation).
@@ -21,6 +22,7 @@ class EffectiveSettings {
   const EffectiveSettings({
     required this.systemPrompt,
     required this.generation,
+    required this.contextLength,
     required this.enabledMcpServerIds,
     required this.hasConversation,
   });
@@ -31,6 +33,7 @@ class EffectiveSettings {
       other is EffectiveSettings &&
           systemPrompt == other.systemPrompt &&
           generation == other.generation &&
+          contextLength == other.contextLength &&
           hasConversation == other.hasConversation &&
           listEquals(enabledMcpServerIds, other.enabledMcpServerIds);
 
@@ -38,6 +41,7 @@ class EffectiveSettings {
   int get hashCode => Object.hash(
         systemPrompt,
         generation,
+        contextLength,
         hasConversation,
         Object.hashAll(enabledMcpServerIds),
       );
@@ -51,6 +55,7 @@ final effectiveSettingsProvider = Provider<EffectiveSettings>((ref) {
     return EffectiveSettings(
       systemPrompt: global.defaultSystemPrompt,
       generation: global.generation,
+      contextLength: global.api.contextLength,
       enabledMcpServerIds: const [],
       hasConversation: false,
     );
@@ -63,6 +68,7 @@ final effectiveSettingsProvider = Provider<EffectiveSettings>((ref) {
         conversation.systemPrompt ??
         global.defaultSystemPrompt,
     generation: overrides?.generation ?? global.generation,
+    contextLength: overrides?.contextLength ?? global.api.contextLength,
     enabledMcpServerIds: overrides?.enabledMcpServerIds ?? const [],
     hasConversation: true,
   );

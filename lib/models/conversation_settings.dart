@@ -13,6 +13,7 @@ abstract class ConversationSettings with _$ConversationSettings {
   const factory ConversationSettings({
     String? systemPrompt,
     GenerationSettings? generation,
+    int? contextLength,
 
     /// IDs of MCP servers the user explicitly enabled for this conversation.
     /// `null` means no override (no servers enabled); `[]` means explicitly none.

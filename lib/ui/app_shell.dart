@@ -55,7 +55,7 @@ class _AppShellState extends ConsumerState<AppShell> {
                           color: Theme.of(context)
                               .colorScheme
                               .outlineVariant
-                              .withOpacity(0.3),
+                              .withValues(alpha: 0.3),
                         ),
                       ),
                     ),
@@ -100,7 +100,7 @@ class _AppShellState extends ConsumerState<AppShell> {
                           color: Theme.of(context)
                               .colorScheme
                               .outlineVariant
-                              .withOpacity(0.3),
+                              .withValues(alpha: 0.3),
                         ),
                       ),
                     ),
@@ -140,7 +140,7 @@ class _SidebarToggle extends StatelessWidget {
               color: Theme.of(context)
                   .colorScheme
                   .onSurface
-                  .withOpacity(0.3),
+                  .withValues(alpha: 0.3),
             ),
           ),
         ),

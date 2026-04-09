@@ -48,7 +48,7 @@ class LabeledField extends StatelessWidget {
             color: Theme.of(context)
                 .colorScheme
                 .onSurface
-                .withOpacity(0.6),
+                .withValues(alpha: 0.6),
           ),
         ),
         const SizedBox(height: 4),
@@ -91,7 +91,7 @@ class SliderField extends StatelessWidget {
                 color: Theme.of(context)
                     .colorScheme
                     .onSurface
-                    .withOpacity(0.6),
+                    .withValues(alpha: 0.6),
               ),
             ),
             const Spacer(),
@@ -136,7 +136,7 @@ InputDecoration settingsInputDecoration(
       borderRadius: BorderRadius.circular(8),
       borderSide: BorderSide(
         color:
-            Theme.of(context).colorScheme.outline.withOpacity(0.3),
+            Theme.of(context).colorScheme.outline.withValues(alpha: 0.3),
       ),
     ),
     filled: true,

@@ -118,7 +118,7 @@ class _ConversationListState extends ConsumerState<ConversationList> {
                           color: Theme.of(context)
                               .colorScheme
                               .onSurface
-                              .withOpacity(0.3),
+                              .withValues(alpha: 0.3),
                         ),
                         const SizedBox(height: 12),
                         Text(
@@ -129,7 +129,7 @@ class _ConversationListState extends ConsumerState<ConversationList> {
                             color: Theme.of(context)
                                 .colorScheme
                                 .onSurface
-                                .withOpacity(0.5),
+                                .withValues(alpha: 0.5),
                           ),
                         ),
                       ],
@@ -315,7 +315,7 @@ class _ConversationTile extends StatelessWidget {
                     color: Theme.of(context)
                         .colorScheme
                         .onSurface
-                        .withOpacity(0.5),
+                        .withValues(alpha: 0.5),
                   ),
                   padding: EdgeInsets.zero,
                   iconSize: 16,

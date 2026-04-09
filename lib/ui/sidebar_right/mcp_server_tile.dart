@@ -40,7 +40,7 @@ class McpServerTile extends ConsumerWidget {
               : Theme.of(context)
                   .colorScheme
                   .onSurface
-                  .withOpacity(0.4),
+                  .withValues(alpha: 0.4),
         ),
         title: Text(
           server.name,
@@ -54,7 +54,7 @@ class McpServerTile extends ConsumerWidget {
             color: Theme.of(context)
                 .colorScheme
                 .onSurface
-                .withOpacity(0.5),
+                .withValues(alpha: 0.5),
           ),
         ),
         trailing: Row(

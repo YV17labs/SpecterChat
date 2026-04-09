@@ -340,7 +340,7 @@ class _EmptyState extends StatelessWidget {
             color: Theme.of(context)
                 .colorScheme
                 .onSurface
-                .withOpacity(0.2),
+                .withValues(alpha: 0.2),
           ),
           const SizedBox(height: 16),
           Text(
@@ -350,7 +350,7 @@ class _EmptyState extends StatelessWidget {
               color: Theme.of(context)
                   .colorScheme
                   .onSurface
-                  .withOpacity(0.4),
+                  .withValues(alpha: 0.4),
             ),
           ),
         ],
@@ -372,7 +372,7 @@ class _WelcomeMessage extends StatelessWidget {
             color: Theme.of(context)
                 .colorScheme
                 .primary
-                .withOpacity(0.5),
+                .withValues(alpha: 0.5),
           ),
           const SizedBox(height: 16),
           Text(
@@ -383,7 +383,7 @@ class _WelcomeMessage extends StatelessWidget {
               color: Theme.of(context)
                   .colorScheme
                   .onSurface
-                  .withOpacity(0.5),
+                  .withValues(alpha: 0.5),
             ),
           ),
           const SizedBox(height: 8),
@@ -394,7 +394,7 @@ class _WelcomeMessage extends StatelessWidget {
               color: Theme.of(context)
                   .colorScheme
                   .onSurface
-                  .withOpacity(0.3),
+                  .withValues(alpha: 0.3),
             ),
           ),
         ],
@@ -450,7 +450,7 @@ class _InputArea extends StatelessWidget {
                       color: Theme.of(context)
                           .colorScheme
                           .outline
-                          .withOpacity(0.3),
+                          .withValues(alpha: 0.3),
                     ),
                   ),
                   focusedBorder: OutlineInputBorder(
@@ -542,7 +542,7 @@ class _ContextGauge extends StatelessWidget {
               color: Theme.of(context)
                   .colorScheme
                   .onSurface
-                  .withOpacity(0.5),
+                  .withValues(alpha: 0.5),
             ),
           ),
         ],

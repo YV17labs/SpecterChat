@@ -89,14 +89,22 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
     final effective = ref.watch(effectiveSettingsProvider);
     final hasConversation = effective.hasConversation;
 
-    // Re-sync text controllers when switching conversations.
+    // Re-sync text controllers when switching conversations and drop any
+    // pending optimistic override (it belonged to the previous conversation).
     ref.listen(selectedConversationIdProvider, (prev, next) {
       if (prev != next) {
+        _pendingConversationSettings = null;
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) _syncControllers();
         });
       }
     });
+
+    // Optimistic display: while a conversation-scoped change is mid-debounce,
+    // the database (and thus `effective`) hasn't caught up yet. Render from
+    // the pending override so sliders track the user's drag in real time.
+    final displayedGeneration =
+        _pendingConversationSettings?.generation ?? effective.generation;
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -189,21 +197,21 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
         const SizedBox(height: 8),
         SliderField(
           label: 'Temperature',
-          value: effective.generation.temperature,
+          value: displayedGeneration.temperature,
           min: 0,
           max: 2,
           divisions: 40,
           onChanged: (v) => _updateGeneration(
-              effective.generation.copyWith(temperature: v)),
+              displayedGeneration.copyWith(temperature: v)),
         ),
         SliderField(
           label: 'Top-P',
-          value: effective.generation.topP,
+          value: displayedGeneration.topP,
           min: 0,
           max: 1,
           divisions: 20,
           onChanged: (v) => _updateGeneration(
-              effective.generation.copyWith(topP: v)),
+              displayedGeneration.copyWith(topP: v)),
         ),
         LabeledField(
           label: 'Top-K',
@@ -217,7 +225,7 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
                 final val = int.tryParse(v);
                 if (val != null) {
                   _updateGeneration(
-                      effective.generation.copyWith(topK: val));
+                      displayedGeneration.copyWith(topK: val));
                 }
               },
             ),
@@ -236,7 +244,7 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
                 final val = int.tryParse(v);
                 if (val != null) {
                   _updateGeneration(
-                      effective.generation.copyWith(maxTokens: val));
+                      displayedGeneration.copyWith(maxTokens: val));
                 }
               },
             ),
@@ -245,39 +253,39 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
         const SizedBox(height: 8),
         SliderField(
           label: 'Min-P',
-          value: effective.generation.minP,
+          value: displayedGeneration.minP,
           min: 0,
           max: 1,
           divisions: 20,
           onChanged: (v) => _updateGeneration(
-              effective.generation.copyWith(minP: v)),
+              displayedGeneration.copyWith(minP: v)),
         ),
         SliderField(
           label: 'Repeat Penalty',
-          value: effective.generation.repeatPenalty,
+          value: displayedGeneration.repeatPenalty,
           min: 1,
           max: 2,
           divisions: 20,
           onChanged: (v) => _updateGeneration(
-              effective.generation.copyWith(repeatPenalty: v)),
+              displayedGeneration.copyWith(repeatPenalty: v)),
         ),
         SliderField(
           label: 'Frequency Penalty',
-          value: effective.generation.frequencyPenalty,
+          value: displayedGeneration.frequencyPenalty,
           min: 0,
           max: 2,
           divisions: 40,
           onChanged: (v) => _updateGeneration(
-              effective.generation.copyWith(frequencyPenalty: v)),
+              displayedGeneration.copyWith(frequencyPenalty: v)),
         ),
         SliderField(
           label: 'Presence Penalty',
-          value: effective.generation.presencePenalty,
+          value: displayedGeneration.presencePenalty,
           min: 0,
           max: 2,
           divisions: 40,
           onChanged: (v) => _updateGeneration(
-              effective.generation.copyWith(presencePenalty: v)),
+              displayedGeneration.copyWith(presencePenalty: v)),
         ),
 
         const Divider(height: 32),
@@ -289,6 +297,7 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
           controller: _systemPromptController,
           decoration: settingsInputDecoration(
               context, 'You are a helpful assistant...'),
+          style: const TextStyle(fontSize: 11, height: 1.4),
           maxLines: 5,
           minLines: 3,
           onChanged: (value) => _updateSystemPrompt(value),
@@ -399,14 +408,22 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
         conversation.settings ??
         const ConversationSettings();
     final updated = update(current);
-    _pendingConversationSettings = updated;
+    // No-op guard: slider drags can fire onChanged at the same rounded
+    // value repeatedly — skip the rebuild and timer re-arm in that case.
+    if (updated == _pendingConversationSettings) return;
+    // setState so the build picks up the new pending value immediately —
+    // otherwise sliders snap back to the stale `effective` value while the
+    // database write is still debounced.
+    setState(() => _pendingConversationSettings = updated);
     _conversationSettingsDebounce?.cancel();
     _conversationSettingsDebounce =
         Timer(const Duration(milliseconds: 500), () {
-      _pendingConversationSettings = null;
       ref
           .read(conversationRepositoryProvider)
           .updateConversationSettings(conversation.id, updated);
+      // Keep the pending override in place — it now matches what's in the
+      // database, so there's no flicker, and clearing it before the Drift
+      // stream re-emits would cause one.
     });
   }
 

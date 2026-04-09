@@ -253,11 +253,23 @@ class ChatNotifier extends Notifier<ChatState> {
           stopwatch.stop();
           final contentString = contentBuffer.toString();
           final thinkingString = thinkingBuffer.toString();
-          final hasContent = contentString.isNotEmpty ||
-              thinkingString.isNotEmpty ||
-              toolCalls.isNotEmpty;
 
-          if (hasContent) {
+          // Hallucination check must run BEFORE persistence — a hallucinated
+          // message in the DB is replayed on every future request and the
+          // API rejects the whole payload.
+          final modelName = settings.api.selectedModel;
+          final hasHallucination = llm_hooks.detectHallucination(
+              modelName, contentString, thinkingString);
+
+          // Thinking blocks are stripped at wire serialization, so a
+          // thinking-only message becomes `content: []` (API 400). Only
+          // persist when there is text or a valid tool call.
+          final hasValidToolCalls =
+              toolCalls.values.any((tc) => tc.isValid);
+          final isSendable =
+              contentString.isNotEmpty || hasValidToolCalls;
+
+          if (isSendable && !hasHallucination) {
             final assistantMessage = _logic.buildAssistantMessage(
               id: assistantId,
               conversationId: conversationId,
@@ -280,11 +292,7 @@ class ChatNotifier extends Notifier<ChatState> {
                 .ignore();
           }
 
-          final modelName = settings.api.selectedModel;
-          final hasHallucination = llm_hooks.detectHallucination(
-              modelName, contentString, thinkingString);
-
-          if (toolCalls.isNotEmpty && !hasHallucination) {
+          if (hasValidToolCalls && !hasHallucination) {
             await _continueWithToolResults(
               conversationId: conversationId,
               toolCalls: toolCalls,

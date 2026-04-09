@@ -41,6 +41,8 @@ dependencies:
   logging: ^1.3.0
   # Shared preferences (simple settings)
   shared_preferences: ^2.5.5
+  # Image clipboard (mac/win/linux) — Flutter's native Clipboard is text-only
+  pasteboard: ^0.4.0
 
 dev_dependencies:
   flutter_test:

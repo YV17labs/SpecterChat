@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:logging/logging.dart';
+import 'package:pasteboard/pasteboard.dart';
 
 import '../../models/message.dart';
 import 'expandable_block.dart';
@@ -75,6 +77,34 @@ class ImageBlock extends StatefulWidget {
 class _ImageBlockState extends State<ImageBlock> {
   Uint8List? _decodedBytes;
   double? _aspectRatio;
+  bool _hovering = false;
+  bool _justCopied = false;
+  Timer? _copiedResetTimer;
+
+  Future<void> _copyToClipboard() async {
+    if (_decodedBytes == null) return;
+    try {
+      await Pasteboard.writeImage(_decodedBytes);
+      if (!mounted) return;
+      setState(() => _justCopied = true);
+      _copiedResetTimer?.cancel();
+      _copiedResetTimer = Timer(const Duration(milliseconds: 1500), () {
+        if (mounted) setState(() => _justCopied = false);
+      });
+    } catch (e) {
+      _log.warning('Failed to copy image to clipboard', e);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Failed to copy image')),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _copiedResetTimer?.cancel();
+    super.dispose();
+  }
 
   @override
   void initState() {
@@ -145,14 +175,44 @@ class _ImageBlockState extends State<ImageBlock> {
       },
     );
 
-    return GestureDetector(
-      onTap: () => _showFullscreen(context),
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(8),
-          child: imageWidget,
-        ),
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovering = true),
+      onExit: (_) => setState(() => _hovering = false),
+      child: Stack(
+        children: [
+          GestureDetector(
+            onTap: () => _showFullscreen(context),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: imageWidget,
+            ),
+          ),
+          Positioned(
+            right: 8,
+            bottom: 8,
+            child: AnimatedOpacity(
+              opacity: (_hovering || _justCopied) ? 1.0 : 0.0,
+              duration: const Duration(milliseconds: 150),
+              child: Material(
+                color: Colors.black.withValues(alpha: 0.55),
+                borderRadius: BorderRadius.circular(6),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(6),
+                  onTap: _copyToClipboard,
+                  child: Padding(
+                    padding: const EdgeInsets.all(6),
+                    child: Icon(
+                      _justCopied ? Icons.check : Icons.copy,
+                      size: 16,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -34,8 +34,8 @@ void main() async {
   await windowManager.ensureInitialized();
 
   const windowOptions = WindowOptions(
-    size: Size(1280, 800),
-    minimumSize: Size(800, 500),
+    size: Size(1400, 900),
+    minimumSize: Size(1024, 640),
     center: true,
     title: 'SpecterChat',
     titleBarStyle: TitleBarStyle.normal,

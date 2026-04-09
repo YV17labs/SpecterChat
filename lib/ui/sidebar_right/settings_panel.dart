@@ -298,8 +298,8 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
           decoration: settingsInputDecoration(
               context, 'You are a helpful assistant...'),
           style: const TextStyle(fontSize: 11, height: 1.4),
-          maxLines: 5,
-          minLines: 3,
+          maxLines: 10,
+          minLines: 6,
           onChanged: (value) => _updateSystemPrompt(value),
         ),
 
@@ -325,7 +325,7 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
                   color: Theme.of(context)
                       .colorScheme
                       .onSurface
-                      .withOpacity(0.4),
+                      .withValues(alpha: 0.4),
                   fontSize: 13,
                 ),
               ),

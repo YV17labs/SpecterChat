@@ -8,6 +8,7 @@ import 'package:logging/logging.dart';
 import 'package:pasteboard/pasteboard.dart';
 
 import '../../models/message.dart';
+import '../../utils/theme.dart';
 import 'expandable_block.dart';
 
 final _log = Logger('ContentBlocks');
@@ -42,21 +43,26 @@ class TextBlock extends StatelessWidget {
   Widget build(BuildContext context) {
     if (text.isEmpty) return const SizedBox.shrink();
 
+    final theme = Theme.of(context);
+    final styles = theme.extension<SpecterStyles>()!;
+
     return MarkdownBody(
       data: text,
       selectable: true,
-      styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
-        p: Theme.of(context).textTheme.bodyMedium,
-        code: Theme.of(context).textTheme.bodySmall?.copyWith(
+      styleSheet: MarkdownStyleSheet.fromTheme(theme).copyWith(
+        p: theme.textTheme.bodyMedium,
+        code: theme.textTheme.bodySmall?.copyWith(
               fontFamily: 'monospace',
-              backgroundColor:
-                  Theme.of(context).colorScheme.surfaceContainerHighest,
+              backgroundColor: theme.colorScheme.surfaceContainerHighest,
             ),
         codeblockDecoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          color: theme.colorScheme.surfaceContainerHighest,
           borderRadius: BorderRadius.circular(8),
         ),
         codeblockPadding: const EdgeInsets.all(12),
+        blockquote: styles.blockquoteTextStyle,
+        blockquoteDecoration: styles.blockquoteDecoration,
+        blockquotePadding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
       ),
     );
   }
@@ -413,7 +419,7 @@ class ThinkingBlock extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final mutedColor =
-        Theme.of(context).colorScheme.onSurface.withOpacity(0.5);
+        Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5);
 
     return ExpandableBlock(
       icon: Icons.psychology,
@@ -430,10 +436,10 @@ class ThinkingBlock extends StatelessWidget {
         color: Theme.of(context)
             .colorScheme
             .surfaceContainerHighest
-            .withOpacity(0.5),
+            .withValues(alpha: 0.5),
         borderRadius: BorderRadius.circular(8),
         border: Border.all(
-          color: Theme.of(context).colorScheme.outline.withOpacity(0.2),
+          color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.2),
         ),
       ),
       child: Padding(
@@ -446,7 +452,7 @@ class ThinkingBlock extends StatelessWidget {
             color: Theme.of(context)
                 .colorScheme
                 .onSurface
-                .withOpacity(0.6),
+                .withValues(alpha: 0.6),
           ),
         ),
       ),

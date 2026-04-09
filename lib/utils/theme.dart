@@ -26,6 +26,72 @@ class _OneDark {
   static const red = Color(0xFFE06C75); // error
 }
 
+/// App-specific styles that don't fit into Material's `ColorScheme`
+/// (custom containers, decorations, blockquote styling, etc.).
+///
+/// Centralised here so widgets never hard-code colors or decorations.
+/// Access via `Theme.of(context).extension<SpecterStyles>()!`.
+@immutable
+class SpecterStyles extends ThemeExtension<SpecterStyles> {
+  /// Decoration for the container that groups tool-result content blocks
+  /// inside an assistant message bubble.
+  final BoxDecoration toolResultGroupDecoration;
+
+  /// Default decoration for expandable blocks (tool calls, results, raw
+  /// response, etc.).
+  final BoxDecoration expandableBlockDecoration;
+
+  /// Decoration applied to markdown blockquotes rendered by `TextBlock`.
+  final BoxDecoration blockquoteDecoration;
+
+  /// Text style applied to markdown blockquotes.
+  final TextStyle blockquoteTextStyle;
+
+  const SpecterStyles({
+    required this.toolResultGroupDecoration,
+    required this.expandableBlockDecoration,
+    required this.blockquoteDecoration,
+    required this.blockquoteTextStyle,
+  });
+
+  @override
+  SpecterStyles copyWith({
+    BoxDecoration? toolResultGroupDecoration,
+    BoxDecoration? expandableBlockDecoration,
+    BoxDecoration? blockquoteDecoration,
+    TextStyle? blockquoteTextStyle,
+  }) {
+    return SpecterStyles(
+      toolResultGroupDecoration:
+          toolResultGroupDecoration ?? this.toolResultGroupDecoration,
+      expandableBlockDecoration:
+          expandableBlockDecoration ?? this.expandableBlockDecoration,
+      blockquoteDecoration:
+          blockquoteDecoration ?? this.blockquoteDecoration,
+      blockquoteTextStyle: blockquoteTextStyle ?? this.blockquoteTextStyle,
+    );
+  }
+
+  @override
+  SpecterStyles lerp(ThemeExtension<SpecterStyles>? other, double t) {
+    if (other is! SpecterStyles) return this;
+    return SpecterStyles(
+      toolResultGroupDecoration: BoxDecoration.lerp(
+              toolResultGroupDecoration, other.toolResultGroupDecoration, t) ??
+          toolResultGroupDecoration,
+      expandableBlockDecoration: BoxDecoration.lerp(
+              expandableBlockDecoration, other.expandableBlockDecoration, t) ??
+          expandableBlockDecoration,
+      blockquoteDecoration: BoxDecoration.lerp(
+              blockquoteDecoration, other.blockquoteDecoration, t) ??
+          blockquoteDecoration,
+      blockquoteTextStyle:
+          TextStyle.lerp(blockquoteTextStyle, other.blockquoteTextStyle, t) ??
+              blockquoteTextStyle,
+    );
+  }
+}
+
 class SpecterTheme {
   /// Default dark theme — Zed "One Dark" palette.
   static ThemeData get darkTheme {
@@ -66,8 +132,37 @@ class SpecterTheme {
       inversePrimary: Color(0xFF7B3F8C),
     );
 
+    final specterStyles = SpecterStyles(
+      toolResultGroupDecoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: colorScheme.outline.withValues(alpha: 0.3)),
+      ),
+      expandableBlockDecoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: colorScheme.outline.withValues(alpha: 0.3)),
+      ),
+      blockquoteDecoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(6),
+        border: Border(
+          left: BorderSide(
+            color: colorScheme.secondary.withValues(alpha: 0.6),
+            width: 3,
+          ),
+        ),
+      ),
+      blockquoteTextStyle: TextStyle(
+        fontSize: 14,
+        color: colorScheme.onSurface.withValues(alpha: 0.75),
+        fontStyle: FontStyle.italic,
+      ),
+    );
+
     return ThemeData(
       useMaterial3: true,
+      extensions: [specterStyles],
       colorScheme: colorScheme,
       scaffoldBackgroundColor: colorScheme.surface,
       canvasColor: colorScheme.surface,
@@ -126,7 +221,7 @@ class SpecterTheme {
       ),
       scrollbarTheme: ScrollbarThemeData(
         thumbColor:
-            WidgetStateProperty.all(_OneDark.border.withOpacity(0.8)),
+            WidgetStateProperty.all(_OneDark.border.withValues(alpha: 0.8)),
         radius: const Radius.circular(4),
         thickness: WidgetStateProperty.all(6),
       ),

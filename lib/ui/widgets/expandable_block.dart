@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../utils/theme.dart';
+
 /// Reusable expandable container for tool calls, results, and thinking blocks.
 class ExpandableBlock extends StatefulWidget {
   final IconData icon;
@@ -41,14 +43,9 @@ class _ExpandableBlockState extends State<ExpandableBlock> {
   @override
   Widget build(BuildContext context) {
     final decoration = widget.decoration ??
-        BoxDecoration(
-          color: Theme.of(context).colorScheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color:
-                Theme.of(context).colorScheme.outline.withOpacity(0.3),
-          ),
-        );
+        Theme.of(context)
+            .extension<SpecterStyles>()!
+            .expandableBlockDecoration;
 
     return Container(
       margin: widget.margin,
@@ -99,7 +96,7 @@ class _ExpandableBlockState extends State<ExpandableBlock> {
                             color: Theme.of(context)
                                 .colorScheme
                                 .onSurface
-                                .withOpacity(0.4),
+                                .withValues(alpha: 0.4),
                           ),
                         ),
                       ),

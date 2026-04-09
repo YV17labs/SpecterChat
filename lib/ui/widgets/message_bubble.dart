@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../../models/message.dart';
 import '../../services/llm_hooks/llm_hooks.dart' as llm_hooks;
+import '../../utils/theme.dart';
 import 'content_blocks.dart';
 
 // Auto-correction bubble colors.
@@ -132,12 +133,9 @@ class MessageBubble extends StatelessWidget {
                         maxWidth:
                             MediaQuery.of(context).size.width * 0.65,
                       ),
-                      decoration: BoxDecoration(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .tertiaryContainer,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
+                      decoration: Theme.of(context)
+                          .extension<SpecterStyles>()!
+                          .toolResultGroupDecoration,
                       padding: const EdgeInsets.symmetric(
                           horizontal: 16, vertical: 8),
                       child: Column(
@@ -236,7 +234,7 @@ class _HoverCopyWrapperState extends State<_HoverCopyWrapper> {
                   color: Theme.of(context)
                       .colorScheme
                       .onSurface
-                      .withOpacity(0.5),
+                      .withValues(alpha: 0.5),
                 ),
                 onPressed: _copy,
                 padding: EdgeInsets.zero,
@@ -247,7 +245,7 @@ class _HoverCopyWrapperState extends State<_HoverCopyWrapper> {
                   backgroundColor: Theme.of(context)
                       .colorScheme
                       .surface
-                      .withOpacity(0.8),
+                      .withValues(alpha: 0.8),
                 ),
               ),
             ),
@@ -319,7 +317,7 @@ class _MessageStats extends StatelessWidget {
           color: Theme.of(context)
               .colorScheme
               .onSurface
-              .withOpacity(0.35),
+              .withValues(alpha: 0.35),
         ),
       ),
     );
@@ -421,7 +419,7 @@ class _DotAnimationState extends State<_DotAnimation>
             color: Theme.of(context)
                 .colorScheme
                 .onSurface
-                .withOpacity(0.3 + _controller.value * 0.4),
+                .withValues(alpha: 0.3 + _controller.value * 0.4),
           ),
         );
       },

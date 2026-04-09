@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../providers/app_lifecycle_provider.dart';
+import '../utils/theme.dart';
 import 'sidebar_left/conversation_list.dart';
 import 'chat/chat_view.dart';
 import 'sidebar_right/settings_panel.dart';
@@ -51,12 +52,7 @@ class _AppShellState extends ConsumerState<AppShell> {
                 : Container(
                     decoration: BoxDecoration(
                       border: Border(
-                        right: BorderSide(
-                          color: Theme.of(context)
-                              .colorScheme
-                              .outlineVariant
-                              .withValues(alpha: 0.3),
-                        ),
+                        right: context.specterStyles.sidebarBorderSide,
                       ),
                     ),
                     child: const ConversationList(),
@@ -96,12 +92,7 @@ class _AppShellState extends ConsumerState<AppShell> {
                 : Container(
                     decoration: BoxDecoration(
                       border: Border(
-                        left: BorderSide(
-                          color: Theme.of(context)
-                              .colorScheme
-                              .outlineVariant
-                              .withValues(alpha: 0.3),
-                        ),
+                        left: context.specterStyles.sidebarBorderSide,
                       ),
                     ),
                     child: const SettingsPanel(),

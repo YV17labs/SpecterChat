@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 
 /// Color palette extracted from the Zed editor "One Dark" theme.
 ///
@@ -26,49 +27,56 @@ class _OneDark {
   static const red = Color(0xFFE06C75); // error
 }
 
-/// App-specific styles that don't fit into Material's `ColorScheme`
-/// (custom containers, decorations, blockquote styling, etc.).
+/// App-specific styles that don't fit into Material's `ColorScheme`.
 ///
-/// Centralised here so widgets never hard-code colors or decorations.
-/// Access via `Theme.of(context).extension<SpecterStyles>()!`.
+/// Centralised so widgets never hard-code colors or decorations.
+/// Access via `context.specterStyles`.
 @immutable
 class SpecterStyles extends ThemeExtension<SpecterStyles> {
-  /// Decoration for the container that groups tool-result content blocks
-  /// inside an assistant message bubble.
   final BoxDecoration toolResultGroupDecoration;
-
-  /// Default decoration for expandable blocks (tool calls, results, raw
-  /// response, etc.).
   final BoxDecoration expandableBlockDecoration;
-
-  /// Decoration applied to markdown blockquotes rendered by `TextBlock`.
+  final BoxDecoration thinkingBlockDecoration;
   final BoxDecoration blockquoteDecoration;
-
-  /// Text style applied to markdown blockquotes.
   final TextStyle blockquoteTextStyle;
+  final EdgeInsetsGeometry blockquotePadding;
+  final BorderSide sidebarBorderSide;
+  final MarkdownStyleSheet markdownStyleSheet;
 
   const SpecterStyles({
     required this.toolResultGroupDecoration,
     required this.expandableBlockDecoration,
+    required this.thinkingBlockDecoration,
     required this.blockquoteDecoration,
     required this.blockquoteTextStyle,
+    required this.blockquotePadding,
+    required this.sidebarBorderSide,
+    required this.markdownStyleSheet,
   });
 
   @override
   SpecterStyles copyWith({
     BoxDecoration? toolResultGroupDecoration,
     BoxDecoration? expandableBlockDecoration,
+    BoxDecoration? thinkingBlockDecoration,
     BoxDecoration? blockquoteDecoration,
     TextStyle? blockquoteTextStyle,
+    EdgeInsetsGeometry? blockquotePadding,
+    BorderSide? sidebarBorderSide,
+    MarkdownStyleSheet? markdownStyleSheet,
   }) {
     return SpecterStyles(
       toolResultGroupDecoration:
           toolResultGroupDecoration ?? this.toolResultGroupDecoration,
       expandableBlockDecoration:
           expandableBlockDecoration ?? this.expandableBlockDecoration,
+      thinkingBlockDecoration:
+          thinkingBlockDecoration ?? this.thinkingBlockDecoration,
       blockquoteDecoration:
           blockquoteDecoration ?? this.blockquoteDecoration,
       blockquoteTextStyle: blockquoteTextStyle ?? this.blockquoteTextStyle,
+      blockquotePadding: blockquotePadding ?? this.blockquotePadding,
+      sidebarBorderSide: sidebarBorderSide ?? this.sidebarBorderSide,
+      markdownStyleSheet: markdownStyleSheet ?? this.markdownStyleSheet,
     );
   }
 
@@ -82,14 +90,29 @@ class SpecterStyles extends ThemeExtension<SpecterStyles> {
       expandableBlockDecoration: BoxDecoration.lerp(
               expandableBlockDecoration, other.expandableBlockDecoration, t) ??
           expandableBlockDecoration,
+      thinkingBlockDecoration: BoxDecoration.lerp(
+              thinkingBlockDecoration, other.thinkingBlockDecoration, t) ??
+          thinkingBlockDecoration,
       blockquoteDecoration: BoxDecoration.lerp(
               blockquoteDecoration, other.blockquoteDecoration, t) ??
           blockquoteDecoration,
       blockquoteTextStyle:
           TextStyle.lerp(blockquoteTextStyle, other.blockquoteTextStyle, t) ??
               blockquoteTextStyle,
+      blockquotePadding:
+          EdgeInsetsGeometry.lerp(blockquotePadding, other.blockquotePadding, t) ??
+              blockquotePadding,
+      sidebarBorderSide:
+          BorderSide.lerp(sidebarBorderSide, other.sidebarBorderSide, t),
+      markdownStyleSheet: t < 0.5 ? markdownStyleSheet : other.markdownStyleSheet,
     );
   }
+}
+
+/// Ergonomic accessor: `context.specterStyles.toolResultGroupDecoration`.
+extension SpecterStylesX on BuildContext {
+  SpecterStyles get specterStyles =>
+      Theme.of(this).extension<SpecterStyles>()!;
 }
 
 class SpecterTheme {
@@ -132,37 +155,8 @@ class SpecterTheme {
       inversePrimary: Color(0xFF7B3F8C),
     );
 
-    final specterStyles = SpecterStyles(
-      toolResultGroupDecoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHigh,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: colorScheme.outline.withValues(alpha: 0.3)),
-      ),
-      expandableBlockDecoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: colorScheme.outline.withValues(alpha: 0.3)),
-      ),
-      blockquoteDecoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(6),
-        border: Border(
-          left: BorderSide(
-            color: colorScheme.secondary.withValues(alpha: 0.6),
-            width: 3,
-          ),
-        ),
-      ),
-      blockquoteTextStyle: TextStyle(
-        fontSize: 14,
-        color: colorScheme.onSurface.withValues(alpha: 0.75),
-        fontStyle: FontStyle.italic,
-      ),
-    );
-
-    return ThemeData(
+    final baseTheme = ThemeData(
       useMaterial3: true,
-      extensions: [specterStyles],
       colorScheme: colorScheme,
       scaffoldBackgroundColor: colorScheme.surface,
       canvasColor: colorScheme.surface,
@@ -284,5 +278,71 @@ class SpecterTheme {
         behavior: SnackBarBehavior.floating,
       ),
     );
+
+    final outlineSubtle = colorScheme.outline.withValues(alpha: 0.3);
+    const blockquotePadding =
+        EdgeInsets.symmetric(horizontal: 12, vertical: 8);
+
+    final blockquoteDecoration = BoxDecoration(
+      color: colorScheme.surfaceContainerHighest,
+      borderRadius: BorderRadius.circular(6),
+      border: Border(
+        left: BorderSide(
+          color: colorScheme.secondary.withValues(alpha: 0.6),
+          width: 3,
+        ),
+      ),
+    );
+
+    final blockquoteTextStyle = TextStyle(
+      fontSize: 14,
+      color: colorScheme.onSurface.withValues(alpha: 0.75),
+      fontStyle: FontStyle.italic,
+    );
+
+    final markdownStyleSheet =
+        MarkdownStyleSheet.fromTheme(baseTheme).copyWith(
+      p: baseTheme.textTheme.bodyMedium,
+      code: baseTheme.textTheme.bodySmall?.copyWith(
+            fontFamily: 'monospace',
+            backgroundColor: colorScheme.surfaceContainerHighest,
+          ),
+      codeblockDecoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      codeblockPadding: const EdgeInsets.all(12),
+      blockquote: blockquoteTextStyle,
+      blockquoteDecoration: blockquoteDecoration,
+      blockquotePadding: blockquotePadding,
+    );
+
+    final specterStyles = SpecterStyles(
+      toolResultGroupDecoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: outlineSubtle),
+      ),
+      expandableBlockDecoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: outlineSubtle),
+      ),
+      thinkingBlockDecoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: colorScheme.outline.withValues(alpha: 0.2),
+        ),
+      ),
+      blockquoteDecoration: blockquoteDecoration,
+      blockquoteTextStyle: blockquoteTextStyle,
+      blockquotePadding: blockquotePadding,
+      sidebarBorderSide:
+          BorderSide(color: colorScheme.outlineVariant.withValues(alpha: 0.3)),
+      markdownStyleSheet: markdownStyleSheet,
+    );
+
+    return baseTheme.copyWith(extensions: [specterStyles]);
   }
 }

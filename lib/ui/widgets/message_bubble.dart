@@ -133,9 +133,8 @@ class MessageBubble extends StatelessWidget {
                         maxWidth:
                             MediaQuery.of(context).size.width * 0.65,
                       ),
-                      decoration: Theme.of(context)
-                          .extension<SpecterStyles>()!
-                          .toolResultGroupDecoration,
+                      decoration:
+                          context.specterStyles.toolResultGroupDecoration,
                       padding: const EdgeInsets.symmetric(
                           horizontal: 16, vertical: 8),
                       child: Column(

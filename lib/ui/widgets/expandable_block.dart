@@ -42,10 +42,8 @@ class _ExpandableBlockState extends State<ExpandableBlock> {
 
   @override
   Widget build(BuildContext context) {
-    final decoration = widget.decoration ??
-        Theme.of(context)
-            .extension<SpecterStyles>()!
-            .expandableBlockDecoration;
+    final decoration =
+        widget.decoration ?? context.specterStyles.expandableBlockDecoration;
 
     return Container(
       margin: widget.margin,

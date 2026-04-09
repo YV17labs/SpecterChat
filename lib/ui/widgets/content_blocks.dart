@@ -43,27 +43,10 @@ class TextBlock extends StatelessWidget {
   Widget build(BuildContext context) {
     if (text.isEmpty) return const SizedBox.shrink();
 
-    final theme = Theme.of(context);
-    final styles = theme.extension<SpecterStyles>()!;
-
     return MarkdownBody(
       data: text,
       selectable: true,
-      styleSheet: MarkdownStyleSheet.fromTheme(theme).copyWith(
-        p: theme.textTheme.bodyMedium,
-        code: theme.textTheme.bodySmall?.copyWith(
-              fontFamily: 'monospace',
-              backgroundColor: theme.colorScheme.surfaceContainerHighest,
-            ),
-        codeblockDecoration: BoxDecoration(
-          color: theme.colorScheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(8),
-        ),
-        codeblockPadding: const EdgeInsets.all(12),
-        blockquote: styles.blockquoteTextStyle,
-        blockquoteDecoration: styles.blockquoteDecoration,
-        blockquotePadding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-      ),
+      styleSheet: context.specterStyles.markdownStyleSheet,
     );
   }
 }
@@ -432,16 +415,7 @@ class ThinkingBlock extends StatelessWidget {
         color: mutedColor,
       ),
       margin: const EdgeInsets.only(bottom: 8),
-      decoration: BoxDecoration(
-        color: Theme.of(context)
-            .colorScheme
-            .surfaceContainerHighest
-            .withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.2),
-        ),
-      ),
+      decoration: context.specterStyles.thinkingBlockDecoration,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
         child: SelectableText(

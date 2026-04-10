@@ -34,14 +34,17 @@ class _ChatViewState extends ConsumerState<ChatView> {
     super.dispose();
   }
 
-  /// Distance from the bottom within which a user-initiated scroll is
-  /// considered "at the bottom" and re-attaches auto-follow.
-  static const _autoFollowThreshold = 48.0;
+  /// Tolerance (in pixels) for "at the bottom" detection. Kept tiny so
+  /// re-attach only fires when the user deliberately scrolls all the way
+  /// down, not when they stop a bit above. A few pixels of slack absorb
+  /// rounding and the race where maxScrollExtent grows by a streaming
+  /// delta between the gesture release and the idle event.
+  static const _bottomTolerance = 4.0;
 
-  bool _isNearBottom() {
+  bool _isAtBottom() {
     if (!_scrollController.hasClients) return true;
     final pos = _scrollController.position;
-    return pos.maxScrollExtent - pos.pixels <= _autoFollowThreshold;
+    return pos.maxScrollExtent - pos.pixels <= _bottomTolerance;
   }
 
   /// [UserScrollNotification] fires only on real user gestures, so the
@@ -54,7 +57,7 @@ class _ChatViewState extends ConsumerState<ChatView> {
       }
     } else if (n.direction == ScrollDirection.idle) {
       // Gesture released — re-attach if user landed at the bottom.
-      if (!_stickToBottom && _isNearBottom()) {
+      if (!_stickToBottom && _isAtBottom()) {
         setState(() => _stickToBottom = true);
       }
     }

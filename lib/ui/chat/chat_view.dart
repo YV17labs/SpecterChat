@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+// ignore: unnecessary_import — needed for ScrollDirection at runtime.
+import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -19,45 +21,60 @@ class _ChatViewState extends ConsumerState<ChatView> {
   final _inputController = TextEditingController();
   final _scrollController = ScrollController();
   final _inputFocusNode = FocusNode();
-  bool _userHasScrolledUp = false;
+  bool _stickToBottom = true;
   String? _lastConversationId;
   List<Message>? _cachedMessages;
   List<List<Message>>? _cachedGrouped;
 
   @override
-  void initState() {
-    super.initState();
-    _scrollController.addListener(_onScroll);
-  }
-
-  @override
   void dispose() {
-    _scrollController.removeListener(_onScroll);
     _inputController.dispose();
     _scrollController.dispose();
     _inputFocusNode.dispose();
     super.dispose();
   }
 
-  /// Distance from the bottom within which we auto-follow new content.
-  static const _autoFollowThreshold = 150.0;
+  /// Distance from the bottom within which a user-initiated scroll is
+  /// considered "at the bottom" and re-attaches auto-follow.
+  static const _autoFollowThreshold = 48.0;
 
-  void _onScroll() {
-    if (!_scrollController.hasClients) return;
+  bool _isNearBottom() {
+    if (!_scrollController.hasClients) return true;
     final pos = _scrollController.position;
-    final nearBottom =
-        pos.maxScrollExtent - pos.pixels <= _autoFollowThreshold;
-    if (nearBottom != !_userHasScrolledUp) {
-      setState(() => _userHasScrolledUp = !nearBottom);
+    return pos.maxScrollExtent - pos.pixels <= _autoFollowThreshold;
+  }
+
+  /// [UserScrollNotification] fires only on real user gestures, so the
+  /// auto-scroll's own `animateTo` calls don't feed back into this handler.
+  bool _onUserScroll(UserScrollNotification n) {
+    if (n.direction == ScrollDirection.reverse) {
+      // User pulls toward top of history — detach.
+      if (_stickToBottom) {
+        setState(() => _stickToBottom = false);
+      }
+    } else if (n.direction == ScrollDirection.idle) {
+      // Gesture released — re-attach if user landed at the bottom.
+      if (!_stickToBottom && _isNearBottom()) {
+        setState(() => _stickToBottom = true);
+      }
     }
+    return false;
   }
 
   bool _scrollPending = false;
   bool _needsInitialScroll = false;
 
   void _scrollToBottom({bool force = false, bool jump = false}) {
-    if (!force && _userHasScrolledUp) return;
+    if (!force && !_stickToBottom) return;
     if (_scrollPending) return;
+
+    // Starting an animation during an active user gesture replaces the
+    // drag activity and cancels the user's scroll.
+    if (_scrollController.hasClients &&
+        _scrollController.position.userScrollDirection !=
+            ScrollDirection.idle) {
+      return;
+    }
     _scrollPending = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _scrollPending = false;
@@ -90,7 +107,7 @@ class _ChatViewState extends ConsumerState<ChatView> {
         ref.watch(selectedConversationIdProvider);
     if (conversationId != _lastConversationId) {
       _lastConversationId = conversationId;
-      _userHasScrolledUp = false;
+      _stickToBottom = true;
       _needsInitialScroll = true;
     }
     final streamingMessages = ref.watch(
@@ -142,27 +159,30 @@ class _ChatViewState extends ConsumerState<ChatView> {
 
               return Stack(
                 children: [
-                  ListView.builder(
-                    controller: _scrollController,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    itemCount: grouped.length,
-                    itemBuilder: (context, index) {
-                      final group = grouped[index];
-                      if (group.length == 1) {
+                  NotificationListener<UserScrollNotification>(
+                    onNotification: _onUserScroll,
+                    child: ListView.builder(
+                      controller: _scrollController,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      itemCount: grouped.length,
+                      itemBuilder: (context, index) {
+                        final group = grouped[index];
+                        if (group.length == 1) {
+                          return MessageBubble(
+                            key: ValueKey(group.first.id),
+                            message: group.first,
+                          );
+                        }
+                        // Assistant + tool results merged.
                         return MessageBubble(
                           key: ValueKey(group.first.id),
                           message: group.first,
+                          toolResults: group.sublist(1),
                         );
-                      }
-                      // Assistant + tool results merged.
-                      return MessageBubble(
-                        key: ValueKey(group.first.id),
-                        message: group.first,
-                        toolResults: group.sublist(1),
-                      );
-                    },
+                      },
+                    ),
                   ),
-                  if (_userHasScrolledUp)
+                  if (!_stickToBottom)
                     Positioned(
                       bottom: 12,
                       left: 0,
@@ -176,7 +196,10 @@ class _ChatViewState extends ConsumerState<ChatView> {
                               .primaryContainer,
                           child: InkWell(
                             customBorder: const CircleBorder(),
-                            onTap: () => _scrollToBottom(force: true),
+                            onTap: () {
+                              setState(() => _stickToBottom = true);
+                              _scrollToBottom(force: true);
+                            },
                             child: Padding(
                               padding: const EdgeInsets.all(10),
                               child: Icon(
@@ -275,7 +298,7 @@ class _ChatViewState extends ConsumerState<ChatView> {
     if (text.isEmpty) return;
 
     _inputController.clear();
-    setState(() => _userHasScrolledUp = false);
+    setState(() => _stickToBottom = true);
     _scrollToBottom(force: true);
     ref
         .read(chatProvider.notifier)

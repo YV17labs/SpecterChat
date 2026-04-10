@@ -89,10 +89,11 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
     final effective = ref.watch(effectiveSettingsProvider);
     final hasConversation = effective.hasConversation;
 
-    // Re-sync text controllers when switching conversations and drop any
-    // pending optimistic override (it belonged to the previous conversation).
-    ref.listen(selectedConversationIdProvider, (prev, next) {
-      if (prev != next) {
+    // Listen to the Conversation object rather than its id so the sync
+    // also fires on the null → Conversation(id) transition that happens
+    // after cloning, once the Drift stream catches up.
+    ref.listen(selectedConversationProvider, (prev, next) {
+      if (prev?.id != next?.id) {
         _pendingConversationSettings = null;
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) _syncControllers();

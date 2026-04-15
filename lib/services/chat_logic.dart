@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import '../models/message.dart';
 
 /// Accumulates streamed tool call fragments into complete tool calls.
@@ -7,6 +9,21 @@ class ToolCallAccumulator {
   final StringBuffer argumentsBuffer = StringBuffer();
 
   bool get isValid => id != null && name != null;
+}
+
+/// A streamed `tool_call.function.arguments` string is truncated if the
+/// stream breaks mid-call; replaying such a message poisons the whole
+/// conversation because the server rejects the malformed JSON on every
+/// subsequent turn.
+bool hasParseableToolCallArgs(String args) {
+  final trimmed = args.trim();
+  if (trimmed.isEmpty) return true;
+  try {
+    jsonDecode(trimmed);
+    return true;
+  } catch (_) {
+    return false;
+  }
 }
 
 /// Pure business logic for chat message building and API format conversion.
@@ -66,6 +83,8 @@ class ChatLogic {
     required List<Message> history,
     required String systemPrompt,
   }) {
+    final skip = _indicesWithBrokenToolCalls(history);
+
     final messages = <Map<String, dynamic>>[];
 
     if (systemPrompt.isNotEmpty) {
@@ -83,6 +102,7 @@ class ChatLogic {
     var pendingImageParts = <Map<String, dynamic>>[];
 
     for (var i = 0; i < history.length; i++) {
+      if (skip.contains(i)) continue;
       final msg = history[i];
       messages.add(msg.toApiMessage());
 
@@ -127,6 +147,26 @@ class ChatLogic {
     }
 
     return messages;
+  }
+
+  Set<int> _indicesWithBrokenToolCalls(List<Message> history) {
+    final skip = <int>{};
+    for (var i = 0; i < history.length; i++) {
+      final msg = history[i];
+      if (msg.role != MessageRole.assistant) continue;
+      final toolCalls = msg.content.whereType<ToolCallContentBlock>();
+      if (toolCalls.isEmpty) continue;
+      final hasBadArgs =
+          toolCalls.any((tc) => !hasParseableToolCallArgs(tc.arguments));
+      if (!hasBadArgs) continue;
+      skip.add(i);
+      var j = i + 1;
+      while (j < history.length && history[j].role == MessageRole.tool) {
+        skip.add(j);
+        j++;
+      }
+    }
+    return skip;
   }
 
   /// Generate an auto-title from the first assistant response.

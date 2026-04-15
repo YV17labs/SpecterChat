@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:logging/logging.dart';
@@ -194,13 +195,37 @@ class LlmService implements ILlmService {
         _log.info('Stream cancelled by user');
         yield StreamDone();
       } else {
-        _log.severe('API stream error: ${e.response?.statusCode}', e);
+        final body = await _readErrorBody(e.response);
+        _log.severe(
+            'API stream error: ${e.response?.statusCode}${body != null ? '\n$body' : ''}',
+            e);
         yield StreamError(
-            'API error: ${e.response?.statusCode} ${e.message}');
+            'API error: ${e.response?.statusCode}${body != null ? ' — $body' : ' ${e.message}'}');
       }
     } catch (e, st) {
       _log.severe('Unexpected stream error', e, st);
       yield StreamError('Unexpected error: $e');
+    }
+  }
+
+  /// When responseType is stream, `response.data` is a `ResponseBody`
+  /// whose `stream` must be drained to recover the server's error payload.
+  static Future<String?> _readErrorBody(Response<dynamic>? response) async {
+    final data = response?.data;
+    if (data == null) return null;
+    try {
+      if (data is ResponseBody) {
+        final builder = BytesBuilder(copy: false);
+        await for (final chunk in data.stream) {
+          builder.add(chunk);
+        }
+        final text = utf8.decode(builder.takeBytes(), allowMalformed: true).trim();
+        return text.isEmpty ? null : text;
+      }
+      if (data is String) return data.isEmpty ? null : data;
+      return data.toString();
+    } catch (_) {
+      return null;
     }
   }
 

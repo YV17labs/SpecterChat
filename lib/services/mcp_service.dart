@@ -12,12 +12,13 @@ export 'i_mcp_service.dart' show
 
 final _log = Logger('McpService');
 
-Dio _defaultDioFactory(String baseUrl, {String authToken = ''}) {
+Dio _defaultDioFactory(String baseUrl,
+    {Map<String, String> extraHeaders = const {}}) {
   return Dio(BaseOptions(
     baseUrl: baseUrl,
     headers: {
       'Content-Type': 'application/json',
-      if (authToken.isNotEmpty) 'Authorization': 'Bearer $authToken',
+      ...extraHeaders,
     },
     connectTimeout: const Duration(seconds: 30),
     receiveTimeout: const Duration(minutes: 2),
@@ -34,8 +35,11 @@ class McpClient {
   String? _sessionId;
   bool _initialized = false;
 
-  McpClient({required this.serverUrl, String authToken = '', Dio? dio})
-      : _dio = dio ?? _defaultDioFactory(serverUrl, authToken: authToken);
+  McpClient({
+    required this.serverUrl,
+    Map<String, String> headers = const {},
+    Dio? dio,
+  }) : _dio = dio ?? _defaultDioFactory(serverUrl, extraHeaders: headers);
 
   bool get isConnected => _initialized;
   String? get instructions => _instructions;
@@ -208,7 +212,7 @@ class McpService implements IMcpService {
       : _clientFactory = clientFactory ??
             ((config) => McpClient(
                   serverUrl: config.url,
-                  authToken: config.authToken,
+                  headers: config.headers,
                 ));
 
   @override

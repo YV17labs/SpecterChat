@@ -28,7 +28,9 @@ class SettingsNotifier extends Notifier<AppSettings> {
     final json = prefs.getString(_key);
     if (json != null) {
       try {
-        var loaded = AppSettings.fromJson(jsonDecode(json));
+        final raw = jsonDecode(json) as Map<String, dynamic>;
+        _migrateAuthTokenToHeaders(raw);
+        var loaded = AppSettings.fromJson(raw);
         // Reset runtime-only MCP state — actual connections don't
         // survive an app restart.
         loaded = loaded.copyWith(
@@ -44,6 +46,27 @@ class SettingsNotifier extends Notifier<AppSettings> {
       } catch (e, st) {
         _log.warning('Corrupted settings JSON, using defaults', e, st);
       }
+    }
+  }
+
+  /// One-shot migration: the old schema stored a Bearer token in `authToken`.
+  /// Fold it into `headers["Authorization"]` so the new headers-based config
+  /// keeps working for users upgrading from the previous version.
+  void _migrateAuthTokenToHeaders(Map<String, dynamic> raw) {
+    final servers = raw['mcpServers'];
+    if (servers is! List) return;
+    for (final s in servers) {
+      if (s is! Map) continue;
+      final token = s['authToken'];
+      if (token is String && token.isNotEmpty) {
+        final existing = s['headers'];
+        final headers = existing is Map
+            ? Map<String, dynamic>.from(existing)
+            : <String, dynamic>{};
+        headers.putIfAbsent('Authorization', () => 'Bearer $token');
+        s['headers'] = headers;
+      }
+      s.remove('authToken');
     }
   }
 
@@ -90,6 +113,11 @@ class SettingsNotifier extends Notifier<AppSettings> {
           .map((s) => s.id == server.id ? server : s)
           .toList(),
     );
+    _scheduleSave();
+  }
+
+  void replaceMcpServers(List<McpServerConfig> servers) {
+    state = state.copyWith(mcpServers: servers);
     _scheduleSave();
   }
 }

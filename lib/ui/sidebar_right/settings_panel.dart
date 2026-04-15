@@ -7,10 +7,11 @@ import '../../models/app_settings.dart';
 import '../../models/conversation_settings.dart';
 import '../../providers/conversation_provider.dart';
 import '../../providers/effective_settings_provider.dart';
+import '../../providers/mcp_provider.dart';
 import '../../providers/settings_provider.dart';
-import '../../utils/id_gen.dart';
 import '../widgets/settings_fields.dart';
 import 'mcp_server_tile.dart';
+import 'mcp_servers_editor.dart';
 import 'model_selector.dart';
 
 class SettingsPanel extends ConsumerStatefulWidget {
@@ -310,9 +311,9 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
         SectionHeader(
           title: 'MCP Servers',
           trailing: IconButton(
-            icon: const Icon(Icons.add, size: 18),
-            tooltip: 'Add MCP Server',
-            onPressed: () => _addMcpServer(),
+            icon: const Icon(Icons.edit, size: 18),
+            tooltip: 'Edit MCP Servers (JSON)',
+            onPressed: () => _editMcpServers(),
           ),
         ),
         const SizedBox(height: 8),
@@ -428,65 +429,21 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
     });
   }
 
-  Future<void> _addMcpServer() async {
-    final nameController = TextEditingController();
-    final urlController =
-        TextEditingController(text: 'http://localhost:3000/mcp');
-    final authTokenController = TextEditingController();
+  Future<void> _editMcpServers() async {
+    final current = ref.read(settingsProvider).mcpServers;
+    final result = await McpServersEditorDialog.show(context, current);
+    if (result == null) return;
 
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Add MCP Server'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameController,
-              decoration:
-                  const InputDecoration(labelText: 'Server Name'),
-              autofocus: true,
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: urlController,
-              decoration: const InputDecoration(labelText: 'URL'),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: authTokenController,
-              decoration: const InputDecoration(
-                labelText: 'Bearer Token (optional)',
-                hintText: 'Sent as Authorization: Bearer <token>',
-              ),
-              obscureText: true,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Add'),
-          ),
-        ],
-      ),
-    );
-
-    if (result == true &&
-        nameController.text.isNotEmpty &&
-        urlController.text.isNotEmpty) {
-      ref.read(settingsProvider.notifier).addMcpServer(
-            McpServerConfig(
-              id: generateId(),
-              name: nameController.text,
-              url: urlController.text,
-              authToken: authTokenController.text,
-            ),
-          );
+    // Disconnect any servers that were removed or whose id rotated — the
+    // editor preserves ids by name, so id-based lookup catches both cases.
+    final newIds = result.map((s) => s.id).toSet();
+    final mcpService = ref.read(mcpServiceProvider);
+    for (final prior in current) {
+      if (prior.connected && !newIds.contains(prior.id)) {
+        mcpService.disconnect(prior.id);
+      }
     }
+
+    ref.read(settingsProvider.notifier).replaceMcpServers(result);
   }
 }

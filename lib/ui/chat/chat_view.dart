@@ -4,6 +4,8 @@ import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../domain/chat_session.dart';
+import '../../domain/chat_session_state.dart';
 import '../../models/message.dart';
 import '../../providers/chat_provider.dart';
 import '../../providers/conversation_provider.dart';
@@ -106,179 +108,164 @@ class _ChatViewState extends ConsumerState<ChatView> {
 
   @override
   Widget build(BuildContext context) {
-    final conversationId =
-        ref.watch(selectedConversationIdProvider);
+    final conversationId = ref.watch(selectedConversationIdProvider);
     if (conversationId != _lastConversationId) {
       _lastConversationId = conversationId;
       _stickToBottom = true;
       _needsInitialScroll = true;
     }
-    final streamingMessages = ref.watch(
-        chatProvider.select((s) => s.streamingMessages));
-    final isGenerating = ref.watch(
-        chatProvider.select((s) => s.isGenerating));
-    final error = ref.watch(
-        chatProvider.select((s) => s.error));
 
     if (conversationId == null) {
       return _EmptyState();
     }
 
+    final session = ref.watch(chatSessionProvider(conversationId));
     final messagesAsync =
         ref.watch(conversationMessagesProvider(conversationId));
 
-    return Column(
+    return ValueListenableBuilder<ChatSessionState>(
+      valueListenable: session.state,
+      builder: (context, sessionState, _) {
+        final isGenerating = sessionState.isGenerating;
+        final error =
+            sessionState is SessionError ? sessionState.message : null;
+
+        return Column(
+          children: [
+            _ChatHeader(session: session),
+            const Divider(height: 1),
+            Expanded(
+              child: messagesAsync.when(
+                data: (messages) => _buildMessageList(messages),
+                loading: () =>
+                    const Center(child: CircularProgressIndicator()),
+                error: (e, _) =>
+                    Center(child: Text('Error loading messages: $e')),
+              ),
+            ),
+            if (error != null) _buildErrorBanner(context, session, error),
+            const Divider(height: 1),
+            _InputArea(
+              controller: _inputController,
+              focusNode: _inputFocusNode,
+              isGenerating: isGenerating,
+              onSend: () => _sendMessage(session),
+              onStop: session.stop,
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildMessageList(List<Message> messages) {
+    if (messages.isEmpty) {
+      return _WelcomeMessage();
+    }
+
+    if (_needsInitialScroll) {
+      _needsInitialScroll = false;
+      _scrollToBottom(force: true, jump: true);
+    } else {
+      _scrollToBottom();
+    }
+
+    if (!identical(messages, _cachedMessages)) {
+      _cachedMessages = messages;
+      _cachedGrouped = _groupMessages(messages);
+    }
+    final grouped = _cachedGrouped!;
+
+    return Stack(
       children: [
-        _ChatHeader(conversationId: conversationId),
-
-        const Divider(height: 1),
-
-        Expanded(
-          child: messagesAsync.when(
-            data: (messages) {
-              if (messages.isEmpty && streamingMessages.isEmpty) {
-                return _WelcomeMessage();
+        NotificationListener<UserScrollNotification>(
+          onNotification: _onUserScroll,
+          child: ListView.builder(
+            controller: _scrollController,
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            itemCount: grouped.length,
+            itemBuilder: (context, index) {
+              final group = grouped[index];
+              if (group.length == 1) {
+                return MessageBubble(
+                  key: ValueKey(group.first.id),
+                  message: group.first,
+                );
               }
-
-              if (_needsInitialScroll) {
-                _needsInitialScroll = false;
-                _scrollToBottom(force: true, jump: true);
-              } else {
-                _scrollToBottom();
-              }
-
-              // Memoize grouping of persisted messages — only
-              // recompute when the DB list identity changes.
-              if (!identical(messages, _cachedMessages)) {
-                _cachedMessages = messages;
-                _cachedGrouped = _groupMessages(messages);
-              }
-              // Append streaming messages without re-grouping everything.
-              final grouped = [
-                ..._cachedGrouped!,
-                if (streamingMessages.isNotEmpty)
-                  streamingMessages,
-              ];
-
-              return Stack(
-                children: [
-                  NotificationListener<UserScrollNotification>(
-                    onNotification: _onUserScroll,
-                    child: ListView.builder(
-                      controller: _scrollController,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      itemCount: grouped.length,
-                      itemBuilder: (context, index) {
-                        final group = grouped[index];
-                        if (group.length == 1) {
-                          return MessageBubble(
-                            key: ValueKey(group.first.id),
-                            message: group.first,
-                          );
-                        }
-                        // Assistant + tool results merged.
-                        return MessageBubble(
-                          key: ValueKey(group.first.id),
-                          message: group.first,
-                          toolResults: group.sublist(1),
-                        );
-                      },
-                    ),
-                  ),
-                  if (!_stickToBottom)
-                    Positioned(
-                      bottom: 12,
-                      left: 0,
-                      right: 0,
-                      child: Center(
-                        child: Material(
-                          elevation: 4,
-                          shape: const CircleBorder(),
-                          color: Theme.of(context)
-                              .colorScheme
-                              .primaryContainer,
-                          child: InkWell(
-                            customBorder: const CircleBorder(),
-                            onTap: () {
-                              setState(() => _stickToBottom = true);
-                              _scrollToBottom(force: true);
-                            },
-                            child: Padding(
-                              padding: const EdgeInsets.all(10),
-                              child: Icon(
-                                Icons.keyboard_arrow_down,
-                                size: 22,
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onPrimaryContainer,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                ],
+              return MessageBubble(
+                key: ValueKey(group.first.id),
+                message: group.first,
+                toolResults: group.sublist(1),
               );
             },
-            loading: () => const Center(
-                child: CircularProgressIndicator()),
-            error: (e, _) =>
-                Center(child: Text('Error loading messages: $e')),
           ),
         ),
-
-        // Error display
-        if (error != null)
-          Container(
-            width: double.infinity,
-            padding:
-                const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            color: Theme.of(context).colorScheme.errorContainer,
-            child: Row(
-              children: [
-                Icon(Icons.error_outline,
-                    size: 16,
-                    color:
-                        Theme.of(context).colorScheme.onErrorContainer),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    error,
-                    style: TextStyle(
-                      fontSize: 13,
+        if (!_stickToBottom)
+          Positioned(
+            bottom: 12,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: Material(
+                elevation: 4,
+                shape: const CircleBorder(),
+                color: Theme.of(context).colorScheme.primaryContainer,
+                child: InkWell(
+                  customBorder: const CircleBorder(),
+                  onTap: () {
+                    setState(() => _stickToBottom = true);
+                    _scrollToBottom(force: true);
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.all(10),
+                    child: Icon(
+                      Icons.keyboard_arrow_down,
+                      size: 22,
                       color: Theme.of(context)
                           .colorScheme
-                          .onErrorContainer,
+                          .onPrimaryContainer,
                     ),
                   ),
                 ),
-                IconButton(
-                  icon: Icon(Icons.close, size: 16,
-                      color: Theme.of(context)
-                          .colorScheme
-                          .onErrorContainer),
-                  onPressed: () => ref.read(chatProvider.notifier)
-                      .clearError(),
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(
-                      maxWidth: 24, maxHeight: 24),
-                ),
-              ],
+              ),
             ),
           ),
-
-        const Divider(height: 1),
-
-        // Input area
-        _InputArea(
-          controller: _inputController,
-          focusNode: _inputFocusNode,
-          isGenerating: isGenerating,
-          onSend: () => _sendMessage(conversationId),
-          onStop: () =>
-              ref.read(chatProvider.notifier).stopGeneration(),
-        ),
       ],
+    );
+  }
+
+  Widget _buildErrorBanner(
+      BuildContext context, ChatSession session, String error) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      color: Theme.of(context).colorScheme.errorContainer,
+      child: Row(
+        children: [
+          Icon(Icons.error_outline,
+              size: 16,
+              color: Theme.of(context).colorScheme.onErrorContainer),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              error,
+              style: TextStyle(
+                fontSize: 13,
+                color: Theme.of(context).colorScheme.onErrorContainer,
+              ),
+            ),
+          ),
+          IconButton(
+            icon: Icon(Icons.close,
+                size: 16,
+                color: Theme.of(context).colorScheme.onErrorContainer),
+            onPressed: session.clearError,
+            padding: EdgeInsets.zero,
+            constraints:
+                const BoxConstraints(maxWidth: 24, maxHeight: 24),
+          ),
+        ],
+      ),
     );
   }
 
@@ -287,7 +274,6 @@ class _ChatViewState extends ConsumerState<ChatView> {
     final groups = <List<Message>>[];
     for (final msg in messages) {
       if (msg.role == MessageRole.tool && groups.isNotEmpty) {
-        // Attach to the last group (should be an assistant).
         groups.last.add(msg);
       } else {
         groups.add([msg]);
@@ -296,34 +282,48 @@ class _ChatViewState extends ConsumerState<ChatView> {
     return groups;
   }
 
-  void _sendMessage(String conversationId) {
+  void _sendMessage(ChatSession session) {
     final text = _inputController.text.trim();
     if (text.isEmpty) return;
 
     _inputController.clear();
     setState(() => _stickToBottom = true);
     _scrollToBottom(force: true);
-    ref
-        .read(chatProvider.notifier)
-        .sendMessage(conversationId, text);
+    session.sendMessage(text);
   }
 }
 
 class _ChatHeader extends ConsumerWidget {
-  final String conversationId;
+  final ChatSession session;
 
-  const _ChatHeader({required this.conversationId});
+  const _ChatHeader({required this.session});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final conversation = ref.watch(selectedConversationProvider);
-    final used = ref.watch(
-        chatProvider.select((s) => s.promptTokens));
     final contextLength = ref.watch(
         effectiveSettingsProvider.select((s) => s.contextLength));
-    final ratio = contextLength > 0
-        ? (used / contextLength).clamp(0.0, 1.0)
-        : 0.0;
+    // The session's [state] ValueNotifier is the source of truth for
+    // token counts. Rebuild the gauge alone when it changes, leaving
+    // the rest of the header cached.
+    final used = ValueListenableBuilder<ChatSessionState>(
+      valueListenable: session.state,
+      builder: (context, s, _) {
+        final tokens = s.promptTokens;
+        if (tokens <= 0) return const SizedBox.shrink();
+        final ratio = contextLength > 0
+            ? (tokens / contextLength).clamp(0.0, 1.0)
+            : 0.0;
+        return Padding(
+          padding: const EdgeInsets.only(left: 12),
+          child: _ContextGauge(
+            ratio: ratio,
+            used: tokens,
+            total: contextLength,
+          ),
+        );
+      },
+    );
 
     return Container(
       padding:
@@ -343,10 +343,7 @@ class _ChatHeader extends ConsumerWidget {
               overflow: TextOverflow.ellipsis,
             ),
           ),
-          if (used > 0) ...[
-            const SizedBox(width: 12),
-            _ContextGauge(ratio: ratio, used: used, total: contextLength),
-          ],
+          used,
         ],
       ),
     );

@@ -25,6 +25,16 @@ class ConversationRepository implements IConversationRepository {
         .toList());
   }
 
+  @override
+  Future<model.Conversation?> getConversation(String id) async {
+    try {
+      final row = await _database.getConversation(id);
+      return _dbConversationToModel(row);
+    } catch (_) {
+      return null;
+    }
+  }
+
   static model.Conversation _dbConversationToModel(db.Conversation r) {
     ConversationSettings? settings;
     if (r.settings != null) {
@@ -125,6 +135,7 @@ class ConversationRepository implements IConversationRepository {
       completionTokens: Value(message.completionTokens),
       durationMs: Value(message.durationMs),
       createdAt: message.createdAt,
+      isStreaming: Value(message.isStreaming),
     ));
 
     await _database.updateConversation(db.ConversationsCompanion(
@@ -141,7 +152,42 @@ class ConversationRepository implements IConversationRepository {
     await _database.updateMessage(db.MessagesCompanion(
       id: Value(message.id),
       content: Value(contentJson),
+      isStreaming: Value(message.isStreaming),
+      updatedAt: Value(DateTime.now()),
     ));
+  }
+
+  @override
+  Future<void> upsertStreamingMessage(model.Message message) async {
+    final contentJson =
+        jsonEncode(message.content.map((c) => c.toJson()).toList());
+
+    await _database.upsertMessage(db.MessagesCompanion.insert(
+      id: message.id,
+      conversationId: message.conversationId,
+      role: message.role.name,
+      content: contentJson,
+      completionTokens: Value(message.completionTokens),
+      durationMs: Value(message.durationMs),
+      createdAt: message.createdAt,
+      isStreaming: const Value(true),
+      updatedAt: Value(DateTime.now()),
+    ));
+  }
+
+  @override
+  Future<void> finalizeStreamingMessage(String messageId) async {
+    await _database.markMessageFinalized(messageId);
+  }
+
+  @override
+  Future<void> deleteMessage(String messageId) async {
+    await _database.deleteMessage(messageId);
+  }
+
+  @override
+  Future<int> clearOrphanStreamingFlags() {
+    return _database.clearOrphanStreamingFlags();
   }
 
   static model.Message _dbMessageToModel(db.Message row) {
@@ -181,6 +227,7 @@ class ConversationRepository implements IConversationRepository {
       createdAt: row.createdAt,
       completionTokens: row.completionTokens,
       durationMs: row.durationMs,
+      isStreaming: row.isStreaming,
     );
   }
 }

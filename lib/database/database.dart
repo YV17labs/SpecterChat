@@ -32,6 +32,9 @@ class Messages extends Table {
   IntColumn get durationMs =>
       integer().withDefault(const Constant(0))();
   DateTimeColumn get createdAt => dateTime()();
+  BoolColumn get isStreaming =>
+      boolean().withDefault(const Constant(false))();
+  DateTimeColumn get updatedAt => dateTime().nullable()();
 
   @override
   Set<Column> get primaryKey => {id};
@@ -53,10 +56,13 @@ class AppDatabase extends _$AppDatabase {
   // v3 — Add completion_tokens + duration_ms columns to messages.
   // v4 — Add settings JSON column to conversations.
   // v5 — Add last_prompt_tokens column to conversations.
+  // v6 — Add is_streaming + updated_at columns to messages for
+  //      incremental streaming persistence (survives conversation switch
+  //      and app restart).
   // ---------------------------------------------------------------
 
   @override
-  int get schemaVersion => 5;
+  int get schemaVersion => 6;
 
   static const _createConversationIdIndex =
       'CREATE INDEX IF NOT EXISTS idx_messages_conversation_id '
@@ -83,10 +89,23 @@ class AppDatabase extends _$AppDatabase {
             await m.addColumn(
                 conversations, conversations.lastPromptTokens);
           }
+          if (from < 6) {
+            await m.addColumn(messages, messages.isStreaming);
+            await m.addColumn(messages, messages.updatedAt);
+          }
         },
         beforeOpen: (details) async {
           // Enforce foreign-key constraints at runtime.
           await customStatement('PRAGMA foreign_keys = ON');
+          // Clear any `is_streaming = 1` rows left over from a prior
+          // session that crashed or was killed mid-stream. Whatever
+          // partial content had been persisted is kept — we just flip
+          // the flag off so the UI stops showing the typing indicator.
+          // Safe on freshly-created databases (no rows to update).
+          if (details.versionNow >= 6) {
+            await customStatement(
+                'UPDATE messages SET is_streaming = 0 WHERE is_streaming = 1');
+          }
         },
       );
 
@@ -157,6 +176,36 @@ class AppDatabase extends _$AppDatabase {
     return (update(messages)..where((t) => t.id.equals(entry.id.value)))
         .write(entry)
         .then((rows) => rows > 0);
+  }
+
+  /// Upsert a message row. Used for incremental streaming writes: the first
+  /// call inserts the placeholder, subsequent calls update content in place.
+  Future<void> upsertMessage(MessagesCompanion entry) {
+    return into(messages).insertOnConflictUpdate(entry);
+  }
+
+  /// Flip `is_streaming` to false for a finished message.
+  Future<bool> markMessageFinalized(String id) {
+    return (update(messages)..where((t) => t.id.equals(id)))
+        .write(MessagesCompanion(
+          isStreaming: const Value(false),
+          updatedAt: Value(DateTime.now()),
+        ))
+        .then((rows) => rows > 0);
+  }
+
+  /// Reset any `is_streaming = 1` rows left over from a prior session that
+  /// crashed or was killed mid-stream. Keeps whatever partial content was
+  /// already persisted so the user still sees it.
+  Future<int> clearOrphanStreamingFlags() {
+    return (update(messages)..where((t) => t.isStreaming.equals(true)))
+        .write(const MessagesCompanion(isStreaming: Value(false)));
+  }
+
+  /// Delete a message by id — used to drop an empty placeholder when a
+  /// stream cancels before any content arrived.
+  Future<int> deleteMessage(String id) {
+    return (delete(messages)..where((t) => t.id.equals(id))).go();
   }
 
   Future<int> deleteMessagesForConversation(String conversationId) {

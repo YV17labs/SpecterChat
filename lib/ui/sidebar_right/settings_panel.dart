@@ -432,6 +432,7 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
     final nameController = TextEditingController();
     final urlController =
         TextEditingController(text: 'http://localhost:3000/mcp');
+    final authTokenController = TextEditingController();
 
     final result = await showDialog<bool>(
       context: context,
@@ -450,6 +451,15 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
             TextField(
               controller: urlController,
               decoration: const InputDecoration(labelText: 'URL'),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: authTokenController,
+              decoration: const InputDecoration(
+                labelText: 'Bearer Token (optional)',
+                hintText: 'Sent as Authorization: Bearer <token>',
+              ),
+              obscureText: true,
             ),
           ],
         ),
@@ -474,6 +484,7 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
               id: generateId(),
               name: nameController.text,
               url: urlController.text,
+              authToken: authTokenController.text,
             ),
           );
     }

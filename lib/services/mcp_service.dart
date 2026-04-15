@@ -12,10 +12,13 @@ export 'i_mcp_service.dart' show
 
 final _log = Logger('McpService');
 
-Dio _defaultDioFactory(String baseUrl) {
+Dio _defaultDioFactory(String baseUrl, {String authToken = ''}) {
   return Dio(BaseOptions(
     baseUrl: baseUrl,
-    headers: {'Content-Type': 'application/json'},
+    headers: {
+      'Content-Type': 'application/json',
+      if (authToken.isNotEmpty) 'Authorization': 'Bearer $authToken',
+    },
     connectTimeout: const Duration(seconds: 30),
     receiveTimeout: const Duration(minutes: 2),
   ));
@@ -31,8 +34,8 @@ class McpClient {
   String? _sessionId;
   bool _initialized = false;
 
-  McpClient({required this.serverUrl, Dio? dio})
-      : _dio = dio ?? _defaultDioFactory(serverUrl);
+  McpClient({required this.serverUrl, String authToken = '', Dio? dio})
+      : _dio = dio ?? _defaultDioFactory(serverUrl, authToken: authToken);
 
   bool get isConnected => _initialized;
   String? get instructions => _instructions;
@@ -192,7 +195,7 @@ class McpClient {
 /// Factory function type for creating [McpClient] instances.
 ///
 /// Allows injection of test doubles for [McpClient].
-typedef McpClientFactory = McpClient Function(String serverUrl);
+typedef McpClientFactory = McpClient Function(McpServerConfig config);
 
 /// Manages multiple MCP server connections.
 ///
@@ -202,12 +205,15 @@ class McpService implements IMcpService {
   final McpClientFactory _clientFactory;
 
   McpService({McpClientFactory? clientFactory})
-      : _clientFactory =
-            clientFactory ?? ((url) => McpClient(serverUrl: url));
+      : _clientFactory = clientFactory ??
+            ((config) => McpClient(
+                  serverUrl: config.url,
+                  authToken: config.authToken,
+                ));
 
   @override
   Future<McpConnectResult> connect(McpServerConfig config) async {
-    final client = _clientFactory(config.url);
+    final client = _clientFactory(config);
     try {
       await client.initialize();
       final tools = await client.listTools();

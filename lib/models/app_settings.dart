@@ -39,6 +39,7 @@ abstract class McpServerConfig with _$McpServerConfig {
     required String id,
     required String name,
     required String url,
+    @Default('') String authToken,
     @Default(true) bool enabled,
     @Default(false) bool connected,
     @Default([]) List<McpToolInfo> tools,

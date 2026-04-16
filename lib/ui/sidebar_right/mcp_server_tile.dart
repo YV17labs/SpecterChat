@@ -46,6 +46,8 @@ class McpServerTile extends ConsumerWidget {
           server.name,
           style:
               const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
         ),
         subtitle: Text(
           server.url,
@@ -56,6 +58,8 @@ class McpServerTile extends ConsumerWidget {
                 .onSurface
                 .withValues(alpha: 0.5),
           ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
         ),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
@@ -75,6 +79,9 @@ class McpServerTile extends ConsumerWidget {
               ),
               tooltip: server.connected ? 'Disconnect' : 'Connect',
               onPressed: () => _toggleConnection(ref, server),
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(
+                  minWidth: 32, minHeight: 32),
             ),
             // Remove button (global only)
             if (!isConversationMode)
@@ -89,6 +96,9 @@ class McpServerTile extends ConsumerWidget {
                       .read(settingsProvider.notifier)
                       .removeMcpServer(server.id);
                 },
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(
+                    minWidth: 32, minHeight: 32),
               ),
           ],
         ),

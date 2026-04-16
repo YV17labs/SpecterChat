@@ -62,45 +62,54 @@ class _ExpandableBlockState extends State<ExpandableBlock> {
                 children: [
                   Icon(widget.icon, size: 14, color: widget.iconColor),
                   const SizedBox(width: 8),
-                  Text(
-                    widget.title,
-                    style: widget.titleStyle ??
-                        TextStyle(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 13,
-                          color: widget.iconColor,
-                        ),
-                  ),
-                  if (!_expanded &&
-                      widget.preview != null &&
-                      widget.preview!.isNotEmpty) ...[
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: ShaderMask(
-                        shaderCallback: (bounds) => LinearGradient(
-                          colors: [
-                            Theme.of(context).colorScheme.onSurface,
-                            Colors.transparent,
-                          ],
-                          stops: const [0.5, 1.0],
-                        ).createShader(bounds),
-                        blendMode: BlendMode.dstIn,
-                        child: Text(
-                          widget.preview!,
-                          maxLines: 1,
-                          overflow: TextOverflow.clip,
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: Theme.of(context)
-                                .colorScheme
-                                .onSurface
-                                .withValues(alpha: 0.4),
+                  Expanded(
+                    child: Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            widget.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: widget.titleStyle ??
+                                TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 13,
+                                  color: widget.iconColor,
+                                ),
                           ),
                         ),
-                      ),
+                        if (!_expanded &&
+                            widget.preview != null &&
+                            widget.preview!.isNotEmpty) ...[
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: ShaderMask(
+                              shaderCallback: (bounds) => LinearGradient(
+                                colors: [
+                                  Theme.of(context).colorScheme.onSurface,
+                                  Colors.transparent,
+                                ],
+                                stops: const [0.5, 1.0],
+                              ).createShader(bounds),
+                              blendMode: BlendMode.dstIn,
+                              child: Text(
+                                widget.preview!,
+                                maxLines: 1,
+                                overflow: TextOverflow.clip,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurface
+                                      .withValues(alpha: 0.4),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
-                  ] else
-                    const Spacer(),
+                  ),
                   Icon(
                     _expanded
                         ? Icons.expand_less

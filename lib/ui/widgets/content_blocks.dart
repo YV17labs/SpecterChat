@@ -10,6 +10,7 @@ import 'package:pasteboard/pasteboard.dart';
 import '../../models/message.dart';
 import '../../utils/theme.dart';
 import 'expandable_block.dart';
+import 'smooth_streaming_text.dart';
 
 final _log = Logger('ContentBlocks');
 
@@ -36,17 +37,31 @@ TextStyle _monospaceStyle(BuildContext context) => TextStyle(
 /// Renders markdown text content.
 class TextBlock extends StatelessWidget {
   final String text;
+  final bool isStreaming;
 
-  const TextBlock({super.key, required this.text});
+  const TextBlock({
+    super.key,
+    required this.text,
+    this.isStreaming = false,
+  });
 
   @override
   Widget build(BuildContext context) {
     if (text.isEmpty) return const SizedBox.shrink();
 
-    return MarkdownBody(
-      data: text,
-      selectable: true,
-      styleSheet: context.specterStyles.markdownStyleSheet,
+    return SmoothStreamingText(
+      text: text,
+      isStreaming: isStreaming,
+      builder: (context, visible) {
+        if (visible.isEmpty) return const SizedBox.shrink();
+        return RepaintBoundary(
+          child: MarkdownBody(
+            data: visible,
+            selectable: true,
+            styleSheet: context.specterStyles.markdownStyleSheet,
+          ),
+        );
+      },
     );
   }
 }

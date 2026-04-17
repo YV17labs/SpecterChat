@@ -111,7 +111,10 @@ class MessageBubble extends StatelessWidget {
                             ),
                           ),
                         for (final block in message.content)
-                          _ContentBlockWidget(block: block),
+                          _ContentBlockWidget(
+                            block: block,
+                            isStreaming: message.isStreaming,
+                          ),
                         if (message.isStreaming) const _StreamingIndicator(),
                         if (!message.isStreaming &&
                             message.role == MessageRole.assistant &&
@@ -325,13 +328,15 @@ class _MessageStats extends StatelessWidget {
 
 class _ContentBlockWidget extends StatelessWidget {
   final ContentBlock block;
+  final bool isStreaming;
 
-  const _ContentBlockWidget({required this.block});
+  const _ContentBlockWidget({required this.block, this.isStreaming = false});
 
   @override
   Widget build(BuildContext context) {
     return switch (block) {
-      TextContentBlock(:final text) => TextBlock(text: text),
+      TextContentBlock(:final text) =>
+        TextBlock(text: text, isStreaming: isStreaming),
       ImageContentBlock(:final base64Data, :final mimeType) =>
         ImageBlock(base64Data: base64Data, mimeType: mimeType),
       ToolCallContentBlock(:final name, :final arguments) =>

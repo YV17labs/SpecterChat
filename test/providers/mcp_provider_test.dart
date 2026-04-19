@@ -2,8 +2,20 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:specterchat/models/app_settings.dart';
+import 'package:specterchat/providers/effective_settings_provider.dart';
 import 'package:specterchat/providers/mcp_provider.dart';
 import 'package:specterchat/providers/settings_provider.dart';
+import 'package:specterchat/services/i_mcp_service.dart';
+
+EffectiveSettings _effective({required List<String> enabledMcpServerIds}) {
+  return EffectiveSettings(
+    systemPrompt: '',
+    generation: const GenerationSettings(),
+    contextLength: 32768,
+    enabledMcpServerIds: enabledMcpServerIds,
+    hasConversation: true,
+  );
+}
 
 void main() {
   group('findServerForTool', () {
@@ -152,7 +164,11 @@ void main() {
     });
 
     test('returns empty list when no servers configured', () {
-      final container = ProviderContainer();
+      final container = ProviderContainer(overrides: [
+        effectiveSettingsProvider.overrideWithValue(
+          _effective(enabledMcpServerIds: const []),
+        ),
+      ]);
       addTearDown(container.dispose);
 
       final tools = container.read(mcpToolsProvider);
@@ -160,10 +176,13 @@ void main() {
     });
 
     test('returns tools from enabled and connected servers', () {
-      final container = ProviderContainer();
+      final container = ProviderContainer(overrides: [
+        effectiveSettingsProvider.overrideWithValue(
+          _effective(enabledMcpServerIds: const ['srv-1']),
+        ),
+      ]);
       addTearDown(container.dispose);
 
-      // Add a connected server with tools
       container.read(settingsProvider.notifier).addMcpServer(
             const McpServerConfig(
               id: 'srv-1',
@@ -186,16 +205,20 @@ void main() {
       expect(tools.first['function']['name'], 'search');
     });
 
-    test('excludes tools from disabled servers', () {
-      final container = ProviderContainer();
+    test('excludes tools from servers not enabled for the conversation', () {
+      final container = ProviderContainer(overrides: [
+        effectiveSettingsProvider.overrideWithValue(
+          _effective(enabledMcpServerIds: const []),
+        ),
+      ]);
       addTearDown(container.dispose);
 
       container.read(settingsProvider.notifier).addMcpServer(
             const McpServerConfig(
               id: 'srv-1',
-              name: 'Disabled',
+              name: 'Test',
               url: 'http://localhost:3000',
-              enabled: false,
+              enabled: true,
               connected: true,
               tools: [
                 McpToolInfo(
@@ -212,7 +235,11 @@ void main() {
     });
 
     test('excludes tools from disconnected servers', () {
-      final container = ProviderContainer();
+      final container = ProviderContainer(overrides: [
+        effectiveSettingsProvider.overrideWithValue(
+          _effective(enabledMcpServerIds: const ['srv-1']),
+        ),
+      ]);
       addTearDown(container.dispose);
 
       container.read(settingsProvider.notifier).addMcpServer(

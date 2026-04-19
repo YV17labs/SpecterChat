@@ -43,6 +43,11 @@ dependencies:
   shared_preferences: ^2.5.5
   # Image clipboard (mac/win/linux) — Flutter's native Clipboard is text-only
   pasteboard: ^0.4.0
+  # MCP (Model Context Protocol) client SDK
+  mcp_dart: ^2.1.0
+  # SVG rendering — MCP server icons can be image/svg+xml data URIs,
+  # which Flutter's core Image widget cannot decode.
+  flutter_svg: ^2.0.10
 
 dev_dependencies:
   flutter_test:

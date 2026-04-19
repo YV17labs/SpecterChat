@@ -74,36 +74,41 @@ void main() {
         const block = ContentBlock.toolResult(
           toolCallId: 'tc-1',
           toolName: 'search',
-          content: 'result text',
+          resultContent: [ContentBlock.text(text: 'result text')],
         );
         const tr = block as ToolResultContentBlock;
         expect(tr.toolCallId, 'tc-1');
-        expect(tr.imageBase64, isNull);
-        expect(tr.imageMimeType, isNull);
+        expect(tr.resultContent.whereType<ImageContentBlock>(), isEmpty);
       });
 
       test('creates with optional image', () {
         const block = ContentBlock.toolResult(
           toolCallId: 'tc-1',
           toolName: 'screenshot',
-          content: '',
-          imageBase64: 'imgdata',
-          imageMimeType: 'image/png',
+          resultContent: [
+            ContentBlock.image(
+              base64Data: 'imgdata',
+              mimeType: 'image/png',
+            ),
+          ],
         );
         const tr = block as ToolResultContentBlock;
-        expect(tr.imageBase64, 'imgdata');
-        expect(tr.imageMimeType, 'image/png');
+        final image = tr.resultContent.whereType<ImageContentBlock>().single;
+        expect(image.base64Data, 'imgdata');
+        expect(image.mimeType, 'image/png');
       });
 
       test('roundtrips through JSON', () {
         const block = ContentBlock.toolResult(
           toolCallId: 'tc-1',
           toolName: 'search',
-          content: 'found it',
-          imageBase64: 'img',
-          imageMimeType: 'image/png',
+          resultContent: [
+            ContentBlock.text(text: 'found it'),
+            ContentBlock.image(base64Data: 'img', mimeType: 'image/png'),
+          ],
         );
-        final json = block.toJson();
+        final json = jsonDecode(jsonEncode(block.toJson()))
+            as Map<String, dynamic>;
         final restored = ContentBlock.fromJson(json);
         expect(restored, block);
       });
@@ -251,7 +256,7 @@ void main() {
           const ContentBlock.toolResult(
             toolCallId: 'tc-1',
             toolName: 'search',
-            content: 'Found results',
+            resultContent: [ContentBlock.text(text: 'Found results')],
           ),
         ],
         createdAt: DateTime.now(),

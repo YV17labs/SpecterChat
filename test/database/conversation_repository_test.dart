@@ -142,9 +142,13 @@ void main() {
             const ContentBlock.toolResult(
               toolCallId: 'tc-1',
               toolName: 'screenshot',
-              content: 'captured',
-              imageBase64: 'imgdata',
-              imageMimeType: 'image/png',
+              resultContent: [
+                ContentBlock.text(text: 'captured'),
+                ContentBlock.image(
+                  base64Data: 'imgdata',
+                  mimeType: 'image/png',
+                ),
+              ],
             ),
           ],
           createdAt: DateTime.now(),
@@ -154,8 +158,10 @@ void main() {
         final messages = await repo.getMessages(convId);
         final block =
             messages.first.content.first as ToolResultContentBlock;
-        expect(block.imageBase64, 'imgdata');
-        expect(block.imageMimeType, 'image/png');
+        final image =
+            block.resultContent.whereType<ImageContentBlock>().single;
+        expect(image.base64Data, 'imgdata');
+        expect(image.mimeType, 'image/png');
       });
 
       test('updateMessage changes content', () async {

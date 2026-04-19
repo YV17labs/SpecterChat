@@ -1,199 +1,267 @@
-import 'dart:convert';
-
-import 'package:dio/dio.dart';
 import 'package:logging/logging.dart';
+import 'package:mcp_dart/mcp_dart.dart' as mcp;
 
 import '../models/app_settings.dart';
-import '../utils/id_gen.dart';
+import '../models/message.dart';
 import 'i_mcp_service.dart';
 
 export 'i_mcp_service.dart' show
-    McpToolResult, McpContent, McpTextContent, McpImageContent;
+    McpToolResult,
+    McpContent,
+    McpTextContent,
+    McpImageContent,
+    McpUnsupportedContent,
+    McpPromptResult,
+    McpPromptMessage,
+    McpResourceResult,
+    McpResourceContent,
+    McpResourceTextContent,
+    McpResourceBlobContent;
 
 final _log = Logger('McpService');
 
-Dio _defaultDioFactory(String baseUrl,
-    {Map<String, String> extraHeaders = const {}}) {
-  return Dio(BaseOptions(
-    baseUrl: baseUrl,
-    headers: {
-      'Content-Type': 'application/json',
-      ...extraHeaders,
-    },
-    connectTimeout: const Duration(seconds: 30),
-    receiveTimeout: const Duration(minutes: 2),
-  ));
-}
+const _clientInfo = mcp.Implementation(
+  name: 'SpecterChat',
+  version: '0.1.0',
+);
 
 /// Client for a single MCP server using Streamable HTTP transport.
 ///
-/// Accepts an optional [Dio] for testability. If not provided, creates
-/// one internally via the [DioFactory].
+/// Thin wrapper around [mcp.McpClient] that converts mcp_dart's native
+/// types to SpecterChat's domain types. Accepts an optional [mcp.Transport]
+/// for testability.
 class McpClient {
   final String serverUrl;
-  final Dio _dio;
-  String? _sessionId;
+  final Map<String, String> _headers;
+  final mcp.McpClient _client;
+  mcp.Transport? _transport;
   bool _initialized = false;
+  String? _instructions;
+  mcp.ServerCapabilities? _serverCaps;
+  List<McpIcon> _serverIcons = const [];
 
   McpClient({
     required this.serverUrl,
     Map<String, String> headers = const {},
-    Dio? dio,
-  }) : _dio = dio ?? _defaultDioFactory(serverUrl, extraHeaders: headers);
+    mcp.Transport? transport,
+  })  : _headers = headers,
+        _transport = transport,
+        _client = mcp.McpClient(_clientInfo);
 
   bool get isConnected => _initialized;
   String? get instructions => _instructions;
-
-  String? _instructions;
+  List<McpIcon> get serverIcons => _serverIcons;
+  mcp.ServerCapabilities? get serverCapabilities => _serverCaps;
 
   Future<void> initialize() async {
-    final result = await _sendRequest('initialize', {
-      'protocolVersion': '2025-03-26',
-      'capabilities': {},
-      'clientInfo': {
-        'name': 'SpecterChat',
-        'version': '0.1.0',
-      },
-    });
-
-    _instructions = result['instructions'] as String?;
+    _transport ??= mcp.StreamableHttpClientTransport(
+      Uri.parse(serverUrl),
+      opts: mcp.StreamableHttpClientTransportOptions(
+        requestInit: _headers.isEmpty
+            ? null
+            : {'headers': <String, dynamic>{..._headers}},
+      ),
+    );
+    await _client.connect(_transport!);
+    _instructions = _client.getInstructions();
+    _serverCaps = _client.getServerCapabilities();
+    _serverIcons = _client.getServerVersion()?.icons?.map(iconFromMcp).toList() ??
+        const [];
     _initialized = true;
-
-    await _sendNotification('notifications/initialized', {});
   }
 
   Future<List<McpToolInfo>> listTools() async {
-    final response = await _sendRequest('tools/list', {});
-    final tools = (response['tools'] as List?) ?? [];
+    // Bypass mcp_dart's typed Tool parsing because its JsonSchema wrapper
+    // drops unknown JSON Schema fields like $defs/$ref/anyOf-refs, which
+    // some servers emit and the LLM backend requires to resolve the schema.
+    final raw = await _client.request<_RawResult>(
+      const mcp.JsonRpcListToolsRequest(id: -1),
+      (json) => _RawResult(json),
+    );
 
-    return tools.map((t) {
-      final tool = t as Map<String, dynamic>;
+    final toolsJson = (raw.json['tools'] as List?) ?? const [];
+    return toolsJson.map((t) {
+      final tool = _asJsonMap(t);
       return McpToolInfo(
         name: tool['name'] as String,
         description: tool['description'] as String? ?? '',
-        inputSchema: tool['inputSchema'] as Map<String, dynamic>? ?? {},
+        title: tool['title'] as String? ?? '',
+        inputSchema:
+            (tool['inputSchema'] as Map?)?.cast<String, dynamic>() ?? const {},
+        annotations: tool['annotations'] == null
+            ? null
+            : McpToolAnnotations.fromJson(_asJsonMap(tool['annotations'])),
+        icons: _iconListFromJson(tool['icons']),
       );
     }).toList();
+  }
+
+  Future<List<McpPrompt>> listPrompts() async {
+    if (_serverCaps?.prompts == null) return const [];
+    final raw = await _client.request<_RawResult>(
+      mcp.JsonRpcListPromptsRequest(id: -1),
+      (json) => _RawResult(json),
+    );
+    final promptsJson = (raw.json['prompts'] as List?) ?? const [];
+    return promptsJson.map((p) => McpPrompt.fromJson(_asJsonMap(p))).toList();
+  }
+
+  Future<List<McpResource>> listResources() async {
+    if (_serverCaps?.resources == null) return const [];
+    final raw = await _client.request<_RawResult>(
+      mcp.JsonRpcListResourcesRequest(id: -1),
+      (json) => _RawResult(json),
+    );
+    final items = (raw.json['resources'] as List?) ?? const [];
+    return items.map((r) => McpResource.fromJson(_asJsonMap(r))).toList();
+  }
+
+  Future<List<McpResourceTemplate>> listResourceTemplates() async {
+    if (_serverCaps?.resources == null) return const [];
+    final raw = await _client.request<_RawResult>(
+      mcp.JsonRpcListResourceTemplatesRequest(id: -1),
+      (json) => _RawResult(json),
+    );
+    final items = (raw.json['resourceTemplates'] as List?) ?? const [];
+    return items
+        .map((r) => McpResourceTemplate.fromJson(_asJsonMap(r)))
+        .toList();
+  }
+
+  Future<McpPromptResult> getPrompt(
+    String name, {
+    Map<String, String> arguments = const {},
+  }) async {
+    try {
+      final result = await _client.getPrompt(
+        mcp.GetPromptRequest(name: name, arguments: arguments),
+      );
+      return McpPromptResult(
+        description: result.description,
+        messages: result.messages
+            .map((m) => McpPromptMessage(
+                  role: _promptRoleFromMcp(m.role),
+                  content: [contentFromMcp(m.content)],
+                ))
+            .toList(),
+      );
+    } on mcp.McpError catch (e) {
+      throw McpException(e.message, code: e.code);
+    }
+  }
+
+  Future<McpResourceResult> readResource(String uri) async {
+    try {
+      final result = await _client.readResource(
+        mcp.ReadResourceRequest(uri: uri),
+      );
+      return McpResourceResult(
+        contents: result.contents.map(_resourceContentFromMcp).toList(),
+      );
+    } on mcp.McpError catch (e) {
+      throw McpException(e.message, code: e.code);
+    }
   }
 
   Future<McpToolResult> callTool(
       String name, Map<String, dynamic> arguments) async {
-    final response = await _sendRequest('tools/call', {
-      'name': name,
-      'arguments': arguments,
-    });
-
-    final contentList = (response['content'] as List?) ?? [];
-    final isError = response['isError'] as bool? ?? false;
-
-    final content = contentList.map((c) {
-      final item = c as Map<String, dynamic>;
-      final type = item['type'] as String? ?? 'text';
-
-      return switch (type) {
-        'text' => McpTextContent(item['text'] as String? ?? ''),
-        'image' => McpImageContent(
-            base64Data: item['data'] as String,
-            mimeType: item['mimeType'] as String? ?? 'image/png',
-          ),
-        _ => McpUnsupportedContent(type: type, raw: item),
-      };
-    }).toList();
-
-    return McpToolResult(content: content, isError: isError);
+    try {
+      final result = await _client.callTool(
+        mcp.CallToolRequest(name: name, arguments: arguments),
+      );
+      return McpToolResult(
+        content: result.content.map(contentFromMcp).toList(),
+        isError: result.isError,
+      );
+    } on mcp.McpError catch (e) {
+      throw McpException(e.message, code: e.code);
+    }
   }
 
   void disconnect() {
     _initialized = false;
-    _sessionId = null;
-    _dio.close();
+    // Fire-and-forget: transport close is async but callers expect sync.
+    _client.close().catchError(
+          (Object e, StackTrace st) =>
+              _log.fine('Error closing MCP client: $e'),
+        );
   }
+}
 
-  Options _requestOptions() {
-    final headers = <String, String>{
-      'Accept': 'application/json, text/event-stream',
-    };
-    if (_sessionId != null) {
-      headers['Mcp-Session-Id'] = _sessionId!;
-    }
-    return Options(headers: headers, responseType: ResponseType.plain);
-  }
+/// Wraps a raw JSON-RPC result so we can pass it through mcp_dart's typed
+/// [mcp.Protocol.request] API without losing fields that mcp_dart's typed
+/// result classes don't know about (e.g. JSON Schema `$defs`, `$ref`).
+class _RawResult implements mcp.BaseResultData {
+  final Map<String, dynamic> json;
 
-  Future<Map<String, dynamic>> _sendRequest(
-      String method, Map<String, dynamic> params) async {
-    final id = generateId();
-    final body = {
-      'jsonrpc': '2.0',
-      'id': id,
-      'method': method,
-      'params': params,
-    };
+  _RawResult(this.json);
 
-    final response = await _dio.post(
-      '',
-      data: body,
-      options: _requestOptions(),
-    );
+  @override
+  Map<String, dynamic>? get meta =>
+      (json['_meta'] as Map?)?.cast<String, dynamic>();
 
-    final sessionHeader = response.headers.value('Mcp-Session-Id');
-    if (sessionHeader != null) {
-      _sessionId = sessionHeader;
-    }
+  @override
+  Map<String, dynamic> toJson() => json;
+}
 
-    final contentType =
-        response.headers.value('content-type') ?? 'application/json';
-    final data = _parseResponse(response.data as String, contentType);
+// --- JSON → domain converters -----------------------------------------
 
-    if (data.containsKey('error')) {
-      final error = data['error'] as Map<String, dynamic>;
-      throw McpException(
-        error['message'] as String? ?? 'Unknown MCP error',
-        code: error['code'] as int? ?? -1,
-      );
-    }
-    return data['result'] as Map<String, dynamic>? ?? {};
-  }
+/// Safely re-types a `dynamic` or `Map` coming out of JSON as the shape
+/// that Freezed's generated `fromJson` factories expect.
+Map<String, dynamic> _asJsonMap(Object? raw) =>
+    (raw as Map).cast<String, dynamic>();
 
-  /// Parse a response that may be JSON or SSE (text/event-stream).
-  Map<String, dynamic> _parseResponse(String body, String contentType) {
-    if (contentType.contains('text/event-stream')) {
-      // Parse SSE: look for "data:" lines containing our JSON-RPC response.
-      for (final line in body.split('\n')) {
-        final trimmed = line.trim();
-        if (trimmed.startsWith('data:')) {
-          final jsonStr = trimmed.substring(5).trim();
-          if (jsonStr.isEmpty) continue;
-          try {
-            final parsed = jsonDecode(jsonStr);
-            if (parsed is Map<String, dynamic>) return parsed;
-          } catch (e) {
-            _log.fine('Skipping malformed SSE JSON: $jsonStr');
-            continue;
-          }
-        }
-      }
-      return {};
-    }
-    // Plain JSON response.
-    final parsed = jsonDecode(body);
-    if (parsed is Map<String, dynamic>) return parsed;
-    return {};
-  }
+List<McpIcon> _iconListFromJson(Object? raw) {
+  if (raw is! List) return const [];
+  return raw.map((i) => McpIcon.fromJson(_asJsonMap(i))).toList();
+}
 
-  Future<void> _sendNotification(
-      String method, Map<String, dynamic> params) async {
-    final body = {
-      'jsonrpc': '2.0',
-      'method': method,
-      'params': params,
-    };
+// --- mcp_dart → domain converters -------------------------------------
 
-    await _dio.post(
-      '',
-      data: body,
-      options: _requestOptions(),
+MessageRole _promptRoleFromMcp(mcp.PromptMessageRole role) {
+  return switch (role) {
+    mcp.PromptMessageRole.user => MessageRole.user,
+    mcp.PromptMessageRole.assistant => MessageRole.assistant,
+  };
+}
+
+/// Converts an mcp_dart [mcp.McpIcon] to SpecterChat's [McpIcon].
+McpIcon iconFromMcp(mcp.McpIcon icon) {
+  return McpIcon(
+    src: icon.src,
+    mimeType: icon.mimeType,
+    sizes: icon.sizes ?? const [],
+    theme: icon.theme?.name,
+  );
+}
+
+/// Converts an mcp_dart [mcp.Content] block to SpecterChat's [McpContent].
+McpContent contentFromMcp(mcp.Content content) {
+  return switch (content) {
+    mcp.TextContent() => McpTextContent(content.text),
+    mcp.ImageContent() => McpImageContent(
+        base64Data: content.data,
+        mimeType: content.mimeType,
+      ),
+    _ => McpUnsupportedContent(type: content.type, raw: content.toJson()),
+  };
+}
+
+McpResourceContent _resourceContentFromMcp(mcp.ResourceContents c) {
+  final json = c.toJson();
+  final text = json['text'] as String?;
+  if (text != null) {
+    return McpResourceTextContent(
+      uri: json['uri'] as String,
+      mimeType: json['mimeType'] as String?,
+      text: text,
     );
   }
+  return McpResourceBlobContent(
+    uri: json['uri'] as String,
+    mimeType: json['mimeType'] as String?,
+    base64Data: json['blob'] as String? ?? '',
+  );
 }
 
 /// Factory function type for creating [McpClient] instances.
@@ -220,10 +288,21 @@ class McpService implements IMcpService {
     final client = _clientFactory(config);
     try {
       await client.initialize();
-      final tools = await client.listTools();
+      // Run the optional list fetches in parallel; each one is a no-op
+      // when the server didn't advertise the matching capability.
+      final results = await Future.wait([
+        client.listTools(),
+        client.listPrompts(),
+        client.listResources(),
+        client.listResourceTemplates(),
+      ]);
       _clients[config.id] = client;
       return McpConnectResult(
-        tools: tools,
+        tools: results[0] as List<McpToolInfo>,
+        prompts: results[1] as List<McpPrompt>,
+        resources: results[2] as List<McpResource>,
+        resourceTemplates: results[3] as List<McpResourceTemplate>,
+        icons: client.serverIcons,
         instructions: client.instructions ?? '',
       );
     } catch (e, st) {
@@ -263,6 +342,28 @@ class McpService implements IMcpService {
       throw McpException('Server $serverId not connected');
     }
     return client.callTool(toolName, arguments);
+  }
+
+  @override
+  Future<McpPromptResult> getPrompt(
+    String serverId,
+    String name, {
+    Map<String, String> arguments = const {},
+  }) async {
+    final client = _clients[serverId];
+    if (client == null) {
+      throw McpException('Server $serverId not connected');
+    }
+    return client.getPrompt(name, arguments: arguments);
+  }
+
+  @override
+  Future<McpResourceResult> readResource(String serverId, String uri) async {
+    final client = _clients[serverId];
+    if (client == null) {
+      throw McpException('Server $serverId not connected');
+    }
+    return client.readResource(uri);
   }
 
   /// Convert MCP tools to OpenAI function-calling format.

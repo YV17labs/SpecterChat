@@ -10,6 +10,7 @@ import '../../models/message.dart';
 import '../../providers/chat_provider.dart';
 import '../../providers/conversation_provider.dart';
 import '../../providers/effective_settings_provider.dart';
+import '../../providers/mcp_provider.dart';
 import '../widgets/message_bubble.dart';
 
 class ChatView extends ConsumerStatefulWidget {
@@ -108,6 +109,19 @@ class _ChatViewState extends ConsumerState<ChatView> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<String?>(chatInputInjectionProvider, (prev, next) {
+      if (next == null || next.isEmpty) return;
+      final current = _inputController.text;
+      final separator = current.isEmpty || current.endsWith('\n') ? '' : '\n';
+      _inputController.text = '$current$separator$next';
+      _inputController.selection = TextSelection.collapsed(
+        offset: _inputController.text.length,
+      );
+      _inputFocusNode.requestFocus();
+      // One-shot: reset so back-to-back identical injections re-trigger.
+      ref.read(chatInputInjectionProvider.notifier).state = null;
+    });
+
     final conversationId = ref.watch(selectedConversationIdProvider);
     if (conversationId != _lastConversationId) {
       _lastConversationId = conversationId;

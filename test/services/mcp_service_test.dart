@@ -1,162 +1,35 @@
-import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:http_mock_adapter/http_mock_adapter.dart';
+import 'package:mcp_dart/mcp_dart.dart' as mcp;
 import 'package:specterchat/models/app_settings.dart';
 import 'package:specterchat/services/mcp_service.dart';
 
 void main() {
-  group('McpClient', () {
-    late Dio dio;
-    late DioAdapter dioAdapter;
-    late McpClient client;
-
-    setUp(() {
-      dio = Dio(BaseOptions(baseUrl: 'http://mcp.test'));
-      dioAdapter = DioAdapter(dio: dio);
-      client = McpClient(serverUrl: 'http://mcp.test', dio: dio);
+  group('contentFromMcp', () {
+    test('converts TextContent', () {
+      final result = contentFromMcp(const mcp.TextContent(text: 'hello'));
+      expect(result, isA<McpTextContent>());
+      expect((result as McpTextContent).text, 'hello');
     });
 
-    test('isConnected is false initially', () {
-      expect(client.isConnected, false);
-    });
-
-    test('initialize sets isConnected to true', () async {
-      // Mock initialize request
-      dioAdapter.onPost(
-        '',
-        (server) => server.reply(200, {
-          'jsonrpc': '2.0',
-          'id': 'any',
-          'result': {
-            'protocolVersion': '2025-03-26',
-            'capabilities': {},
-            'serverInfo': {'name': 'test', 'version': '1.0'},
-          },
-        }),
-        data: Matchers.any,
+    test('converts ImageContent', () {
+      final result = contentFromMcp(
+        const mcp.ImageContent(data: 'b64data', mimeType: 'image/png'),
       );
-
-      await client.initialize();
-      expect(client.isConnected, true);
-    });
-
-    test('listTools returns parsed tools', () async {
-      // First call for initialize
-      dioAdapter.onPost(
-        '',
-        (server) => server.reply(200, {
-          'jsonrpc': '2.0',
-          'id': 'any',
-          'result': {'protocolVersion': '2025-03-26'},
-        }),
-        data: Matchers.any,
-      );
-
-      await client.initialize();
-
-      // Reset adapter for listTools
-      dioAdapter.onPost(
-        '',
-        (server) => server.reply(200, {
-          'jsonrpc': '2.0',
-          'id': 'any',
-          'result': {
-            'tools': [
-              {
-                'name': 'search',
-                'description': 'Search the web',
-                'inputSchema': {
-                  'type': 'object',
-                  'properties': {
-                    'query': {'type': 'string'}
-                  },
-                },
-              },
-            ],
-          },
-        }),
-        data: Matchers.any,
-      );
-
-      final tools = await client.listTools();
-      expect(tools.length, 1);
-      expect(tools.first.name, 'search');
-      expect(tools.first.description, 'Search the web');
-    });
-
-    test('callTool returns text content', () async {
-      dioAdapter.onPost(
-        '',
-        (server) => server.reply(200, {
-          'jsonrpc': '2.0',
-          'id': 'any',
-          'result': {
-            'content': [
-              {'type': 'text', 'text': 'result data'},
-            ],
-            'isError': false,
-          },
-        }),
-        data: Matchers.any,
-      );
-
-      final result = await client.callTool('search', {'q': 'dart'});
-      expect(result.isError, false);
-      expect(result.content.length, 1);
-      expect(result.content.first, isA<McpTextContent>());
-      expect((result.content.first as McpTextContent).text, 'result data');
-    });
-
-    test('callTool returns image content', () async {
-      dioAdapter.onPost(
-        '',
-        (server) => server.reply(200, {
-          'jsonrpc': '2.0',
-          'id': 'any',
-          'result': {
-            'content': [
-              {
-                'type': 'image',
-                'data': 'base64data',
-                'mimeType': 'image/png',
-              },
-            ],
-          },
-        }),
-        data: Matchers.any,
-      );
-
-      final result =
-          await client.callTool('screenshot', {});
-      expect(result.content.first, isA<McpImageContent>());
-      final img = result.content.first as McpImageContent;
-      expect(img.base64Data, 'base64data');
+      expect(result, isA<McpImageContent>());
+      final img = result as McpImageContent;
+      expect(img.base64Data, 'b64data');
       expect(img.mimeType, 'image/png');
     });
 
-    test('throws McpException on JSON-RPC error', () async {
-      dioAdapter.onPost(
-        '',
-        (server) => server.reply(200, {
-          'jsonrpc': '2.0',
-          'id': 'any',
-          'error': {
-            'code': -32600,
-            'message': 'Invalid Request',
-          },
-        }),
-        data: Matchers.any,
+    test('falls back to UnsupportedContent for unhandled types', () {
+      final result = contentFromMcp(
+        const mcp.AudioContent(data: 'b64', mimeType: 'audio/wav'),
       );
-
-      expect(
-        () => client.callTool('bad', {}),
-        throwsA(isA<McpException>()),
-      );
-    });
-
-    test('disconnect resets state', () {
-      client.disconnect();
-      expect(client.isConnected, false);
+      expect(result, isA<McpUnsupportedContent>());
+      final unsupported = result as McpUnsupportedContent;
+      expect(unsupported.type, 'audio');
+      expect(unsupported.raw['data'], 'b64');
+      expect(unsupported.raw['mimeType'], 'audio/wav');
     });
   });
 
@@ -170,6 +43,22 @@ void main() {
       final service = McpService();
       expect(
         () => service.callTool('srv-1', 'search', {}),
+        throwsA(isA<McpException>()),
+      );
+    });
+
+    test('getPrompt throws when server not connected', () {
+      final service = McpService();
+      expect(
+        () => service.getPrompt('srv-1', 'system_prompt'),
+        throwsA(isA<McpException>()),
+      );
+    });
+
+    test('readResource throws when server not connected', () {
+      final service = McpService();
+      expect(
+        () => service.readResource('srv-1', 'ghostdesk://apps'),
         throwsA(isA<McpException>()),
       );
     });

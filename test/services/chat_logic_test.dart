@@ -151,9 +151,13 @@ void main() {
               const ContentBlock.toolResult(
                 toolCallId: 'tc-1',
                 toolName: 'screenshot',
-                content: 'captured',
-                imageBase64: 'imgdata',
-                imageMimeType: 'image/png',
+                resultContent: [
+                  ContentBlock.text(text: 'captured'),
+                  ContentBlock.image(
+                    base64Data: 'imgdata',
+                    mimeType: 'image/png',
+                  ),
+                ],
               ),
             ],
             createdAt: DateTime.now(),
@@ -185,7 +189,7 @@ void main() {
               const ContentBlock.toolResult(
                 toolCallId: 'tc-1',
                 toolName: 'search',
-                content: 'results here',
+                resultContent: [ContentBlock.text(text: 'results here')],
               ),
             ],
             createdAt: DateTime.now(),

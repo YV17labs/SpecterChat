@@ -231,12 +231,9 @@ class LlmService implements ILlmService {
 
   /// Replace large base64 strings with a short summary for logging.
   static Object? _sanitizeForLog(Object? value) {
-    if (value is String && value.length > 200) {
-      if (value.startsWith('data:')) {
-        final sizeKb = (value.length * 3 / 4 / 1024).round();
-        return '<base64 ~${sizeKb}KB>';
-      }
-      return '${value.substring(0, 100)}... (${value.length} chars)';
+    if (value is String && value.startsWith('data:') && value.length > 200) {
+      final sizeKb = (value.length * 3 / 4 / 1024).round();
+      return '<base64 ~${sizeKb}KB>';
     }
     if (value is Map) {
       return value.map((k, v) => MapEntry(k, _sanitizeForLog(v)));

@@ -1,9 +1,12 @@
+import 'package:http/http.dart' as http;
 import 'package:logging/logging.dart';
 import 'package:mcp_dart/mcp_dart.dart' as mcp;
 
 import '../models/app_settings.dart';
 import '../models/message.dart';
 import 'i_mcp_service.dart';
+import 'mcp/retry_http_client.dart';
+import 'mcp/streamable_http_transport.dart' as transport;
 
 export 'i_mcp_service.dart' show
     McpToolResult,
@@ -54,12 +57,15 @@ class McpClient {
   mcp.ServerCapabilities? get serverCapabilities => _serverCaps;
 
   Future<void> initialize() async {
-    _transport ??= mcp.StreamableHttpClientTransport(
+    // Vendored transport: mcp_dart hardcodes its http.Client; we inject a
+    // RetryHttpClient to survive the dead-pooled-socket race (see file).
+    _transport ??= transport.StreamableHttpClientTransport(
       Uri.parse(serverUrl),
-      opts: mcp.StreamableHttpClientTransportOptions(
+      opts: transport.StreamableHttpClientTransportOptions(
         requestInit: _headers.isEmpty
             ? null
             : {'headers': <String, dynamic>{..._headers}},
+        httpClient: RetryHttpClient(http.Client()),
       ),
     );
     await _client.connect(_transport!);

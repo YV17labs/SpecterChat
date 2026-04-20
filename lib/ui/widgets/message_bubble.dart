@@ -32,10 +32,64 @@ class MessageBubble extends StatelessWidget {
     return text.startsWith(llm_hooks.correctionPrefix);
   }
 
+  Map<String, ToolResultContentBlock> _indexToolResults() {
+    final map = <String, ToolResultContentBlock>{};
+    for (final toolMsg in toolResults) {
+      for (final block in toolMsg.content) {
+        if (block is ToolResultContentBlock) {
+          map[block.toolCallId] = block;
+        }
+      }
+    }
+    return map;
+  }
+
   @override
   Widget build(BuildContext context) {
     final isUser = message.role == MessageRole.user;
     final isAutoCorrection = _isAutoCorrection;
+    final resultsByCallId = _indexToolResults();
+
+    // Set of tool call ids whose result will render inline with the call.
+    // Must be computed synchronously here — doing it lazily in a Builder
+    // would run after the orphan loop below has already evaluated.
+    final consumedIds = <String>{
+      for (final block in message.content)
+        if (block is ToolCallContentBlock &&
+            resultsByCallId.containsKey(block.id))
+          block.id,
+    };
+
+    Widget childFor(ContentBlock block) {
+      if (block is ToolCallContentBlock) {
+        final result = resultsByCallId[block.id];
+        if (result != null) {
+          return ToolCallWithResultBlock(
+            name: block.name,
+            arguments: block.arguments,
+            resultContent: result.resultContent,
+            rawResponse: result.rawResponse,
+          );
+        }
+      }
+      return _ContentBlockWidget(
+        block: block,
+        isStreaming: message.isStreaming,
+      );
+    }
+
+    // Tool-result blocks not paired with a call in the assistant message.
+    // Rare, but kept visible rather than silently dropped.
+    final orphanResultGroups = <List<ContentBlock>>[];
+    for (final toolMsg in toolResults) {
+      final orphans = [
+        for (final block in toolMsg.content)
+          if (block is! ToolResultContentBlock ||
+              !consumedIds.contains(block.toolCallId))
+            block,
+      ];
+      if (orphans.isNotEmpty) orphanResultGroups.add(orphans);
+    }
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -111,10 +165,7 @@ class MessageBubble extends StatelessWidget {
                             ),
                           ),
                         for (final block in message.content)
-                          _ContentBlockWidget(
-                            block: block,
-                            isStreaming: message.isStreaming,
-                          ),
+                          childFor(block),
                         if (message.isStreaming) const _StreamingIndicator(),
                         if (!message.isStreaming &&
                             message.role == MessageRole.assistant &&
@@ -127,8 +178,7 @@ class MessageBubble extends StatelessWidget {
                     ),
                   ),
                 ),
-                // Tool results rendered inside the same bubble group.
-                for (final toolMsg in toolResults)
+                for (final orphans in orphanResultGroups)
                   Padding(
                     padding: const EdgeInsets.only(top: 4),
                     child: Container(
@@ -143,7 +193,7 @@ class MessageBubble extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          for (final block in toolMsg.content)
+                          for (final block in orphans)
                             _ContentBlockWidget(block: block),
                         ],
                       ),

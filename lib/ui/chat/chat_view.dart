@@ -28,6 +28,7 @@ class _ChatViewState extends ConsumerState<ChatView> {
   String? _lastConversationId;
   List<Message>? _cachedMessages;
   List<List<Message>>? _cachedGrouped;
+  Map<String, int>? _cachedCumulativeDurations;
 
   @override
   void dispose() {
@@ -187,8 +188,10 @@ class _ChatViewState extends ConsumerState<ChatView> {
     if (!identical(messages, _cachedMessages)) {
       _cachedMessages = messages;
       _cachedGrouped = _groupMessages(messages);
+      _cachedCumulativeDurations = _computeCumulativeDurations(messages);
     }
     final grouped = _cachedGrouped!;
+    final cumulativeDurations = _cachedCumulativeDurations!;
 
     return Stack(
       children: [
@@ -200,16 +203,19 @@ class _ChatViewState extends ConsumerState<ChatView> {
             itemCount: grouped.length,
             itemBuilder: (context, index) {
               final group = grouped[index];
+              final cumulativeMs = cumulativeDurations[group.first.id];
               if (group.length == 1) {
                 return MessageBubble(
                   key: ValueKey(group.first.id),
                   message: group.first,
+                  cumulativeDurationMs: cumulativeMs,
                 );
               }
               return MessageBubble(
                 key: ValueKey(group.first.id),
                 message: group.first,
                 toolResults: group.sublist(1),
+                cumulativeDurationMs: cumulativeMs,
               );
             },
           ),
@@ -281,6 +287,22 @@ class _ChatViewState extends ConsumerState<ChatView> {
         ],
       ),
     );
+  }
+
+  /// Cumulative assistant duration (ms) since the last user message,
+  /// inclusive of each message's own duration.
+  static Map<String, int> _computeCumulativeDurations(List<Message> messages) {
+    final result = <String, int>{};
+    int running = 0;
+    for (final msg in messages) {
+      if (msg.role == MessageRole.user) {
+        running = 0;
+      } else if (msg.role == MessageRole.assistant) {
+        running += msg.durationMs;
+        result[msg.id] = running;
+      }
+    }
+    return result;
   }
 
   /// Group tool-result messages with their preceding assistant message.

@@ -16,10 +16,15 @@ class MessageBubble extends StatelessWidget {
   final Message message;
   final List<Message> toolResults;
 
+  /// Cumulative assistant-turn duration (ms) up to and including this
+  /// message. Null when not applicable (user/system messages).
+  final int? cumulativeDurationMs;
+
   const MessageBubble({
     super.key,
     required this.message,
     this.toolResults = const [],
+    this.cumulativeDurationMs,
   });
 
   /// Whether this message is an auto-injected hallucination correction.
@@ -173,6 +178,7 @@ class MessageBubble extends StatelessWidget {
                           _MessageStats(
                             tokens: message.completionTokens,
                             durationMs: message.durationMs,
+                            cumulativeDurationMs: cumulativeDurationMs,
                           ),
                       ],
                     ),
@@ -345,8 +351,13 @@ class _Avatar extends StatelessWidget {
 class _MessageStats extends StatelessWidget {
   final int tokens;
   final int durationMs;
+  final int? cumulativeDurationMs;
 
-  const _MessageStats({required this.tokens, required this.durationMs});
+  const _MessageStats({
+    required this.tokens,
+    required this.durationMs,
+    this.cumulativeDurationMs,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -358,6 +369,11 @@ class _MessageStats extends StatelessWidget {
           seconds > 0 ? (tokens / seconds).toStringAsFixed(1) : '—';
       parts.add('${seconds.toStringAsFixed(1)}s');
       parts.add('$tokPerSec tok/s');
+    }
+    if (cumulativeDurationMs != null &&
+        cumulativeDurationMs! > durationMs &&
+        cumulativeDurationMs! > 0) {
+      parts.add('Σ ${(cumulativeDurationMs! / 1000).toStringAsFixed(1)}s');
     }
 
     return Padding(

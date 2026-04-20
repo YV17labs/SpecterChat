@@ -15,7 +15,7 @@ dependencies:
   riverpod_annotation: ^4.0.2
   # HTTP
   dio: ^5.9.2
-  # http: used by mcp_dart and our vendored MCP transport (RetryHttpClient)
+  # http: used by mcp_dart and our vendored MCP transport.
   http: ^1.2.0
   # Markdown rendering
   flutter_markdown: ^0.7.7

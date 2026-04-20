@@ -1,9 +1,14 @@
-// Vendored from mcp_dart 2.1.0 (lib/src/client/streamable_https.dart) with one
-// change: the constructor accepts an injected `http.Client` so we can wrap it
-// with [RetryHttpClient]. Upstream hardcodes `http.Client()` with no override.
+// Vendored from mcp_dart 2.1.0 (lib/src/client/streamable_https.dart) with two
+// small changes:
+//   1. The constructor accepts an injected `http.Client` (upstream hardcodes
+//      `http.Client()` with no override).
+//   2. The GET (SSE open) and POST (JSON-RPC) requests are built with
+//      `persistentConnection = false`, so every MCP call does a fresh
+//      TCP/TLS handshake rather than reusing a pooled socket that the
+//      server may have already closed.
 //
 // Keep this file diffable against the upstream source; if you upgrade
-// mcp_dart, re-vendor and re-apply the httpClient injection.
+// mcp_dart, re-vendor and re-apply both changes.
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
@@ -64,7 +69,6 @@ class StreamableHttpClientTransportOptions {
   final String? sessionId;
 
   /// Optional HTTP client. If null, a default `http.Client()` is created.
-  /// Pass a `RetryHttpClient` here to recover from dead pooled sockets.
   final http.Client? httpClient;
 
   const StreamableHttpClientTransportOptions({
@@ -171,7 +175,8 @@ class StreamableHttpClientTransport
         headers['last-event-id'] = resumptionToken;
       }
 
-      final request = http.Request('GET', _url);
+      final request = http.Request('GET', _url)
+        ..persistentConnection = false;
       request.headers.addAll(headers);
       final response = await _httpClient.send(request);
 
@@ -460,7 +465,8 @@ class StreamableHttpClientTransport
       headers['content-type'] = 'application/json';
       headers['accept'] = 'application/json, text/event-stream';
 
-      final request = http.Request('POST', _url);
+      final request = http.Request('POST', _url)
+        ..persistentConnection = false;
       request.headers.addAll(headers);
       request.body = jsonEncode(message.toJson());
 

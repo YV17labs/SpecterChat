@@ -54,6 +54,7 @@ class MessageBubble extends StatelessWidget {
     final isUser = message.role == MessageRole.user;
     final isAutoCorrection = _isAutoCorrection;
     final resultsByCallId = _indexToolResults();
+    final maxBubbleWidth = MediaQuery.of(context).size.width * 0.65;
 
     // Set of tool call ids whose result will render inline with the call.
     // Must be computed synchronously here — doing it lazily in a Builder
@@ -66,21 +67,27 @@ class MessageBubble extends StatelessWidget {
     };
 
     Widget childFor(ContentBlock block) {
+      final Widget built;
       if (block is ToolCallContentBlock) {
         final result = resultsByCallId[block.id];
         if (result != null) {
-          return ToolCallWithResultBlock(
+          built = ToolCallWithResultBlock(
             name: block.name,
             arguments: block.arguments,
             resultContent: result.resultContent,
             rawResponse: result.rawResponse,
           );
+          return _BlockFadeIn(child: built);
         }
       }
-      return _ContentBlockWidget(
+      built = _ContentBlockWidget(
         block: block,
         isStreaming: message.isStreaming,
       );
+      // Text handles its own per-word fade; everything else fades as a
+      // whole container on first appearance.
+      if (block is TextContentBlock) return built;
+      return _BlockFadeIn(child: built);
     }
 
     // Tool-result blocks not paired with a call in the assistant message.
@@ -121,10 +128,15 @@ class MessageBubble extends StatelessWidget {
                   context,
                   message,
                   child: Container(
-                    constraints: BoxConstraints(
-                      maxWidth:
-                          MediaQuery.of(context).size.width * 0.65,
-                    ),
+                    constraints: BoxConstraints(maxWidth: maxBubbleWidth),
+                    // Pin width to max while the assistant streams so the
+                    // bubble doesn't widen character-by-character — that
+                    // triggers text reflow (words re-wrapping from the
+                    // start of a line onto the end of the previous one),
+                    // which reads as "text sliding right-to-left".
+                    width: (!isUser && message.isStreaming)
+                        ? maxBubbleWidth
+                        : null,
                     decoration: BoxDecoration(
                       color: isAutoCorrection
                           ? _correctionBg
@@ -154,33 +166,38 @@ class MessageBubble extends StatelessWidget {
                     ),
                     padding:
                         const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        if (isAutoCorrection)
-                          const Padding(
-                            padding: EdgeInsets.only(bottom: 4),
-                            child: Text(
-                              'Auto-correction',
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
-                                color: _correctionAccent,
+                    child: AnimatedSize(
+                      duration: const Duration(milliseconds: 220),
+                      curve: Curves.easeOut,
+                      alignment: Alignment.topLeft,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (isAutoCorrection)
+                            const Padding(
+                              padding: EdgeInsets.only(bottom: 4),
+                              child: Text(
+                                'Auto-correction',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                  color: _correctionAccent,
+                                ),
                               ),
                             ),
-                          ),
-                        for (final block in message.content)
-                          childFor(block),
-                        if (message.isStreaming) const _StreamingIndicator(),
-                        if (!message.isStreaming &&
-                            message.role == MessageRole.assistant &&
-                            message.completionTokens > 0)
-                          _MessageStats(
-                            tokens: message.completionTokens,
-                            durationMs: message.durationMs,
-                            cumulativeDurationMs: cumulativeDurationMs,
-                          ),
-                      ],
+                          for (final block in message.content)
+                            childFor(block),
+                          if (message.isStreaming) const _StreamingIndicator(),
+                          if (!message.isStreaming &&
+                              message.role == MessageRole.assistant &&
+                              message.completionTokens > 0)
+                            _MessageStats(
+                              tokens: message.completionTokens,
+                              durationMs: message.durationMs,
+                              cumulativeDurationMs: cumulativeDurationMs,
+                            ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -188,10 +205,7 @@ class MessageBubble extends StatelessWidget {
                   Padding(
                     padding: const EdgeInsets.only(top: 4),
                     child: Container(
-                      constraints: BoxConstraints(
-                        maxWidth:
-                            MediaQuery.of(context).size.width * 0.65,
-                      ),
+                      constraints: BoxConstraints(maxWidth: maxBubbleWidth),
                       decoration:
                           context.specterStyles.toolResultGroupDecoration,
                       padding: const EdgeInsets.symmetric(
@@ -420,6 +434,30 @@ class _ContentBlockWidget extends StatelessWidget {
       ThinkingContentBlock(:final text) =>
         ThinkingBlock(text: text, isStreaming: isStreaming),
     };
+  }
+}
+
+/// One-shot fade-in wrapper for container blocks (tool calls, thinking
+/// boxes, images) so they appear softly instead of popping in. The
+/// tween only animates on first build; once mounted, rebuilds of the
+/// same widget keep it at full opacity.
+class _BlockFadeIn extends StatelessWidget {
+  final Widget child;
+  const _BlockFadeIn({required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    return TweenAnimationBuilder<double>(
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOut,
+      tween: Tween(begin: 0.0, end: 1.0),
+      // Skip the Opacity (and its saveLayer) once fully faded in — this
+      // is the steady state after the one-shot animation.
+      builder: (context, value, child) => value >= 1.0
+          ? child!
+          : Opacity(opacity: value, child: child),
+      child: child,
+    );
   }
 }
 

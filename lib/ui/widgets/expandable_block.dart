@@ -32,12 +32,26 @@ class ExpandableBlock extends StatefulWidget {
 }
 
 class _ExpandableBlockState extends State<ExpandableBlock> {
+  static const _animDuration = Duration(milliseconds: 260);
+  static const _animCurve = Curves.easeInOut;
+
   late bool _expanded;
 
   @override
   void initState() {
     super.initState();
     _expanded = widget.initiallyExpanded;
+  }
+
+  @override
+  void didUpdateWidget(covariant ExpandableBlock oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Allow callers (e.g. thinking block) to steer the state by flipping
+    // `initiallyExpanded` at runtime — the flag drives the collapse when
+    // streaming ends. User taps still override at any time.
+    if (widget.initiallyExpanded != oldWidget.initiallyExpanded) {
+      _expanded = widget.initiallyExpanded;
+    }
   }
 
   @override
@@ -78,30 +92,34 @@ class _ExpandableBlockState extends State<ExpandableBlock> {
                                 ),
                           ),
                         ),
-                        if (!_expanded &&
-                            widget.preview != null &&
+                        if (widget.preview != null &&
                             widget.preview!.isNotEmpty) ...[
                           const SizedBox(width: 8),
                           Expanded(
-                            child: ShaderMask(
-                              shaderCallback: (bounds) => LinearGradient(
-                                colors: [
-                                  Theme.of(context).colorScheme.onSurface,
-                                  Colors.transparent,
-                                ],
-                                stops: const [0.5, 1.0],
-                              ).createShader(bounds),
-                              blendMode: BlendMode.dstIn,
-                              child: Text(
-                                widget.preview!,
-                                maxLines: 1,
-                                overflow: TextOverflow.clip,
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onSurface
-                                      .withValues(alpha: 0.4),
+                            child: AnimatedOpacity(
+                              opacity: _expanded ? 0.0 : 1.0,
+                              duration: _animDuration,
+                              curve: _animCurve,
+                              child: ShaderMask(
+                                shaderCallback: (bounds) => LinearGradient(
+                                  colors: [
+                                    Theme.of(context).colorScheme.onSurface,
+                                    Colors.transparent,
+                                  ],
+                                  stops: const [0.5, 1.0],
+                                ).createShader(bounds),
+                                blendMode: BlendMode.dstIn,
+                                child: Text(
+                                  widget.preview!,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.clip,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurface
+                                        .withValues(alpha: 0.4),
+                                  ),
                                 ),
                               ),
                             ),
@@ -110,17 +128,30 @@ class _ExpandableBlockState extends State<ExpandableBlock> {
                       ],
                     ),
                   ),
-                  Icon(
-                    _expanded
-                        ? Icons.expand_less
-                        : Icons.expand_more,
-                    size: 18,
+                  AnimatedRotation(
+                    turns: _expanded ? 0.5 : 0.0,
+                    duration: _animDuration,
+                    curve: _animCurve,
+                    child: const Icon(Icons.expand_more, size: 18),
                   ),
                 ],
               ),
             ),
           ),
-          if (_expanded) widget.child,
+          ClipRect(
+            child: AnimatedAlign(
+              alignment: Alignment.topLeft,
+              heightFactor: _expanded ? 1.0 : 0.0,
+              duration: _animDuration,
+              curve: _animCurve,
+              child: AnimatedOpacity(
+                opacity: _expanded ? 1.0 : 0.0,
+                duration: _animDuration,
+                curve: _animCurve,
+                child: widget.child,
+              ),
+            ),
+          ),
         ],
       ),
     );

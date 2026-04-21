@@ -10,8 +10,7 @@ import 'package:pasteboard/pasteboard.dart';
 import '../../models/message.dart';
 import '../../utils/theme.dart';
 import 'expandable_block.dart';
-import 'smooth_streaming_text.dart';
-import 'streaming_fade.dart';
+import 'word_fade_text.dart';
 
 final _log = Logger('ContentBlocks');
 
@@ -50,24 +49,71 @@ class TextBlock extends StatelessWidget {
   Widget build(BuildContext context) {
     if (text.isEmpty) return const SizedBox.shrink();
 
-    return SmoothStreamingText(
-      text: text,
-      isStreaming: isStreaming,
-      builder: (context, visible) {
-        if (visible.isEmpty) return const SizedBox.shrink();
-        return StreamingFade(
-          active: isStreaming && visible.length < text.length,
-          child: RepaintBoundary(
-            child: MarkdownBody(
-              data: visible,
-              selectable: !isStreaming,
-              styleSheet: context.specterStyles.markdownStyleSheet,
-            ),
+    final styleSheet = context.specterStyles.markdownStyleSheet;
+
+    if (!isStreaming) {
+      return MarkdownBody(
+        data: text,
+        selectable: true,
+        styleSheet: styleSheet,
+      );
+    }
+
+    // During streaming, split into settled (complete markdown blocks,
+    // rendered formatted) and tail (paragraph-in-progress, rendered plain
+    // with word-fade). Avoids reparsing an incomplete table/list/code
+    // fence every tick, which would flicker.
+    final (settled, tail) = _splitSettledTail(text);
+    final tailStyle = styleSheet.p ?? DefaultTextStyle.of(context).style;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (settled.isNotEmpty)
+          MarkdownBody(
+            data: settled,
+            selectable: false,
+            styleSheet: styleSheet,
           ),
-        );
-      },
+        if (tail.isNotEmpty)
+          WordFadeText(
+            text: tail,
+            isStreaming: true,
+            style: tailStyle,
+          ),
+      ],
     );
   }
+}
+
+/// Finds the last `\n\n` boundary whose prefix has balanced ``` code
+/// fences — splitting inside an unclosed fence would pass malformed
+/// markdown to the parser.
+(String settled, String tail) _splitSettledTail(String text) {
+  int boundary = text.lastIndexOf('\n\n');
+  while (boundary >= 0) {
+    if (_balancedFencesUpTo(text, boundary)) {
+      return (text.substring(0, boundary), text.substring(boundary + 2));
+    }
+    boundary = text.lastIndexOf('\n\n', boundary - 1);
+  }
+  return ('', text);
+}
+
+bool _balancedFencesUpTo(String text, int end) {
+  int count = 0;
+  int i = 0;
+  while (i <= end - 3) {
+    if (text.codeUnitAt(i) == 0x60 &&
+        text.codeUnitAt(i + 1) == 0x60 &&
+        text.codeUnitAt(i + 2) == 0x60) {
+      count++;
+      i += 3;
+    } else {
+      i++;
+    }
+  }
+  return count.isEven;
 }
 
 /// Renders a base64-encoded image.
@@ -567,20 +613,9 @@ class ThinkingBlock extends StatelessWidget {
       color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
     );
 
-    final body = SmoothStreamingText(
-      text: text,
-      isStreaming: isStreaming,
-      builder: (context, visible) {
-        if (visible.isEmpty) return const SizedBox.shrink();
-        final inner = isStreaming
-            ? Text(visible, style: thinkingStyle)
-            : SelectableText(visible, style: thinkingStyle);
-        return StreamingFade(
-          active: isStreaming && visible.length < text.length,
-          child: inner,
-        );
-      },
-    );
+    final Widget body = isStreaming
+        ? WordFadeText(text: text, isStreaming: true, style: thinkingStyle)
+        : SelectableText(text, style: thinkingStyle);
 
     return ExpandableBlock(
       icon: Icons.psychology,

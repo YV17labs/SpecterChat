@@ -417,7 +417,8 @@ class _ContentBlockWidget extends StatelessWidget {
           resultContent: resultContent,
           rawResponse: rawResponse,
         ),
-      ThinkingContentBlock(:final text) => ThinkingBlock(text: text),
+      ThinkingContentBlock(:final text) =>
+        ThinkingBlock(text: text, isStreaming: isStreaming),
     };
   }
 }

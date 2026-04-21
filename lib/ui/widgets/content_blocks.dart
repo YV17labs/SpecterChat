@@ -11,6 +11,7 @@ import '../../models/message.dart';
 import '../../utils/theme.dart';
 import 'expandable_block.dart';
 import 'smooth_streaming_text.dart';
+import 'streaming_fade.dart';
 
 final _log = Logger('ContentBlocks');
 
@@ -54,11 +55,14 @@ class TextBlock extends StatelessWidget {
       isStreaming: isStreaming,
       builder: (context, visible) {
         if (visible.isEmpty) return const SizedBox.shrink();
-        return RepaintBoundary(
-          child: MarkdownBody(
-            data: visible,
-            selectable: true,
-            styleSheet: context.specterStyles.markdownStyleSheet,
+        return StreamingFade(
+          active: isStreaming && visible.length < text.length,
+          child: RepaintBoundary(
+            child: MarkdownBody(
+              data: visible,
+              selectable: !isStreaming,
+              styleSheet: context.specterStyles.markdownStyleSheet,
+            ),
           ),
         );
       },
@@ -544,13 +548,39 @@ class ToolResultBlock extends StatelessWidget {
 /// Renders a collapsible thinking/reasoning block.
 class ThinkingBlock extends StatelessWidget {
   final String text;
+  final bool isStreaming;
 
-  const ThinkingBlock({super.key, required this.text});
+  const ThinkingBlock({
+    super.key,
+    required this.text,
+    this.isStreaming = false,
+  });
 
   @override
   Widget build(BuildContext context) {
     final mutedColor =
         Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5);
+
+    final thinkingStyle = TextStyle(
+      fontSize: 12,
+      fontStyle: FontStyle.italic,
+      color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
+    );
+
+    final body = SmoothStreamingText(
+      text: text,
+      isStreaming: isStreaming,
+      builder: (context, visible) {
+        if (visible.isEmpty) return const SizedBox.shrink();
+        final inner = isStreaming
+            ? Text(visible, style: thinkingStyle)
+            : SelectableText(visible, style: thinkingStyle);
+        return StreamingFade(
+          active: isStreaming && visible.length < text.length,
+          child: inner,
+        );
+      },
+    );
 
     return ExpandableBlock(
       icon: Icons.psychology,
@@ -564,19 +594,10 @@ class ThinkingBlock extends StatelessWidget {
       ),
       margin: const EdgeInsets.only(bottom: 8),
       decoration: context.specterStyles.thinkingBlockDecoration,
+      initiallyExpanded: isStreaming,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-        child: SelectableText(
-          text,
-          style: TextStyle(
-            fontSize: 12,
-            fontStyle: FontStyle.italic,
-            color: Theme.of(context)
-                .colorScheme
-                .onSurface
-                .withValues(alpha: 0.6),
-          ),
-        ),
+        child: body,
       ),
     );
   }

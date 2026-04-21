@@ -2,8 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
 /// Reveals [text] character by character so streamed LLM output feels
-/// fluid, instead of arriving in the 500ms chunks produced by the
-/// DB persistence throttle.
+/// fluid, instead of arriving in the chunks produced by the DB
+/// persistence throttle.
+///
+/// Tuned for soft, even pacing: keeps a ~400ms backlog so the reveal
+/// rate stays steady even when the upstream chunks arrive in bursts.
 class SmoothStreamingText extends StatefulWidget {
   final String text;
   final bool isStreaming;
@@ -22,14 +25,14 @@ class SmoothStreamingText extends StatefulWidget {
 
 class _SmoothStreamingTextState extends State<SmoothStreamingText>
     with SingleTickerProviderStateMixin {
-  static const double _baseRate = 60.0;
-  static const double _maxStreamingRate = 400.0;
+  static const double _baseRate = 80.0;
+  static const double _maxStreamingRate = 260.0;
   static const double _flushRate = 1500.0;
-  static const double _targetLatencySeconds = 0.2;
+  static const double _targetLatencySeconds = 0.45;
 
-  /// Caps rebuilds at ~17Hz so expensive children like MarkdownBody
+  /// Caps rebuilds at ~22Hz so expensive children like MarkdownBody
   /// don't reparse every frame.
-  static const Duration _minRebuildInterval = Duration(milliseconds: 60);
+  static const Duration _minRebuildInterval = Duration(milliseconds: 45);
 
   late final Ticker _ticker;
   Duration? _lastTickElapsed;

@@ -25,7 +25,7 @@ final _log = Logger('ChatSession');
 ///     └─> session.sendMessage(text, deps)
 ///           ├─> persists the user message
 ///           ├─> streams the assistant response, upserting a placeholder
-///           │   row every ~500ms so the UI (which watches the messages
+///           │   row every ~120ms so the UI (which watches the messages
 ///           │   table) sees content grow live
 ///           ├─> runs any tool calls, then recurses into the LLM again
 ///           └─> finalises the placeholder row (flips is_streaming = 0)
@@ -41,7 +41,7 @@ class ChatSession {
     required ChatSessionDepsResolver resolveDeps,
     ChatLogic logic = const ChatLogic(),
     ToolExecutor toolExecutor = const ToolExecutor(),
-    Duration persistenceThrottle = const Duration(milliseconds: 500),
+    Duration persistenceThrottle = const Duration(milliseconds: 120),
   })  : _resolveDeps = resolveDeps,
         _logic = logic,
         _toolExecutor = toolExecutor,

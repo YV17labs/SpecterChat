@@ -157,23 +157,66 @@ class _ServerIcon extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final widget = _resolveIconWidget(context, icons);
-    if (widget != null) {
-      return SizedBox.square(dimension: 20, child: widget);
-    }
-    return _fallbackIcon(context);
+    final iconWidget = _resolveIconWidget(context, icons);
+    final base = iconWidget != null
+        ? SizedBox.square(dimension: 20, child: iconWidget)
+        : _fallbackIcon(context);
+
+    return Tooltip(
+      message: connected ? 'Connected' : 'Disconnected',
+      child: SizedBox(
+        width: 22,
+        height: 22,
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Positioned.fill(child: Center(child: base)),
+            Positioned(
+              right: -2,
+              bottom: -2,
+              child: _StatusDot(connected: connected),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _fallbackIcon(BuildContext context) {
     return Icon(
-      connected ? Icons.cloud_done : Icons.cloud_off,
+      Icons.dns_outlined,
       size: 18,
-      color: connected
-          ? Colors.green
-          : Theme.of(context)
-              .colorScheme
-              .onSurface
-              .withValues(alpha: 0.4),
+      color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
+    );
+  }
+}
+
+class _StatusDot extends StatelessWidget {
+  final bool connected;
+
+  const _StatusDot({required this.connected});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = connected ? const Color(0xFF22C55E) : const Color(0xFF6B7280);
+    final surface = Theme.of(context).colorScheme.surface;
+    return Container(
+      width: 9,
+      height: 9,
+      decoration: BoxDecoration(
+        color: color,
+        shape: BoxShape.circle,
+        border: Border.all(color: surface, width: 1.5),
+        boxShadow: connected
+            ? [
+                BoxShadow(
+                  color: color.withValues(alpha: 0.6),
+                  blurRadius: 4,
+                  spreadRadius: 0.5,
+                ),
+              ]
+            : null,
+      ),
     );
   }
 }

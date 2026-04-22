@@ -137,6 +137,14 @@ class _ChatViewState extends ConsumerState<ChatView> {
     final session = ref.watch(chatSessionProvider(conversationId));
     final messagesAsync =
         ref.watch(conversationMessagesProvider(conversationId));
+    final totalCount = ref
+        .watch(conversationMessageCountProvider(conversationId))
+        .whenOrNull(data: (v) => v);
+    final windowSize =
+        ref.watch(messageWindowSizeProvider(conversationId));
+    final atWindowCap = windowSize >= kMaxMessageWindowSize;
+    final hasMoreAbove =
+        totalCount != null && totalCount > windowSize;
 
     return ValueListenableBuilder<ChatSessionState>(
       valueListenable: session.state,
@@ -151,7 +159,12 @@ class _ChatViewState extends ConsumerState<ChatView> {
             const Divider(height: 1),
             Expanded(
               child: messagesAsync.when(
-                data: (messages) => _buildMessageList(messages),
+                data: (messages) => _buildMessageList(
+                  messages,
+                  conversationId: conversationId,
+                  hasMoreAbove: hasMoreAbove,
+                  atWindowCap: atWindowCap,
+                ),
                 loading: () =>
                     const Center(child: CircularProgressIndicator()),
                 error: (e, _) =>
@@ -173,7 +186,12 @@ class _ChatViewState extends ConsumerState<ChatView> {
     );
   }
 
-  Widget _buildMessageList(List<Message> messages) {
+  Widget _buildMessageList(
+    List<Message> messages, {
+    required String conversationId,
+    required bool hasMoreAbove,
+    required bool atWindowCap,
+  }) {
     if (messages.isEmpty) {
       return _WelcomeMessage();
     }
@@ -192,6 +210,7 @@ class _ChatViewState extends ConsumerState<ChatView> {
     }
     final grouped = _cachedGrouped!;
     final cumulativeDurations = _cachedCumulativeDurations!;
+    final int headerCount = hasMoreAbove ? 1 : 0;
 
     return Stack(
       children: [
@@ -200,23 +219,31 @@ class _ChatViewState extends ConsumerState<ChatView> {
           child: ListView.builder(
             controller: _scrollController,
             padding: const EdgeInsets.symmetric(vertical: 16),
-            itemCount: grouped.length,
+            itemCount: grouped.length + headerCount,
             itemBuilder: (context, index) {
-              final group = grouped[index];
-              final cumulativeMs = cumulativeDurations[group.first.id];
-              if (group.length == 1) {
-                return MessageBubble(
-                  key: ValueKey(group.first.id),
-                  message: group.first,
-                  cumulativeDurationMs: cumulativeMs,
+              if (hasMoreAbove && index == 0) {
+                return _LoadMoreHeader(
+                  atCap: atWindowCap,
+                  onLoadMore: () => _loadMore(conversationId),
                 );
               }
-              return MessageBubble(
-                key: ValueKey(group.first.id),
-                message: group.first,
-                toolResults: group.sublist(1),
-                cumulativeDurationMs: cumulativeMs,
-              );
+              final group = grouped[index - headerCount];
+              final cumulativeMs = cumulativeDurations[group.first.id];
+              final bubble = group.length == 1
+                  ? MessageBubble(
+                      key: ValueKey(group.first.id),
+                      message: group.first,
+                      cumulativeDurationMs: cumulativeMs,
+                    )
+                  : MessageBubble(
+                      key: ValueKey(group.first.id),
+                      message: group.first,
+                      toolResults: group.sublist(1),
+                      cumulativeDurationMs: cumulativeMs,
+                    );
+              // Isolate each bubble from paint invalidation so a streaming
+              // bubble at the tail doesn't repaint the whole scrollback.
+              return RepaintBoundary(child: bubble);
             },
           ),
         ),
@@ -326,6 +353,51 @@ class _ChatViewState extends ConsumerState<ChatView> {
     setState(() => _stickToBottom = true);
     _scrollToBottom(force: true);
     session.sendMessage(text);
+  }
+
+  void _loadMore(String conversationId) {
+    ref.read(messageWindowSizeProvider(conversationId).notifier).expand();
+  }
+}
+
+class _LoadMoreHeader extends StatelessWidget {
+  final bool atCap;
+  final VoidCallback onLoadMore;
+
+  const _LoadMoreHeader({
+    required this.atCap,
+    required this.onLoadMore,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Center(
+        child: atCap
+            ? Text(
+                'Older messages archived',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Theme.of(context)
+                      .colorScheme
+                      .onSurface
+                      .withValues(alpha: 0.4),
+                ),
+              )
+            : TextButton.icon(
+                onPressed: onLoadMore,
+                icon: const Icon(Icons.history, size: 16),
+                label: const Text('Load older messages'),
+                style: TextButton.styleFrom(
+                  foregroundColor: Theme.of(context)
+                      .colorScheme
+                      .onSurface
+                      .withValues(alpha: 0.6),
+                ),
+              ),
+      ),
+    );
   }
 }
 

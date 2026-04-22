@@ -109,9 +109,15 @@ class ConversationRepository implements IConversationRepository {
   }
 
   @override
-  Stream<List<model.Message>> watchMessages(String conversationId) {
+  Stream<List<model.Message>> watchMessages(
+    String conversationId, {
+    int? limit,
+  }) {
     return _database
-        .watchMessagesForConversation(conversationId)
+        .watchRecentMessagesForConversation(
+          conversationId,
+          limit: limit ?? 0,
+        )
         .map((rows) => rows.map(_dbMessageToModel).toList());
   }
 
@@ -120,6 +126,11 @@ class ConversationRepository implements IConversationRepository {
     final rows =
         await _database.getMessagesForConversation(conversationId);
     return rows.map(_dbMessageToModel).toList();
+  }
+
+  @override
+  Stream<int> watchMessageCount(String conversationId) {
+    return _database.watchMessageCountForConversation(conversationId);
   }
 
   @override

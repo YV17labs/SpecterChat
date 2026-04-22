@@ -21,8 +21,23 @@ abstract interface class IConversationRepository {
   Future<void> deleteConversation(String id);
 
   // --- Messages ---
-  Stream<List<Message>> watchMessages(String conversationId);
+
+  /// Watch the most recent [limit] messages for a conversation, ordered
+  /// chronologically. When [limit] is null, streams the full history —
+  /// intended for tests or one-off administrative tools. UI callers
+  /// should always pass a bounded [limit] so RAM stays proportional to
+  /// what the user can actually see.
+  Stream<List<Message>> watchMessages(String conversationId, {int? limit});
+
+  /// Load the full message history. Used by the LLM pipeline to build
+  /// API requests — the API needs the complete context, not a window.
   Future<List<Message>> getMessages(String conversationId);
+
+  /// Stream the total count of persisted messages for the conversation,
+  /// regardless of the UI window. Emits only on actual count changes so
+  /// the UI can decide whether to show "load older messages" without
+  /// firing a COUNT query on every streaming chunk.
+  Stream<int> watchMessageCount(String conversationId);
   Future<void> saveMessage(Message message);
   Future<void> updateMessage(Message message);
 

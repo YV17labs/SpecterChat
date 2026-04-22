@@ -211,9 +211,9 @@ void main() {
       expect(messages.first.content, contains('updated'));
     });
 
-    test('watchMessagesForConversation emits on changes', () async {
+    test('watchRecentMessagesForConversation emits on changes', () async {
       final stream =
-          db.watchMessagesForConversation('conv-1');
+          db.watchRecentMessagesForConversation('conv-1', limit: 0);
 
       expectLater(
         stream,

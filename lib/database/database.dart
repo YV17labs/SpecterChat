@@ -159,13 +159,48 @@ class AppDatabase extends _$AppDatabase {
         .get();
   }
 
-  Stream<List<Message>> watchMessagesForConversation(
-      String conversationId) {
+  /// Watch only the most recent [limit] messages for a conversation, ordered
+  /// chronologically (oldest → newest). The DB query orders DESC with LIMIT
+  /// to avoid scanning the full history, then the tail is reversed so the UI
+  /// sees the natural chronological order.
+  ///
+  /// Passing a [limit] of 0 or negative falls back to the unbounded watch.
+  Stream<List<Message>> watchRecentMessagesForConversation(
+    String conversationId, {
+    required int limit,
+  }) {
+    if (limit <= 0) {
+      return (select(messages)
+            ..where((t) => t.conversationId.equals(conversationId))
+            ..orderBy(
+                [(t) => OrderingTerm(expression: t.createdAt)]))
+          .watch();
+    }
     return (select(messages)
           ..where((t) => t.conversationId.equals(conversationId))
-          ..orderBy(
-              [(t) => OrderingTerm(expression: t.createdAt)]))
-        .watch();
+          ..orderBy([
+            (t) => OrderingTerm(
+                expression: t.createdAt, mode: OrderingMode.desc)
+          ])
+          ..limit(limit))
+        .watch()
+        .map((rows) => rows.reversed.toList(growable: false));
+  }
+
+  /// Stream of the total number of persisted messages for a conversation.
+  /// Emits only when the count actually changes — Drift re-runs the query
+  /// on every `messages` table mutation, and `distinct()` filters out
+  /// the no-op re-emissions that happen during streaming upserts (where
+  /// the row is updated in-place and the count stays the same).
+  Stream<int> watchMessageCountForConversation(String conversationId) {
+    final countExp = messages.id.count();
+    final query = selectOnly(messages)
+      ..addColumns([countExp])
+      ..where(messages.conversationId.equals(conversationId));
+    return query
+        .watchSingle()
+        .map((row) => row.read(countExp) ?? 0)
+        .distinct();
   }
 
   Future<int> insertMessage(MessagesCompanion entry) {

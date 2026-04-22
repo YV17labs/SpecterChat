@@ -9,7 +9,7 @@ import 'i_llm_service.dart';
 
 export 'i_llm_service.dart' show
     StreamEvent, ContentDelta, ThinkingDelta,
-    ToolCallDelta, StreamDone, StreamError;
+    ToolCallDelta, StreamDone, StreamStalled, StreamError;
 
 final _log = Logger('LlmService');
 
@@ -73,6 +73,7 @@ class LlmService implements ILlmService {
     required List<Map<String, dynamic>> messages,
     List<Map<String, dynamic>>? tools,
     CancelToken? cancelToken,
+    Duration? inactivityTimeout,
   }) async* {
     final body = <String, dynamic>{
       'model': _apiSettings.selectedModel,
@@ -113,7 +114,26 @@ class LlmService implements ILlmService {
         cancelToken: cancelToken,
       );
 
-      final stream = response.data.stream as Stream<List<int>>;
+      Stream<List<int>> stream = response.data.stream as Stream<List<int>>;
+      bool stalled = false;
+      if (inactivityTimeout != null) {
+        _log.info(
+            'Stream inactivity guard armed (${inactivityTimeout.inSeconds}s) '
+            'for model ${_apiSettings.selectedModel}');
+        stream = stream.timeout(
+          inactivityTimeout,
+          onTimeout: (sink) {
+            _log.warning(
+                'Stream inactive for ${inactivityTimeout.inSeconds}s — '
+                'treating as stalled');
+            stalled = true;
+            sink.close();
+          },
+        );
+      } else {
+        _log.fine(
+            'No stream inactivity guard for model ${_apiSettings.selectedModel}');
+      }
       final sseBuffer = StringBuffer();
 
       await for (final chunk in stream) {
@@ -189,7 +209,7 @@ class LlmService implements ILlmService {
         }
       }
 
-      yield StreamDone();
+      yield stalled ? StreamStalled() : StreamDone();
     } on DioException catch (e) {
       if (e.type == DioExceptionType.cancel) {
         _log.info('Stream cancelled by user');

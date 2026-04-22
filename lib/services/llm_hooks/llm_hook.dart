@@ -13,4 +13,14 @@ abstract class LlmHook {
 
   /// Correction prompt sent back to the model after a hallucination.
   String get hallucinationCorrection;
+
+  /// Per-chunk inactivity budget. If the server goes silent for this
+  /// long mid-stream, the client gives up waiting and yields a
+  /// `StreamStalled` event. `null` = wait forever (the stock behavior).
+  Duration? get streamInactivityTimeout => null;
+
+  /// Correction prompt injected as a user message to nudge the model
+  /// forward after a stalled stream. `null` = finalize silently without
+  /// relaunching the pipeline.
+  String? get streamStallCorrection => null;
 }

@@ -34,6 +34,12 @@ class StreamUsage extends StreamEvent {
 
 class StreamDone extends StreamEvent {}
 
+/// Emitted when the server streamed some bytes but then went silent for
+/// longer than the caller's inactivity budget — e.g. a model that forgot
+/// to send `[DONE]` and never closes the TCP connection. Distinct from
+/// [StreamDone] so the caller can attempt a model-specific recovery.
+class StreamStalled extends StreamEvent {}
+
 class StreamError extends StreamEvent {
   final String message;
   StreamError(this.message);
@@ -47,5 +53,6 @@ abstract interface class ILlmService {
     required List<Map<String, dynamic>> messages,
     List<Map<String, dynamic>>? tools,
     CancelToken? cancelToken,
+    Duration? inactivityTimeout,
   });
 }

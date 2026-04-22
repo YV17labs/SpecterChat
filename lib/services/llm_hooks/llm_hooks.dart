@@ -14,14 +14,14 @@ library;
 export 'llm_hook.dart';
 
 import 'llm_hook.dart';
-import 'qwen35.dart';
+import 'qwen3.dart';
 
 // ---------------------------------------------------------------------------
 // Hook registry — add new hooks here
 // ---------------------------------------------------------------------------
 
 final _hooks = <LlmHook>[
-  qwen35Hook,
+  qwen3Hook,
 ].._verifyPrefix();
 
 extension on List<LlmHook> {
@@ -42,6 +42,9 @@ extension on List<LlmHook> {
 
 /// Maximum number of automatic retries for hallucination recovery.
 const maxHallucinationRetries = 2;
+
+/// Maximum number of automatic retries for stalled-stream recovery.
+const maxStallRetries = 2;
 
 /// Prefix shared by all correction prompts — used to identify
 /// auto-correction messages in the UI without knowing the model.
@@ -67,4 +70,16 @@ bool detectHallucination(String model, String content, String thinking) {
 /// Correction prompt to send after a hallucination is detected.
 String hallucinationCorrection(String model) {
   return hookFor(model)?.hallucinationCorrection ?? '';
+}
+
+/// Inactivity timeout to apply to a stream for the given [model], or
+/// `null` if the model has no hook or the hook doesn't declare one.
+Duration? streamInactivityTimeout(String model) {
+  return hookFor(model)?.streamInactivityTimeout;
+}
+
+/// Correction prompt to inject after a stalled stream for the given
+/// [model], or `null` if no automatic relaunch should happen.
+String? streamStallCorrection(String model) {
+  return hookFor(model)?.streamStallCorrection;
 }

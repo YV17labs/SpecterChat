@@ -203,6 +203,7 @@ class ChatSession {
   Future<void> _runPipeline(
     ChatSessionDeps deps, {
     int hallucinationRetry = 0,
+    int stallRetry = 0,
   }) async {
     final history = await deps.repo.getMessages(conversationId);
     final apiMessages = _logic.buildApiMessages(
@@ -214,6 +215,7 @@ class ChatSession {
       deps: deps,
       apiMessages: apiMessages,
       hallucinationRetry: hallucinationRetry,
+      stallRetry: stallRetry,
     );
   }
 
@@ -221,6 +223,7 @@ class ChatSession {
     required ChatSessionDeps deps,
     required List<Map<String, dynamic>> apiMessages,
     required int hallucinationRetry,
+    required int stallRetry,
   }) async {
     _resetBuffers();
     _streamingMessageId = generateId();
@@ -239,10 +242,12 @@ class ChatSession {
     await _persistCurrentBuffer(deps, force: true);
     _startThrottle(deps);
 
+    final modelName = deps.settings.api.selectedModel;
     await for (final event in deps.llm.streamChatCompletion(
       messages: apiMessages,
       tools: deps.mcpTools.isNotEmpty ? deps.mcpTools : null,
       cancelToken: _cancelToken,
+      inactivityTimeout: llm_hooks.streamInactivityTimeout(modelName),
     )) {
       lastActivity = DateTime.now();
 
@@ -290,6 +295,14 @@ class ChatSession {
           );
           return;
 
+        case StreamStalled():
+          await _handleStreamStalled(
+            deps: deps,
+            completionTokens: completionTokens,
+            stallRetry: stallRetry,
+          );
+          return;
+
         case StreamError(:final message):
           _stopThrottle();
           await _cleanupAfterInterruption(deps);
@@ -324,26 +337,11 @@ class ChatSession {
         _toolCalls.values.any((tc) => tc.isValid);
     final isSendable = contentString.isNotEmpty || hasValidToolCalls;
 
-    if (isSendable && !hasHallucination) {
-      // Final upsert: same row, flipped to finalized, with full token/
-      // duration info.
-      final finalMessage = _logic.buildAssistantMessage(
-        id: _streamingMessageId!,
-        conversationId: conversationId,
-        content: contentString,
-        thinking: thinkingString,
-        toolCalls: _toolCalls,
-        isStreaming: false,
-        completionTokens: completionTokens,
-        durationMs: _stopwatch.elapsedMilliseconds,
-      );
-      await deps.repo.upsertStreamingMessage(finalMessage);
-      await deps.repo.finalizeStreamingMessage(_streamingMessageId!);
-    } else {
-      // Nothing useful arrived (pure thinking, or hallucinated tool XML).
-      // Drop the placeholder so it doesn't linger in the conversation.
-      await _deletePlaceholder(deps);
-    }
+    await _commitOrDropPlaceholder(
+      deps: deps,
+      keep: isSendable && !hasHallucination,
+      completionTokens: completionTokens,
+    );
 
     // Persist the latest prompt token count for the context gauge.
     if (state.value.promptTokens > 0) {
@@ -373,6 +371,32 @@ class ChatSession {
     await _autoTitleIfNeeded(deps, contentString);
   }
 
+  /// Flip the streaming placeholder row to its finalised form (same id,
+  /// `is_streaming=0`, full token/duration info) when [keep] is true —
+  /// otherwise drop the row so it doesn't linger in the conversation.
+  Future<void> _commitOrDropPlaceholder({
+    required ChatSessionDeps deps,
+    required bool keep,
+    required int completionTokens,
+  }) async {
+    if (!keep) {
+      await _deletePlaceholder(deps);
+      return;
+    }
+    final finalMessage = _logic.buildAssistantMessage(
+      id: _streamingMessageId!,
+      conversationId: conversationId,
+      content: _contentBuffer.toString(),
+      thinking: _thinkingBuffer.toString(),
+      toolCalls: _toolCalls,
+      isStreaming: false,
+      completionTokens: completionTokens,
+      durationMs: _stopwatch.elapsedMilliseconds,
+    );
+    await deps.repo.upsertStreamingMessage(finalMessage);
+    await deps.repo.finalizeStreamingMessage(_streamingMessageId!);
+  }
+
   Future<void> _continueWithToolResults(ChatSessionDeps deps) async {
     await _toolExecutor.executeAndSave(
       conversationId: conversationId,
@@ -382,6 +406,58 @@ class ChatSession {
       repo: deps.repo,
     );
     await _runPipeline(deps);
+  }
+
+  /// Handle a stalled stream (server went silent without `[DONE]`).
+  ///
+  /// Finalises whatever content arrived so the row is no longer stuck
+  /// in `is_streaming=1`, then — if the active model's hook provides a
+  /// stall-correction prompt and we haven't exhausted retries — injects
+  /// that prompt as a user message and relaunches the pipeline.
+  Future<void> _handleStreamStalled({
+    required ChatSessionDeps deps,
+    required int completionTokens,
+    required int stallRetry,
+  }) async {
+    _log.warning(
+      'Stream stalled (retry $stallRetry/${llm_hooks.maxStallRetries})',
+    );
+    _stopThrottle();
+    _stopwatch.stop();
+
+    final contentString = _contentBuffer.toString();
+    final hasValidToolCalls = _toolCalls.values.any((tc) => tc.isValid);
+    final isSendable = contentString.isNotEmpty || hasValidToolCalls;
+
+    await _commitOrDropPlaceholder(
+      deps: deps,
+      keep: isSendable,
+      completionTokens: completionTokens,
+    );
+
+    // Tool calls mid-flight: finish them first — the model probably
+    // just forgot to close the stream after emitting them.
+    if (hasValidToolCalls) {
+      await _continueWithToolResults(deps);
+      return;
+    }
+
+    final modelName = deps.settings.api.selectedModel;
+    final correction = llm_hooks.streamStallCorrection(modelName);
+    if (correction != null && stallRetry < llm_hooks.maxStallRetries) {
+      final nudge = Message(
+        id: generateId(),
+        conversationId: conversationId,
+        role: MessageRole.user,
+        content: [ContentBlock.text(text: correction)],
+        createdAt: DateTime.now(),
+      );
+      await deps.repo.saveMessage(nudge);
+      await _runPipeline(deps, stallRetry: stallRetry + 1);
+      return;
+    }
+
+    await _autoTitleIfNeeded(deps, contentString);
   }
 
   Future<void> _retryAfterHallucination({

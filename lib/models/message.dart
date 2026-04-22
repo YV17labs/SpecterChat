@@ -165,15 +165,17 @@ extension MessageToApi on Message {
   }
 
   /// All image attachment ids referenced anywhere in this message.
-  Iterable<String> imageAttachmentIds() sync* {
+  List<String> imageAttachmentIds() {
+    final ids = <String>[];
     for (final block in content) {
       if (block is ImageContentBlock) {
-        yield block.attachmentId;
+        ids.add(block.attachmentId);
       } else if (block is ToolResultContentBlock) {
         for (final inner in block.resultContent) {
-          if (inner is ImageContentBlock) yield inner.attachmentId;
+          if (inner is ImageContentBlock) ids.add(inner.attachmentId);
         }
       }
     }
+    return ids;
   }
 }

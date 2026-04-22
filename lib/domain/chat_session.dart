@@ -80,6 +80,11 @@ class ChatSession {
   Map<int, ToolCallAccumulator> _toolCalls = {};
   Stopwatch _stopwatch = Stopwatch();
 
+  // Image bytes accumulated across the tool-loop iterations of a single
+  // send. Cleared when the send finalises so bytes don't outlive the
+  // pipeline (each image can be several MB).
+  final Map<String, ImageBytes> _imageBytes = {};
+
   static final _toolNameNoise = RegExp(r'[(\n<]');
 
   // =====================================================================
@@ -136,6 +141,7 @@ class ChatSession {
         );
       }
       _cancelToken = null;
+      _imageBytes.clear();
     }
   }
 
@@ -207,11 +213,18 @@ class ChatSession {
   }) async {
     final history = await deps.repo.getMessages(conversationId);
     final imageIds = _logic.collectImageAttachmentIds(history);
-    final imageBytes = await deps.attachments.loadMany(imageIds);
+    // Only fetch bytes for ids we don't already hold from an earlier
+    // turn — tool-loop recursion revisits the same attachments many
+    // times per send, and each image can be several MB.
+    final missing =
+        imageIds.where((id) => !_imageBytes.containsKey(id)).toSet();
+    if (missing.isNotEmpty) {
+      _imageBytes.addAll(await deps.attachments.loadMany(missing));
+    }
     final apiMessages = _logic.buildApiMessages(
       history: history,
       systemPrompt: deps.mergedSystemPrompt,
-      imageBytes: imageBytes,
+      imageBytes: _imageBytes,
     );
 
     await _streamResponse(

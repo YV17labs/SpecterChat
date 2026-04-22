@@ -81,9 +81,6 @@ class _ImageError extends StatelessWidget {
   }
 }
 
-/// Owns the mounted image's lifecycle: resolves the intrinsic aspect
-/// ratio once, shows a hover-revealed copy button, and opens an
-/// InteractiveViewer fullscreen dialog on tap.
 class _LoadedImageBlock extends StatefulWidget {
   final Uint8List bytes;
   const _LoadedImageBlock({required this.bytes});

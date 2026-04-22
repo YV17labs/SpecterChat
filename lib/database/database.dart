@@ -101,10 +101,7 @@ class AppDatabase extends _$AppDatabase {
         },
         onUpgrade: (Migrator m, int from, int to) async {
           // Fresh slate at v8: drop any pre-UUIDv7 data so `ORDER BY id`
-          // is trustworthy. FK cascade on `attachments.message_id`
-          // handles image blobs automatically.
-          await customStatement('DELETE FROM messages');
-          await customStatement('DELETE FROM conversations');
+          // is trustworthy. `deleteTable` empties and drops in one step.
           await m.deleteTable(messages.actualTableName);
           await m.deleteTable(conversations.actualTableName);
           if (from >= 7) {

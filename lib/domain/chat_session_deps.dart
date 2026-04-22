@@ -1,4 +1,5 @@
 import '../models/app_settings.dart';
+import '../database/i_attachment_repository.dart';
 import '../database/i_conversation_repository.dart';
 import '../services/i_llm_service.dart';
 import '../services/i_mcp_service.dart';
@@ -12,6 +13,7 @@ class ChatSessionDeps {
   final ILlmService llm;
   final IMcpService mcpService;
   final IConversationRepository repo;
+  final IAttachmentRepository attachments;
   final List<Map<String, dynamic>> mcpTools;
   final List<McpServerConfig> mcpServers;
   final AppSettings settings;
@@ -22,6 +24,7 @@ class ChatSessionDeps {
     required this.llm,
     required this.mcpService,
     required this.repo,
+    required this.attachments,
     required this.mcpTools,
     required this.mcpServers,
     required this.settings,

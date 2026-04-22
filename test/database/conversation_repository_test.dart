@@ -133,7 +133,8 @@ void main() {
         expect(messages.first.content[2], isA<ToolCallContentBlock>());
       });
 
-      test('saveMessage with tool result and image', () async {
+      test('saveMessage with tool result referencing an attachment id',
+          () async {
         final msg = Message(
           id: 'msg-1',
           conversationId: convId,
@@ -145,8 +146,9 @@ void main() {
               resultContent: [
                 ContentBlock.text(text: 'captured'),
                 ContentBlock.image(
-                  base64Data: 'imgdata',
+                  attachmentId: 'att-1',
                   mimeType: 'image/png',
+                  byteSize: 123,
                 ),
               ],
             ),
@@ -160,8 +162,9 @@ void main() {
             messages.first.content.first as ToolResultContentBlock;
         final image =
             block.resultContent.whereType<ImageContentBlock>().single;
-        expect(image.base64Data, 'imgdata');
+        expect(image.attachmentId, 'att-1');
         expect(image.mimeType, 'image/png');
+        expect(image.byteSize, 123);
       });
 
       test('updateMessage changes content', () async {
@@ -208,25 +211,31 @@ void main() {
         ));
       });
 
-      test('messages preserve ordering by createdAt', () async {
+      test('messages are returned in id order regardless of createdAt',
+          () async {
+        // Ids are UUIDv7: lexicographic id order == insertion order.
+        // createdAt no longer influences ordering, so a message inserted
+        // with a later createdAt but an earlier id still comes first.
         await repo.saveMessage(Message(
-          id: 'msg-2',
-          conversationId: convId,
-          role: MessageRole.assistant,
-          content: [const ContentBlock.text(text: 'hi')],
-          createdAt: DateTime(2024, 1, 1, 10, 5),
-        ));
-        await repo.saveMessage(Message(
-          id: 'msg-1',
+          id: '01000000-0000-7000-8000-000000000001',
           conversationId: convId,
           role: MessageRole.user,
-          content: [const ContentBlock.text(text: 'hello')],
-          createdAt: DateTime(2024, 1, 1, 10, 0),
+          content: [const ContentBlock.text(text: 'first')],
+          createdAt: DateTime(2024, 12, 31),
+        ));
+        await repo.saveMessage(Message(
+          id: '02000000-0000-7000-8000-000000000002',
+          conversationId: convId,
+          role: MessageRole.assistant,
+          content: [const ContentBlock.text(text: 'second')],
+          createdAt: DateTime(2020, 1, 1),
         ));
 
         final messages = await repo.getMessages(convId);
-        expect(messages.first.id, 'msg-1');
-        expect(messages.last.id, 'msg-2');
+        expect(messages.map((m) => m.id), [
+          '01000000-0000-7000-8000-000000000001',
+          '02000000-0000-7000-8000-000000000002',
+        ]);
       });
     });
   });

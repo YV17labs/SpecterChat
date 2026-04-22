@@ -1,7 +1,9 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:logging/logging.dart';
 
+import '../database/i_attachment_repository.dart';
 import '../database/i_conversation_repository.dart';
 import '../models/app_settings.dart';
 import '../models/message.dart';
@@ -13,79 +15,111 @@ final _log = Logger('ToolExecutor');
 
 /// Executes MCP tool calls and produces tool-result [Message]s.
 ///
-/// Stateless — pass all dependencies per invocation.
+/// Stateless — pass all dependencies per invocation. Images in tool
+/// results are extracted into the attachments table as blobs; the
+/// resulting [ImageContentBlock] references them by id only so
+/// `Message.content` JSON stays small.
 class ToolExecutor {
   static const _prettyJson = JsonEncoder.withIndent('  ');
 
   const ToolExecutor();
 
   /// Execute all valid tool calls in parallel and persist results.
-  ///
-  /// Returns the list of tool-result messages saved to the repository.
-  Future<List<Message>> executeAndSave({
+  Future<void> executeAndSave({
     required String conversationId,
     required Map<int, ToolCallAccumulator> toolCalls,
     required IMcpService mcpService,
     required List<McpServerConfig> mcpServers,
     required IConversationRepository repo,
+    required IAttachmentRepository attachments,
   }) async {
     final validCalls =
         toolCalls.entries.where((e) => e.value.isValid).toList();
 
-    final futures = validCalls.map((entry) async {
-      final tc = entry.value;
-      final serverId = findServerForTool(mcpServers, tc.name!);
+    final prepared =
+        await Future.wait(validCalls.map((entry) => _prepareSingle(
+              call: entry.value,
+              conversationId: conversationId,
+              mcpService: mcpService,
+              mcpServers: mcpServers,
+            )));
 
-      if (serverId == null) {
-        return _errorMessage(
-          conversationId: conversationId,
-          toolCallId: tc.id!,
-          toolName: tc.name!,
-          error: 'No connected MCP server provides tool "${tc.name}"',
+    // Phase 2: persist in FK-safe order (message row first, then its
+    // attachments) and keep the sequence deterministic so the UI sees
+    // tool results in call order.
+    for (final p in prepared) {
+      await repo.saveMessage(p.message);
+      for (final pending in p.pendingAttachments) {
+        await attachments.storeBytes(
+          attachmentId: pending.attachmentId,
+          messageId: p.message.id,
+          bytes: pending.bytes,
+          mimeType: pending.mimeType,
         );
       }
-
-      try {
-        final argsStr = tc.argumentsBuffer.toString().trim();
-        final arguments = argsStr.isEmpty
-            ? <String, dynamic>{}
-            : jsonDecode(argsStr) as Map<String, dynamic>;
-        final result =
-            await mcpService.callTool(serverId, tc.name!, arguments);
-        return _buildToolResultMessage(
-          conversationId: conversationId,
-          toolCallId: tc.id!,
-          toolName: tc.name!,
-          result: result,
-          arguments: arguments,
-        );
-      } catch (e, st) {
-        _log.warning('Tool execution failed: ${tc.name}', e, st);
-        return _errorMessage(
-          conversationId: conversationId,
-          toolCallId: tc.id!,
-          toolName: tc.name!,
-          error: 'Error executing tool: $e',
-        );
-      }
-    });
-
-    final results = await Future.wait(futures);
-    for (final msg in results) {
-      await repo.saveMessage(msg);
     }
-    return results;
   }
 
-  Message _buildToolResultMessage({
+  Future<_PreparedToolResult> _prepareSingle({
+    required ToolCallAccumulator call,
+    required String conversationId,
+    required IMcpService mcpService,
+    required List<McpServerConfig> mcpServers,
+  }) async {
+    final messageId = generateId();
+    final serverId = findServerForTool(mcpServers, call.name!);
+
+    if (serverId == null) {
+      return _PreparedToolResult(
+        message: _errorMessage(
+          messageId: messageId,
+          conversationId: conversationId,
+          toolCallId: call.id!,
+          toolName: call.name!,
+          error: 'No connected MCP server provides tool "${call.name}"',
+        ),
+        pendingAttachments: const [],
+      );
+    }
+
+    try {
+      final argsStr = call.argumentsBuffer.toString().trim();
+      final arguments = argsStr.isEmpty
+          ? <String, dynamic>{}
+          : jsonDecode(argsStr) as Map<String, dynamic>;
+      final result = await mcpService.callTool(serverId, call.name!, arguments);
+      return _buildFromResult(
+        messageId: messageId,
+        conversationId: conversationId,
+        toolCallId: call.id!,
+        toolName: call.name!,
+        result: result,
+      );
+    } catch (e, st) {
+      _log.warning('Tool execution failed: ${call.name}', e, st);
+      return _PreparedToolResult(
+        message: _errorMessage(
+          messageId: messageId,
+          conversationId: conversationId,
+          toolCallId: call.id!,
+          toolName: call.name!,
+          error: 'Error executing tool: $e',
+        ),
+        pendingAttachments: const [],
+      );
+    }
+  }
+
+  _PreparedToolResult _buildFromResult({
+    required String messageId,
     required String conversationId,
     required String toolCallId,
     required String toolName,
     required McpToolResult result,
-    required Map<String, dynamic> arguments,
   }) {
     final resultContent = <ContentBlock>[];
     final rawItems = <Map<String, dynamic>>[];
+    final pending = <_PendingAttachment>[];
 
     for (final content in result.content) {
       switch (content) {
@@ -93,13 +127,22 @@ class ToolExecutor {
           resultContent.add(ContentBlock.text(text: text));
           rawItems.add({'type': 'text', 'text': text});
         case McpImageContent(:final base64Data, :final mimeType):
-          resultContent
-              .add(ContentBlock.image(base64Data: base64Data, mimeType: mimeType));
-          final sizeKb = (base64Data.length * 3 / 4 / 1024).round();
+          final attachmentId = generateId();
+          final bytes = base64Decode(base64Data);
+          pending.add(_PendingAttachment(
+            attachmentId: attachmentId,
+            bytes: bytes,
+            mimeType: mimeType,
+          ));
+          resultContent.add(ContentBlock.image(
+            attachmentId: attachmentId,
+            mimeType: mimeType,
+            byteSize: bytes.length,
+          ));
           rawItems.add({
             'type': 'image',
             'mimeType': mimeType,
-            'data': '<base64 ~${sizeKb}KB>',
+            'data': '<blob ~${(bytes.length / 1024).round()}KB>',
           });
         case McpUnsupportedContent(:final type, :final raw):
           resultContent.add(ContentBlock.text(
@@ -114,30 +157,34 @@ class ToolExecutor {
       'content': rawItems,
     });
 
-    return Message(
-      id: generateId(),
-      conversationId: conversationId,
-      role: MessageRole.tool,
-      content: [
-        ContentBlock.toolResult(
-          toolCallId: toolCallId,
-          toolName: toolName,
-          resultContent: resultContent,
-          rawResponse: rawResponse,
-        ),
-      ],
-      createdAt: DateTime.now(),
+    return _PreparedToolResult(
+      message: Message(
+        id: messageId,
+        conversationId: conversationId,
+        role: MessageRole.tool,
+        content: [
+          ContentBlock.toolResult(
+            toolCallId: toolCallId,
+            toolName: toolName,
+            resultContent: resultContent,
+            rawResponse: rawResponse,
+          ),
+        ],
+        createdAt: DateTime.now(),
+      ),
+      pendingAttachments: pending,
     );
   }
 
   Message _errorMessage({
+    required String messageId,
     required String conversationId,
     required String toolCallId,
     required String toolName,
     required String error,
   }) {
     return Message(
-      id: generateId(),
+      id: messageId,
       conversationId: conversationId,
       role: MessageRole.tool,
       content: [
@@ -154,4 +201,24 @@ class ToolExecutor {
       createdAt: DateTime.now(),
     );
   }
+}
+
+class _PreparedToolResult {
+  final Message message;
+  final List<_PendingAttachment> pendingAttachments;
+  const _PreparedToolResult({
+    required this.message,
+    required this.pendingAttachments,
+  });
+}
+
+class _PendingAttachment {
+  final String attachmentId;
+  final Uint8List bytes;
+  final String mimeType;
+  const _PendingAttachment({
+    required this.attachmentId,
+    required this.bytes,
+    required this.mimeType,
+  });
 }

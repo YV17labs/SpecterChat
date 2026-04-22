@@ -1,8 +1,21 @@
 
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:freezed_annotation/freezed_annotation.dart';
 
 part 'message.freezed.dart';
 part 'message.g.dart';
+
+/// Decoded bytes for an image attachment, keyed by attachment id when
+/// passed around in bulk. The record shape keeps callers from having to
+/// import any class just to hand bytes to the API serializer.
+typedef ImageBytes = ({Uint8List bytes, String mimeType});
+
+/// Map of attachment id → decoded bytes, preloaded by the chat pipeline
+/// before building an API request. The empty map is a valid input —
+/// images with unresolved ids are silently dropped from the payload.
+typedef ImageBytesMap = Map<String, ImageBytes>;
 
 enum MessageRole {
   system,
@@ -18,9 +31,13 @@ sealed class ContentBlock with _$ContentBlock {
     required String text,
   }) = TextContentBlock;
 
+  /// Image stored as a blob attachment. The content block holds only the
+  /// attachment id + metadata — actual bytes are loaded on demand via
+  /// [IAttachmentRepository]. This keeps `List<Message>` small in RAM.
   const factory ContentBlock.image({
-    required String base64Data,
+    required String attachmentId,
     required String mimeType,
+    required int byteSize,
   }) = ImageContentBlock;
 
   const factory ContentBlock.toolCall({
@@ -62,55 +79,54 @@ abstract class Message with _$Message {
       _$MessageFromJson(json);
 }
 
-/// Extension to convert messages to OpenAI API format.
+/// Convert a [Message] to the wire format expected by OpenAI-compatible
+/// chat/completions endpoints.
+///
+/// Image bytes are never stored on [Message] itself — the pipeline preloads
+/// them into [imageBytes] so the model layer stays a pure data container.
+/// Unresolved attachment ids (deleted, corrupted, not-yet-loaded) are
+/// silently dropped; the surrounding text/tool structure is preserved.
 extension MessageToApi on Message {
-  List<Map<String, dynamic>> toApiContent() {
-    final List<Map<String, dynamic>> parts = [];
-
+  List<Map<String, dynamic>> toApiContent(ImageBytesMap imageBytes) {
+    final parts = <Map<String, dynamic>>[];
     for (final block in content) {
       switch (block) {
         case TextContentBlock(:final text):
           parts.add({'type': 'text', 'text': text});
-        case ImageContentBlock(:final base64Data, :final mimeType):
+        case ImageContentBlock(:final attachmentId):
+          final loaded = imageBytes[attachmentId];
+          if (loaded == null) break;
           parts.add({
             'type': 'image_url',
             'image_url': {
-              'url': 'data:$mimeType;base64,$base64Data',
+              'url':
+                  'data:${loaded.mimeType};base64,${base64Encode(loaded.bytes)}',
             },
           });
         case ThinkingContentBlock():
-          // Thinking blocks are not sent to the API
-          break;
         case ToolCallContentBlock():
-          // Handled separately
-          break;
         case ToolResultContentBlock():
-          // Handled separately
           break;
       }
     }
-
     return parts;
   }
 
-  /// Convert to the format expected by OpenAI-compatible APIs.
-  Map<String, dynamic> toApiMessage() {
+  Map<String, dynamic> toApiMessage(ImageBytesMap imageBytes) {
     if (role == MessageRole.assistant) {
-      // Check for tool calls
       final toolCalls = content.whereType<ToolCallContentBlock>().toList();
       if (toolCalls.isNotEmpty) {
-        final apiToolCalls = toolCalls.map((tc) {
-          return {
-            'id': tc.id,
-            'type': 'function',
-            'function': {
-              'name': tc.name,
-              'arguments':
-                  tc.arguments.trim().isEmpty ? '{}' : tc.arguments,
-            },
-          };
-        }).toList();
-
+        final apiToolCalls = toolCalls
+            .map((tc) => {
+                  'id': tc.id,
+                  'type': 'function',
+                  'function': {
+                    'name': tc.name,
+                    'arguments':
+                        tc.arguments.trim().isEmpty ? '{}' : tc.arguments,
+                  },
+                })
+            .toList();
         final textParts = content.whereType<TextContentBlock>().toList();
         return {
           'role': 'assistant',
@@ -135,17 +151,29 @@ extension MessageToApi on Message {
       }
     }
 
-    final apiContent = toApiContent();
+    final apiContent = toApiContent(imageBytes);
     if (apiContent.length == 1 && apiContent.first['type'] == 'text') {
       return {
         'role': role.name,
         'content': apiContent.first['text'] as String,
       };
     }
-
     return {
       'role': role.name,
       'content': apiContent,
     };
+  }
+
+  /// All image attachment ids referenced anywhere in this message.
+  Iterable<String> imageAttachmentIds() sync* {
+    for (final block in content) {
+      if (block is ImageContentBlock) {
+        yield block.attachmentId;
+      } else if (block is ToolResultContentBlock) {
+        for (final inner in block.resultContent) {
+          if (inner is ImageContentBlock) yield inner.attachmentId;
+        }
+      }
+    }
   }
 }

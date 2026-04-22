@@ -206,9 +206,12 @@ class ChatSession {
     int stallRetry = 0,
   }) async {
     final history = await deps.repo.getMessages(conversationId);
+    final imageIds = _logic.collectImageAttachmentIds(history);
+    final imageBytes = await deps.attachments.loadMany(imageIds);
     final apiMessages = _logic.buildApiMessages(
       history: history,
       systemPrompt: deps.mergedSystemPrompt,
+      imageBytes: imageBytes,
     );
 
     await _streamResponse(
@@ -404,6 +407,7 @@ class ChatSession {
       mcpService: deps.mcpService,
       mcpServers: deps.mcpServers,
       repo: deps.repo,
+      attachments: deps.attachments,
     );
     await _runPipeline(deps);
   }

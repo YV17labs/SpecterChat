@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../application/chat_session_manager.dart';
 import '../domain/chat_session.dart';
 import '../domain/chat_session_deps.dart';
+import 'attachment_provider.dart';
 import 'conversation_provider.dart';
 import 'effective_settings_provider.dart';
 import 'llm_provider.dart';
@@ -22,6 +23,7 @@ final chatSessionManagerProvider = Provider<ChatSessionManager>((ref) {
       llm: ref.read(llmServiceProvider),
       mcpService: ref.read(mcpServiceProvider),
       repo: ref.read(conversationRepositoryProvider),
+      attachments: ref.read(attachmentRepositoryProvider),
       mcpTools: ref.read(mcpToolsProvider),
       mcpServers: ref.read(settingsProvider).mcpServers,
       settings: ref.read(settingsProvider),

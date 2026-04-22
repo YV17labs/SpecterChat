@@ -129,6 +129,9 @@ class McpServerTile extends ConsumerWidget {
           mcpService: mcpService,
           notifier: settingsNotifier,
         );
+        if (enabledInConversation == false) {
+          onToggleConversation?.call(true);
+        }
       } catch (e, st) {
         _log.warning('Failed to connect to MCP server: ${server.name}', e, st);
         settingsNotifier.updateMcpServer(

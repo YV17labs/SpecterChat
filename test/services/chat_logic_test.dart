@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:specterchat/models/message.dart';
 import 'package:specterchat/services/chat_logic.dart';
@@ -154,8 +156,9 @@ void main() {
                 resultContent: [
                   ContentBlock.text(text: 'captured'),
                   ContentBlock.image(
-                    base64Data: 'imgdata',
+                    attachmentId: 'att-1',
                     mimeType: 'image/png',
+                    byteSize: 3,
                   ),
                 ],
               ),
@@ -164,6 +167,12 @@ void main() {
           ),
         ],
         systemPrompt: '',
+        imageBytes: {
+          'att-1': (
+            bytes: Uint8List.fromList([1, 2, 3]),
+            mimeType: 'image/png',
+          ),
+        },
       );
       // Should have tool message + injected user message with image
       expect(messages.length, 2);

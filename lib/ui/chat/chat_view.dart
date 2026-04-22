@@ -332,7 +332,10 @@ class _ChatViewState extends ConsumerState<ChatView> {
     return result;
   }
 
-  /// Group tool-result messages with their preceding assistant message.
+  /// Group each tool-result message with the assistant that called it.
+  /// UUIDv7 ids guarantee `ORDER BY id` is insertion order, so tool
+  /// messages always follow their owning assistant — simple adjacency
+  /// suffices.
   static List<List<Message>> _groupMessages(List<Message> messages) {
     final groups = <List<Message>>[];
     for (final msg in messages) {

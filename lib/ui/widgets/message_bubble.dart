@@ -5,6 +5,7 @@ import '../../models/message.dart';
 import '../../services/llm_hooks/llm_hooks.dart' as llm_hooks;
 import '../../utils/theme.dart';
 import 'content_blocks.dart';
+import 'image_block.dart';
 
 // Auto-correction bubble colors.
 const _correctionBg = Color(0x26FFC107); // amber @ 0.15
@@ -417,8 +418,8 @@ class _ContentBlockWidget extends StatelessWidget {
     return switch (block) {
       TextContentBlock(:final text) =>
         TextBlock(text: text, isStreaming: isStreaming),
-      ImageContentBlock(:final base64Data, :final mimeType) =>
-        ImageBlock(base64Data: base64Data, mimeType: mimeType),
+      ImageContentBlock(:final attachmentId, :final mimeType) =>
+        ImageBlock(attachmentId: attachmentId, mimeType: mimeType),
       ToolCallContentBlock(:final name, :final arguments) =>
         ToolCallBlock(name: name, arguments: arguments),
       ToolResultContentBlock(

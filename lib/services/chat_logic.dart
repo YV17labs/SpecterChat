@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import '../models/message.dart';
 
+export '../models/message.dart' show ImageBytes, ImageBytesMap;
+
 /// Accumulates streamed tool call fragments into complete tool calls.
 class ToolCallAccumulator {
   String? id;
@@ -79,9 +81,16 @@ class ChatLogic {
   }
 
   /// Build the API messages array from conversation history.
+  ///
+  /// [imageBytes] carries preloaded bytes for every image attachment
+  /// referenced by [history] — see [collectImageAttachmentIds]. Callers
+  /// (the chat pipeline) batch-load bytes from the attachment repo once
+  /// per API request; the base64 string is materialised here, handed to
+  /// Dio, and freed as soon as the request body is serialised.
   List<Map<String, dynamic>> buildApiMessages({
     required List<Message> history,
     required String systemPrompt,
+    ImageBytesMap imageBytes = const <String, ImageBytes>{},
   }) {
     final skip = _indicesWithBrokenToolCalls(history);
 
@@ -104,7 +113,7 @@ class ChatLogic {
     for (var i = 0; i < history.length; i++) {
       if (skip.contains(i)) continue;
       final msg = history[i];
-      messages.add(msg.toApiMessage());
+      messages.add(msg.toApiMessage(imageBytes));
 
       // Collect images from tool results — the spec only allows text in
       // tool-role content, so images must go in a separate user message.
@@ -113,11 +122,13 @@ class ChatLogic {
           if (block is ToolResultContentBlock) {
             for (final inner in block.resultContent) {
               if (inner is ImageContentBlock) {
+                final loaded = imageBytes[inner.attachmentId];
+                if (loaded == null) continue;
                 pendingImageParts.add({
                   'type': 'image_url',
                   'image_url': {
                     'url':
-                        'data:${inner.mimeType};base64,${inner.base64Data}',
+                        'data:${loaded.mimeType};base64,${base64Encode(loaded.bytes)}',
                   },
                 });
                 pendingImageParts.add({
@@ -147,6 +158,17 @@ class ChatLogic {
     }
 
     return messages;
+  }
+
+  /// Every image attachment id referenced by [history], de-duplicated.
+  /// Used by the chat pipeline to batch-load bytes from the attachment
+  /// repository before calling [buildApiMessages].
+  Set<String> collectImageAttachmentIds(List<Message> history) {
+    final ids = <String>{};
+    for (final msg in history) {
+      ids.addAll(msg.imageAttachmentIds());
+    }
+    return ids;
   }
 
   Set<int> _indicesWithBrokenToolCalls(List<Message> history) {

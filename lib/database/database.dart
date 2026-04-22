@@ -40,7 +40,24 @@ class Messages extends Table {
   Set<Column> get primaryKey => {id};
 }
 
-@DriftDatabase(tables: [Conversations, Messages])
+/// Binary attachments (images, in practice) referenced by id from a
+/// message's content JSON. Keeping bytes out of the JSON column means
+/// the messages table stays small — cheap to serialize on every stream
+/// upsert — and bytes only live in RAM when explicitly loaded.
+class Attachments extends Table {
+  TextColumn get id => text()();
+  TextColumn get messageId =>
+      text().references(Messages, #id, onDelete: KeyAction.cascade)();
+  TextColumn get mimeType => text()();
+  BlobColumn get data => blob()();
+  IntColumn get byteSize => integer()();
+  DateTimeColumn get createdAt => dateTime()();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
+@DriftDatabase(tables: [Conversations, Messages, Attachments])
 class AppDatabase extends _$AppDatabase {
   /// Production constructor — uses file-backed SQLite.
   AppDatabase() : super(_openConnection());
@@ -59,53 +76,48 @@ class AppDatabase extends _$AppDatabase {
   // v6 — Add is_streaming + updated_at columns to messages for
   //      incremental streaming persistence (survives conversation switch
   //      and app restart).
+  // v7 — Attachments table; image bytes leave message content JSON.
+  // v8 — Ids standardised to UUIDv7 so `ORDER BY id` is the strict total
+  //      order. All row reads/writes rely on this invariant.
   // ---------------------------------------------------------------
 
   @override
-  int get schemaVersion => 6;
+  int get schemaVersion => 8;
 
   static const _createConversationIdIndex =
       'CREATE INDEX IF NOT EXISTS idx_messages_conversation_id '
       'ON messages (conversation_id)';
+
+  static const _createAttachmentMessageIdIndex =
+      'CREATE INDEX IF NOT EXISTS idx_attachments_message_id '
+      'ON attachments (message_id)';
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
         onCreate: (Migrator m) async {
           await m.createAll();
           await customStatement(_createConversationIdIndex);
+          await customStatement(_createAttachmentMessageIdIndex);
         },
         onUpgrade: (Migrator m, int from, int to) async {
-          if (from < 2) {
-            await customStatement(_createConversationIdIndex);
+          // Fresh slate at v8: drop any pre-UUIDv7 data so `ORDER BY id`
+          // is trustworthy. FK cascade on `attachments.message_id`
+          // handles image blobs automatically.
+          await customStatement('DELETE FROM messages');
+          await customStatement('DELETE FROM conversations');
+          await m.deleteTable(messages.actualTableName);
+          await m.deleteTable(conversations.actualTableName);
+          if (from >= 7) {
+            await m.deleteTable(attachments.actualTableName);
           }
-          if (from < 3) {
-            await m.addColumn(messages, messages.completionTokens);
-            await m.addColumn(messages, messages.durationMs);
-          }
-          if (from < 4) {
-            await m.addColumn(conversations, conversations.settings);
-          }
-          if (from < 5) {
-            await m.addColumn(
-                conversations, conversations.lastPromptTokens);
-          }
-          if (from < 6) {
-            await m.addColumn(messages, messages.isStreaming);
-            await m.addColumn(messages, messages.updatedAt);
-          }
+          await m.createAll();
+          await customStatement(_createConversationIdIndex);
+          await customStatement(_createAttachmentMessageIdIndex);
         },
         beforeOpen: (details) async {
-          // Enforce foreign-key constraints at runtime.
           await customStatement('PRAGMA foreign_keys = ON');
-          // Clear any `is_streaming = 1` rows left over from a prior
-          // session that crashed or was killed mid-stream. Whatever
-          // partial content had been persisted is kept — we just flip
-          // the flag off so the UI stops showing the typing indicator.
-          // Safe on freshly-created databases (no rows to update).
-          if (details.versionNow >= 6) {
-            await customStatement(
-                'UPDATE messages SET is_streaming = 0 WHERE is_streaming = 1');
-          }
+          await customStatement(
+              'UPDATE messages SET is_streaming = 0 WHERE is_streaming = 1');
         },
       );
 
@@ -154,17 +166,14 @@ class AppDatabase extends _$AppDatabase {
   Future<List<Message>> getMessagesForConversation(String conversationId) {
     return (select(messages)
           ..where((t) => t.conversationId.equals(conversationId))
-          ..orderBy(
-              [(t) => OrderingTerm(expression: t.createdAt)]))
+          ..orderBy([(t) => OrderingTerm(expression: t.id)]))
         .get();
   }
 
-  /// Watch only the most recent [limit] messages for a conversation, ordered
-  /// chronologically (oldest → newest). The DB query orders DESC with LIMIT
-  /// to avoid scanning the full history, then the tail is reversed so the UI
-  /// sees the natural chronological order.
-  ///
-  /// Passing a [limit] of 0 or negative falls back to the unbounded watch.
+  /// Watch the most recent [limit] messages for a conversation in
+  /// insertion order. UUIDv7 guarantees `ORDER BY id` is a strict total
+  /// order equivalent to insertion time — no tie-break tricks needed.
+  /// [limit] `<= 0` streams the full history.
   Stream<List<Message>> watchRecentMessagesForConversation(
     String conversationId, {
     required int limit,
@@ -172,15 +181,14 @@ class AppDatabase extends _$AppDatabase {
     if (limit <= 0) {
       return (select(messages)
             ..where((t) => t.conversationId.equals(conversationId))
-            ..orderBy(
-                [(t) => OrderingTerm(expression: t.createdAt)]))
+            ..orderBy([(t) => OrderingTerm(expression: t.id)]))
           .watch();
     }
     return (select(messages)
           ..where((t) => t.conversationId.equals(conversationId))
           ..orderBy([
-            (t) => OrderingTerm(
-                expression: t.createdAt, mode: OrderingMode.desc)
+            (t) =>
+                OrderingTerm(expression: t.id, mode: OrderingMode.desc),
           ])
           ..limit(limit))
         .watch()
@@ -241,6 +249,27 @@ class AppDatabase extends _$AppDatabase {
   /// stream cancels before any content arrived.
   Future<int> deleteMessage(String id) {
     return (delete(messages)..where((t) => t.id.equals(id))).go();
+  }
+
+  // --- Attachments ---
+
+  Future<int> insertAttachment(AttachmentsCompanion entry) {
+    return into(attachments).insert(entry);
+  }
+
+  Future<Attachment?> getAttachment(String id) {
+    return (select(attachments)..where((t) => t.id.equals(id)))
+        .getSingleOrNull();
+  }
+
+  Future<List<Attachment>> getAttachmentsByIds(Set<String> ids) {
+    if (ids.isEmpty) return Future.value(const <Attachment>[]);
+    return (select(attachments)..where((t) => t.id.isIn(ids))).get();
+  }
+
+  Future<int> deleteAttachmentsForMessage(String messageId) {
+    return (delete(attachments)..where((t) => t.messageId.equals(messageId)))
+        .go();
   }
 
   Future<int> deleteMessagesForConversation(String conversationId) {

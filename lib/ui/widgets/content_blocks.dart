@@ -1,18 +1,13 @@
-import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
-import 'package:logging/logging.dart';
-import 'package:pasteboard/pasteboard.dart';
 
 import '../../models/message.dart';
 import '../../utils/theme.dart';
 import 'expandable_block.dart';
+import 'image_block.dart';
 import 'word_fade_text.dart';
-
-final _log = Logger('ContentBlocks');
 
 /// Try to pretty-print [text] as JSON. Returns formatted JSON or null.
 String? _tryFormatJson(String text) {
@@ -55,181 +50,6 @@ class TextBlock extends StatelessWidget {
       data: text,
       selectable: !isStreaming,
       styleSheet: styleSheet,
-    );
-  }
-}
-
-/// Renders a base64-encoded image.
-class ImageBlock extends StatefulWidget {
-  final String base64Data;
-  final String mimeType;
-
-  const ImageBlock(
-      {super.key, required this.base64Data, required this.mimeType});
-
-  @override
-  State<ImageBlock> createState() => _ImageBlockState();
-}
-
-class _ImageBlockState extends State<ImageBlock> {
-  Uint8List? _decodedBytes;
-  double? _aspectRatio;
-  bool _hovering = false;
-  bool _justCopied = false;
-  Timer? _copiedResetTimer;
-
-  Future<void> _copyToClipboard() async {
-    if (_decodedBytes == null) return;
-    try {
-      await Pasteboard.writeImage(_decodedBytes);
-      if (!mounted) return;
-      setState(() => _justCopied = true);
-      _copiedResetTimer?.cancel();
-      _copiedResetTimer = Timer(const Duration(milliseconds: 1500), () {
-        if (mounted) setState(() => _justCopied = false);
-      });
-    } catch (e) {
-      _log.warning('Failed to copy image to clipboard', e);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to copy image')),
-      );
-    }
-  }
-
-  @override
-  void dispose() {
-    _copiedResetTimer?.cancel();
-    super.dispose();
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    try {
-      _decodedBytes = base64Decode(widget.base64Data);
-      _resolveImageDimensions();
-    } catch (e) {
-      _log.fine('Invalid base64 image data', e);
-      _decodedBytes = null;
-    }
-  }
-
-  /// Decode image dimensions so we can compute the correct layout height.
-  void _resolveImageDimensions() {
-    if (_decodedBytes == null) return;
-    final stream = MemoryImage(_decodedBytes!).resolve(ImageConfiguration.empty);
-    stream.addListener(ImageStreamListener(
-      (ImageInfo info, bool _) {
-        final w = info.image.width.toDouble();
-        final h = info.image.height.toDouble();
-        if (h > 0 && mounted) {
-          setState(() => _aspectRatio = w / h);
-        }
-        info.dispose();
-      },
-      onError: (exception, stackTrace) {
-        _log.fine('Failed to resolve image dimensions', exception);
-      },
-    ));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (_decodedBytes == null) {
-      return Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.errorContainer,
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: const Text('Invalid image data'),
-      );
-    }
-
-    // Once we know the aspect ratio, wrap in AspectRatio so the layout
-    // height matches the visually rendered height — no blank gap.
-    final imageWidget = LayoutBuilder(
-      builder: (context, constraints) {
-        final width = constraints.maxWidth;
-        // If dimensions are resolved, compute exact height; otherwise
-        // fall back to unconstrained (first frame may flash).
-        final height = _aspectRatio != null ? width / _aspectRatio! : null;
-        return Image.memory(
-          _decodedBytes!,
-          width: width,
-          height: height,
-          fit: BoxFit.fitWidth,
-          errorBuilder: (_, _, _) => Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.errorContainer,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: const Text('Failed to decode image'),
-          ),
-        );
-      },
-    );
-
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hovering = true),
-      onExit: (_) => setState(() => _hovering = false),
-      child: Stack(
-        children: [
-          GestureDetector(
-            onTap: () => _showFullscreen(context),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: imageWidget,
-            ),
-          ),
-          Positioned(
-            right: 8,
-            bottom: 8,
-            child: AnimatedOpacity(
-              opacity: (_hovering || _justCopied) ? 1.0 : 0.0,
-              duration: const Duration(milliseconds: 150),
-              child: Material(
-                color: Colors.black.withValues(alpha: 0.55),
-                borderRadius: BorderRadius.circular(6),
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(6),
-                  onTap: _copyToClipboard,
-                  child: Padding(
-                    padding: const EdgeInsets.all(6),
-                    child: Icon(
-                      _justCopied ? Icons.check : Icons.copy,
-                      size: 16,
-                      color: Colors.white,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showFullscreen(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (context) => GestureDetector(
-        onTap: () => Navigator.pop(context),
-        child: Dialog(
-          backgroundColor: Colors.transparent,
-          insetPadding: const EdgeInsets.all(16),
-          child: InteractiveViewer(
-            child: Image.memory(
-              _decodedBytes!,
-              fit: BoxFit.contain,
-            ),
-          ),
-        ),
-      ),
     );
   }
 }
@@ -358,8 +178,8 @@ class _ResultContentListState extends State<_ResultContentList> {
                       style: _monospaceStyle(context),
                     )
                   : TextBlock(text: text),
-              ImageContentBlock(:final base64Data, :final mimeType) =>
-                ImageBlock(base64Data: base64Data, mimeType: mimeType),
+              ImageContentBlock(:final attachmentId, :final mimeType) =>
+                ImageBlock(attachmentId: attachmentId, mimeType: mimeType),
               _ => const SizedBox.shrink(),
             },
           ),

@@ -16,6 +16,14 @@ void main() async {
 
   WidgetsFlutterBinding.ensureInitialized();
 
+  // Bound the Flutter image cache so decoded base64 images from chat
+  // history can't grow unbounded. Defaults are 1000 entries / 100 MB,
+  // which is too generous for an LLM chat where tool results can return
+  // dozens of screenshots in a single conversation.
+  PaintingBinding.instance.imageCache
+    ..maximumSize = 120
+    ..maximumSizeBytes = 48 * 1024 * 1024;
+
   // Catch Flutter framework errors (widget build failures, etc.)
   FlutterError.onError = (details) {
     _log.severe(

@@ -245,9 +245,8 @@ Widget? _widgetFromIcon(McpIcon icon) {
   final src = icon.src;
 
   if (src.startsWith('data:')) {
-    final cached = _decodedIconCache[src] ?? _decodeDataUri(src);
+    final cached = _getOrDecodeIcon(src);
     if (cached == null) return null;
-    _decodedIconCache[src] = cached;
     final mime = (icon.mimeType ?? cached.mimeType).toLowerCase();
     final isSvg = mime.contains('svg');
     if (isSvg) {
@@ -286,7 +285,27 @@ class _DecodedIcon {
   const _DecodedIcon(this.bytes, this.mimeType);
 }
 
-final Map<String, _DecodedIcon> _decodedIconCache = {};
+/// Bounded LRU cache for decoded MCP-server icon data URIs. Without a
+/// cap, a long-running app that connects to many MCP servers would hold
+/// every icon forever. `LinkedHashMap` keeps insertion order; on each
+/// hit we re-insert to move the entry to the "most recent" slot.
+const int _iconCacheMaxEntries = 64;
+final Map<String, _DecodedIcon> _decodedIconCache = <String, _DecodedIcon>{};
+
+_DecodedIcon? _getOrDecodeIcon(String src) {
+  final hit = _decodedIconCache.remove(src);
+  if (hit != null) {
+    _decodedIconCache[src] = hit;
+    return hit;
+  }
+  final decoded = _decodeDataUri(src);
+  if (decoded == null) return null;
+  _decodedIconCache[src] = decoded;
+  if (_decodedIconCache.length > _iconCacheMaxEntries) {
+    _decodedIconCache.remove(_decodedIconCache.keys.first);
+  }
+  return decoded;
+}
 
 _DecodedIcon? _decodeDataUri(String src) {
   try {

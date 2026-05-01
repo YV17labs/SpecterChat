@@ -44,20 +44,22 @@ class ToolExecutor {
               mcpServers: mcpServers,
             )));
 
-    // Phase 2: persist in FK-safe order (message row first, then its
-    // attachments) and keep the sequence deterministic so the UI sees
-    // tool results in call order.
-    for (final p in prepared) {
-      await repo.saveMessage(p.message);
-      for (final pending in p.pendingAttachments) {
-        await attachments.storeBytes(
-          attachmentId: pending.attachmentId,
-          messageId: p.message.id,
-          bytes: pending.bytes,
-          mimeType: pending.mimeType,
-        );
+    // Atomic write — without it, the `messages` watcher emits between
+    // the message and attachment inserts and the UI gets stuck on
+    // "Image unavailable" for an attachmentId whose row hasn't landed.
+    await repo.runInTransaction(() async {
+      for (final p in prepared) {
+        await repo.saveMessage(p.message);
+        for (final pending in p.pendingAttachments) {
+          await attachments.storeBytes(
+            attachmentId: pending.attachmentId,
+            messageId: p.message.id,
+            bytes: pending.bytes,
+            mimeType: pending.mimeType,
+          );
+        }
       }
-    }
+    });
   }
 
   Future<_PreparedToolResult> _prepareSingle({

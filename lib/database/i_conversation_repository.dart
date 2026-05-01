@@ -58,4 +58,12 @@ abstract interface class IConversationRepository {
   /// Clear any `is_streaming` rows left behind by a previous app session
   /// that crashed mid-stream. Returns the number of rows reset.
   Future<int> clearOrphanStreamingFlags();
+
+  /// Run [action] inside a database transaction. Drift's reactive streams
+  /// only emit on the committed snapshot, so callers that touch multiple
+  /// tables (e.g. inserting a tool message and its attachment blobs) can
+  /// use this to make the writes appear atomically to UI watchers — no
+  /// half-saved state where a message JSON references an attachmentId
+  /// whose row hasn't been inserted yet.
+  Future<T> runInTransaction<T>(Future<T> Function() action);
 }

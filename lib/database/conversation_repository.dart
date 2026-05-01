@@ -201,6 +201,11 @@ class ConversationRepository implements IConversationRepository {
     return _database.clearOrphanStreamingFlags();
   }
 
+  @override
+  Future<T> runInTransaction<T>(Future<T> Function() action) {
+    return _database.transaction(action);
+  }
+
   static model.Message _dbMessageToModel(db.Message row) {
     final contentJson = jsonDecode(row.content) as List;
     final content = contentJson.map((c) {

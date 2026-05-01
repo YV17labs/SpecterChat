@@ -21,11 +21,22 @@ class MessageBubble extends StatelessWidget {
   /// message. Null when not applicable (user/system messages).
   final int? cumulativeDurationMs;
 
+  /// Invoked when the user picks "Tell me more" from the right-click menu
+  /// on a selection inside an assistant message. Null disables the item.
+  final ValueChanged<String>? onTellMore;
+
+  /// Invoked when the user clicks the "fork" hover button on a user
+  /// message — creates a new conversation seeded with that message.
+  /// Null hides the button.
+  final ValueChanged<String>? onFork;
+
   const MessageBubble({
     super.key,
     required this.message,
     this.toolResults = const [],
     this.cumulativeDurationMs,
+    this.onTellMore,
+    this.onFork,
   });
 
   /// Whether this message is an auto-injected hallucination correction.
@@ -57,6 +68,13 @@ class MessageBubble extends StatelessWidget {
     final resultsByCallId = _indexToolResults();
     final maxBubbleWidth = MediaQuery.of(context).size.width * 0.65;
 
+    // When the bubble is wrapped in our SelectionArea, inner widgets must
+    // NOT be self-selectable: a SelectableText would intercept right-click
+    // and show its own toolbar (Copy only), bypassing the SelectionArea's
+    // contextMenuBuilder where "Tell me more" lives.
+    final wrappedInSelectionArea =
+        !isUser && !message.isStreaming && onTellMore != null;
+
     // Set of tool call ids whose result will render inline with the call.
     // Must be computed synchronously here — doing it lazily in a Builder
     // would run after the orphan loop below has already evaluated.
@@ -84,6 +102,7 @@ class MessageBubble extends StatelessWidget {
       built = _ContentBlockWidget(
         block: block,
         isStreaming: message.isStreaming,
+        selectable: !wrappedInSelectionArea,
       );
       // Text handles its own per-word fade; everything else fades as a
       // whole container on first appearance.
@@ -128,6 +147,7 @@ class MessageBubble extends StatelessWidget {
                 _maybeCopyWrapper(
                   context,
                   message,
+                  onFork: onFork,
                   child: Container(
                     constraints: BoxConstraints(maxWidth: maxBubbleWidth),
                     // Pin width to max while the assistant streams so the
@@ -171,33 +191,38 @@ class MessageBubble extends StatelessWidget {
                       duration: const Duration(milliseconds: 220),
                       curve: Curves.easeOut,
                       alignment: Alignment.topLeft,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (isAutoCorrection)
-                            const Padding(
-                              padding: EdgeInsets.only(bottom: 4),
-                              child: Text(
-                                'Auto-correction',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600,
-                                  color: _correctionAccent,
+                      child: _maybeTellMoreSelectionArea(
+                        enable: wrappedInSelectionArea,
+                        onTellMore: onTellMore,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (isAutoCorrection)
+                              const Padding(
+                                padding: EdgeInsets.only(bottom: 4),
+                                child: Text(
+                                  'Auto-correction',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    color: _correctionAccent,
+                                  ),
                                 ),
                               ),
-                            ),
-                          for (final block in message.content)
-                            childFor(block),
-                          if (message.isStreaming) const _StreamingIndicator(),
-                          if (!message.isStreaming &&
-                              message.role == MessageRole.assistant &&
-                              message.completionTokens > 0)
-                            _MessageStats(
-                              tokens: message.completionTokens,
-                              durationMs: message.durationMs,
-                              cumulativeDurationMs: cumulativeDurationMs,
-                            ),
-                        ],
+                            for (final block in message.content)
+                              childFor(block),
+                            if (message.isStreaming)
+                              const _StreamingIndicator(),
+                            if (!message.isStreaming &&
+                                message.role == MessageRole.assistant &&
+                                message.completionTokens > 0)
+                              _MessageStats(
+                                tokens: message.completionTokens,
+                                durationMs: message.durationMs,
+                                cumulativeDurationMs: cumulativeDurationMs,
+                              ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -233,6 +258,63 @@ class MessageBubble extends StatelessWidget {
   }
 }
 
+/// Wraps [child] in a [SelectionArea] whose right-click menu adds a
+/// "Tell me more" item when text is selected. Returns [child] unchanged
+/// when [enable] is false.
+Widget _maybeTellMoreSelectionArea({
+  required bool enable,
+  required ValueChanged<String>? onTellMore,
+  required Widget child,
+}) {
+  if (!enable || onTellMore == null) return child;
+  return SelectionArea(
+    contextMenuBuilder: (context, selectableRegionState) {
+      return AdaptiveTextSelectionToolbar.buttonItems(
+        anchors: selectableRegionState.contextMenuAnchors,
+        buttonItems: [
+          ...selectableRegionState.contextMenuButtonItems,
+          ContextMenuButtonItem(
+            label: 'Tell me more',
+            onPressed: () async {
+              final selected = await _captureSelectionViaClipboard(
+                selectableRegionState,
+              );
+              ContextMenuController.removeAny();
+              if (selected != null && selected.trim().isNotEmpty) {
+                onTellMore(selected.trim());
+              }
+            },
+          ),
+        ],
+      );
+    },
+    child: child,
+  );
+}
+
+/// Reads the current selection by triggering the region's copy command,
+/// then reading and restoring the system clipboard. Flutter does not yet
+/// expose the active selection text directly to context-menu builders, so
+/// the clipboard round-trip is the only public path.
+Future<String?> _captureSelectionViaClipboard(
+    SelectableRegionState state) async {
+  final previous = await Clipboard.getData(Clipboard.kTextPlain);
+  // Inherited from TextSelectionDelegate which marks copySelection as
+  // deprecated, but SelectableRegionState's override is still the
+  // documented way to programmatically copy a region's selection.
+  // ignore: deprecated_member_use
+  state.copySelection(SelectionChangedCause.toolbar);
+  // copySelection writes to the platform clipboard via a fire-and-forget
+  // Future. A short yield gives the platform channel time to settle before
+  // we read it back.
+  await Future<void>.delayed(const Duration(milliseconds: 50));
+  final current = await Clipboard.getData(Clipboard.kTextPlain);
+  if (previous?.text != current?.text) {
+    await Clipboard.setData(ClipboardData(text: previous?.text ?? ''));
+  }
+  return current?.text;
+}
+
 /// Extracts text content from a message for clipboard copy.
 String _extractCopyText(Message message) {
   final parts = <String>[];
@@ -244,32 +326,42 @@ String _extractCopyText(Message message) {
   return parts.join('\n');
 }
 
-/// Wraps the child with a copy button only for user messages
-/// and assistant messages that have a real text response
-/// (not just thinking + tool calls).
+/// Wraps the child with a copy button (and an optional fork button on
+/// user messages) only when the message has real text content — skips
+/// assistant turns that are pure thinking + tool calls.
 Widget _maybeCopyWrapper(
-    BuildContext context, Message message, {required Widget child}) {
-  if (message.role == MessageRole.user) {
-    final copyText = _extractCopyText(message);
-    if (copyText.isNotEmpty) {
-      return _HoverCopyWrapper(copyText: copyText, child: child);
-    }
-  }
-  if (message.role == MessageRole.assistant && !message.isStreaming) {
-    final copyText = _extractCopyText(message);
-    if (copyText.isNotEmpty) {
-      return _HoverCopyWrapper(copyText: copyText, child: child);
-    }
-  }
-  return child;
+  BuildContext context,
+  Message message, {
+  required Widget child,
+  ValueChanged<String>? onFork,
+}) {
+  final isUser = message.role == MessageRole.user;
+  final isCompletedAssistant =
+      message.role == MessageRole.assistant && !message.isStreaming;
+  if (!isUser && !isCompletedAssistant) return child;
+
+  final copyText = _extractCopyText(message);
+  if (copyText.isEmpty) return child;
+
+  return _HoverCopyWrapper(
+    copyText: copyText,
+    onFork: isUser && onFork != null ? () => onFork(copyText) : null,
+    child: child,
+  );
 }
 
-/// Shows a copy button on hover, positioned at the top-right of the child.
+/// Shows a copy button (and optional fork button) on hover, positioned
+/// at the bottom-right of the child.
 class _HoverCopyWrapper extends StatefulWidget {
   final String copyText;
+  final VoidCallback? onFork;
   final Widget child;
 
-  const _HoverCopyWrapper({required this.copyText, required this.child});
+  const _HoverCopyWrapper({
+    required this.copyText,
+    required this.child,
+    this.onFork,
+  });
 
   @override
   State<_HoverCopyWrapper> createState() => _HoverCopyWrapperState();
@@ -289,6 +381,13 @@ class _HoverCopyWrapperState extends State<_HoverCopyWrapper> {
 
   @override
   Widget build(BuildContext context) {
+    final iconColor =
+        Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5);
+    final iconBg =
+        Theme.of(context).colorScheme.surface.withValues(alpha: 0.8);
+    final buttonStyle = IconButton.styleFrom(backgroundColor: iconBg);
+    const tightConstraints = BoxConstraints(maxWidth: 24, maxHeight: 24);
+
     return MouseRegion(
       onEnter: (_) => setState(() => _hovering = true),
       onExit: (_) => setState(() => _hovering = false),
@@ -300,26 +399,33 @@ class _HoverCopyWrapperState extends State<_HoverCopyWrapper> {
             Positioned(
               bottom: 8,
               right: 8,
-              child: IconButton(
-                icon: Icon(
-                  _copied ? Icons.check : Icons.copy,
-                  size: 14,
-                  color: Theme.of(context)
-                      .colorScheme
-                      .onSurface
-                      .withValues(alpha: 0.5),
-                ),
-                onPressed: _copy,
-                padding: EdgeInsets.zero,
-                constraints:
-                    const BoxConstraints(maxWidth: 24, maxHeight: 24),
-                tooltip: _copied ? 'Copied!' : 'Copy',
-                style: IconButton.styleFrom(
-                  backgroundColor: Theme.of(context)
-                      .colorScheme
-                      .surface
-                      .withValues(alpha: 0.8),
-                ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (widget.onFork != null) ...[
+                    IconButton(
+                      icon: Icon(Icons.fork_right, size: 14, color: iconColor),
+                      onPressed: widget.onFork,
+                      padding: EdgeInsets.zero,
+                      constraints: tightConstraints,
+                      tooltip: 'Fork to new conversation',
+                      style: buttonStyle,
+                    ),
+                    const SizedBox(width: 4),
+                  ],
+                  IconButton(
+                    icon: Icon(
+                      _copied ? Icons.check : Icons.copy,
+                      size: 14,
+                      color: iconColor,
+                    ),
+                    onPressed: _copy,
+                    padding: EdgeInsets.zero,
+                    constraints: tightConstraints,
+                    tooltip: _copied ? 'Copied!' : 'Copy',
+                    style: buttonStyle,
+                  ),
+                ],
               ),
             ),
         ],
@@ -411,13 +517,21 @@ class _ContentBlockWidget extends StatelessWidget {
   final ContentBlock block;
   final bool isStreaming;
 
-  const _ContentBlockWidget({required this.block, this.isStreaming = false});
+  /// When false, the inner [TextBlock] disables its own selection so a
+  /// surrounding [SelectionArea] can take over selection + context menu.
+  final bool selectable;
+
+  const _ContentBlockWidget({
+    required this.block,
+    this.isStreaming = false,
+    this.selectable = true,
+  });
 
   @override
   Widget build(BuildContext context) {
     return switch (block) {
       TextContentBlock(:final text) =>
-        TextBlock(text: text, isStreaming: isStreaming),
+        TextBlock(text: text, isStreaming: isStreaming, selectable: selectable),
       ImageContentBlock(:final attachmentId, :final mimeType) =>
         ImageBlock(attachmentId: attachmentId, mimeType: mimeType),
       ToolCallContentBlock(:final name, :final arguments) =>

@@ -164,6 +164,7 @@ class _ChatViewState extends ConsumerState<ChatView> {
                   conversationId: conversationId,
                   hasMoreAbove: hasMoreAbove,
                   atWindowCap: atWindowCap,
+                  session: session,
                 ),
                 loading: () =>
                     const Center(child: CircularProgressIndicator()),
@@ -191,6 +192,7 @@ class _ChatViewState extends ConsumerState<ChatView> {
     required String conversationId,
     required bool hasMoreAbove,
     required bool atWindowCap,
+    required ChatSession session,
   }) {
     if (messages.isEmpty) {
       return _WelcomeMessage();
@@ -229,18 +231,22 @@ class _ChatViewState extends ConsumerState<ChatView> {
               }
               final group = grouped[index - headerCount];
               final cumulativeMs = cumulativeDurations[group.first.id];
-              final bubble = group.length == 1
-                  ? MessageBubble(
-                      key: ValueKey(group.first.id),
-                      message: group.first,
-                      cumulativeDurationMs: cumulativeMs,
-                    )
-                  : MessageBubble(
-                      key: ValueKey(group.first.id),
-                      message: group.first,
-                      toolResults: group.sublist(1),
-                      cumulativeDurationMs: cumulativeMs,
-                    );
+              void onTellMore(String selection) {
+                ref.read(chatInputInjectionProvider.notifier).state =
+                    'Tell me more about: "$selection"';
+              }
+              void onFork(String text) => _forkToNewConversation(
+                    sourceConversationId: conversationId,
+                    text: text,
+                  );
+              final bubble = MessageBubble(
+                key: ValueKey(group.first.id),
+                message: group.first,
+                toolResults: group.sublist(1),
+                cumulativeDurationMs: cumulativeMs,
+                onTellMore: onTellMore,
+                onFork: onFork,
+              );
               // Isolate each bubble from paint invalidation so a streaming
               // bubble at the tail doesn't repaint the whole scrollback.
               return RepaintBoundary(child: bubble);
@@ -360,6 +366,27 @@ class _ChatViewState extends ConsumerState<ChatView> {
 
   void _loadMore(String conversationId) {
     ref.read(messageWindowSizeProvider(conversationId).notifier).expand();
+  }
+
+  /// Creates a new conversation inheriting the source conversation's
+  /// system prompt and per-conversation settings, switches to it, and
+  /// pre-fills the input box with [text] so the user can edit before
+  /// sending. Handy for retrying a prompt with tweaks in a clean context.
+  Future<void> _forkToNewConversation({
+    required String sourceConversationId,
+    required String text,
+  }) async {
+    final repo = ref.read(conversationRepositoryProvider);
+    final source = await repo.getConversation(sourceConversationId);
+    final newId = await repo.createConversation(
+      systemPrompt: source?.systemPrompt,
+      settings: source?.settings,
+    );
+    if (!mounted) return;
+    ref.read(selectedConversationIdProvider.notifier).select(newId);
+    // Push text through the input-injection channel rather than calling
+    // sendMessage — gives the user a chance to tweak before submitting.
+    ref.read(chatInputInjectionProvider.notifier).state = text;
   }
 }
 

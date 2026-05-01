@@ -34,10 +34,16 @@ class TextBlock extends StatelessWidget {
   final String text;
   final bool isStreaming;
 
+  /// When false, the rendered markdown is non-selectable on its own —
+  /// useful when an ancestor [SelectionArea] handles selection (and the
+  /// custom context menu) at the bubble level.
+  final bool selectable;
+
   const TextBlock({
     super.key,
     required this.text,
     this.isStreaming = false,
+    this.selectable = true,
   });
 
   @override
@@ -48,7 +54,7 @@ class TextBlock extends StatelessWidget {
 
     return MarkdownBody(
       data: text,
-      selectable: !isStreaming,
+      selectable: selectable && !isStreaming,
       styleSheet: styleSheet,
     );
   }

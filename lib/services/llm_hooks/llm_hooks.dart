@@ -48,7 +48,7 @@ const maxStallRetries = 2;
 
 /// Prefix shared by all correction prompts — used to identify
 /// auto-correction messages in the UI without knowing the model.
-const correctionPrefix = 'Your previous response contained raw XML';
+const correctionPrefix = 'That last attempt did not produce a valid tool call';
 
 /// Returns the first hook matching [model], or `null`.
 LlmHook? hookFor(String model) {

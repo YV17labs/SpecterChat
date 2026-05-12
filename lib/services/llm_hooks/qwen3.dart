@@ -28,12 +28,15 @@ class Qwen3Hook extends LlmHook {
     return _patterns.any((p) => p.hasMatch(text));
   }
 
+  // Kept deliberately neutral: do NOT echo the broken markup
+  // (`<tool_call>`, `<function=…>`) back to the model — re-injecting
+  // those tokens primes the same hallucination on the next turn and
+  // can re-trigger our own detector in a loop.
   @override
   final hallucinationCorrection =
-      'Your previous response contained raw XML tool-call syntax '
-      '(<tool_call>, <function=…>) instead of an actual tool call. '
-      'This is not valid. Please answer the question directly in plain '
-      'text, or use the provided tools properly via function calling.';
+      'That last attempt did not produce a valid tool call and was '
+      'discarded. Please try again: either answer in plain text, or '
+      'invoke a tool via the proper function-calling mechanism.';
 
   // 8s covers the worst legitimate inter-token gap (~2-3s) with
   // headroom; also applies before the first chunk, so a very cold

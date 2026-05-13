@@ -209,7 +209,6 @@ class ChatSession {
   Future<void> _runPipeline(
     ChatSessionDeps deps, {
     int hallucinationRetry = 0,
-    int stallRetry = 0,
   }) async {
     final history = await deps.repo.getMessages(conversationId);
     final imageIds = _logic.collectImageAttachmentIds(history);
@@ -231,7 +230,6 @@ class ChatSession {
       deps: deps,
       apiMessages: apiMessages,
       hallucinationRetry: hallucinationRetry,
-      stallRetry: stallRetry,
     );
   }
 
@@ -239,7 +237,6 @@ class ChatSession {
     required ChatSessionDeps deps,
     required List<Map<String, dynamic>> apiMessages,
     required int hallucinationRetry,
-    required int stallRetry,
   }) async {
     _resetBuffers();
     _streamingMessageId = generateId();
@@ -258,12 +255,10 @@ class ChatSession {
     await _persistCurrentBuffer(deps, force: true);
     _startThrottle(deps);
 
-    final modelName = deps.settings.api.selectedModel;
     await for (final event in deps.llm.streamChatCompletion(
       messages: apiMessages,
       tools: deps.mcpTools.isNotEmpty ? deps.mcpTools : null,
       cancelToken: _cancelToken,
-      inactivityTimeout: llm_hooks.streamInactivityTimeout(modelName),
     )) {
       lastActivity = DateTime.now();
 
@@ -311,14 +306,6 @@ class ChatSession {
           );
           return;
 
-        case StreamStalled():
-          await _handleStreamStalled(
-            deps: deps,
-            completionTokens: completionTokens,
-            stallRetry: stallRetry,
-          );
-          return;
-
         case StreamError(:final message):
           _stopThrottle();
           await _cleanupAfterInterruption(deps);
@@ -347,11 +334,24 @@ class ChatSession {
     final thinkingString = _thinkingBuffer.toString();
 
     final modelName = deps.settings.api.selectedModel;
-    final hasHallucination = llm_hooks.detectHallucination(
-        modelName, contentString, thinkingString);
+    final hook = llm_hooks.hookFor(modelName);
+    final hasHallucination = hook != null &&
+        (hook.detectHallucination(contentString) ||
+            hook.detectHallucination(thinkingString));
     final hasValidToolCalls =
         _toolCalls.values.any((tc) => tc.isValid);
     final isSendable = contentString.isNotEmpty || hasValidToolCalls;
+    // Symptom-based fallback: the server may strip a malformed tool-call
+    // wrapper before any of it reaches us (mlx_vlm does this when Qwen3
+    // emits XML-style arguments inside <tool_call>…</tool_call> — see
+    // server.py:`suppress_tool_call_content`). The visible result is an
+    // otherwise-empty turn where the model clearly thought but produced
+    // nothing usable. Treat it as a hallucination and retry on the same
+    // budget as the pattern-matched path.
+    final hasSuppressedHallucination = hook != null &&
+        !hasHallucination &&
+        !isSendable &&
+        thinkingString.isNotEmpty;
 
     await _commitOrDropPlaceholder(
       deps: deps,
@@ -371,11 +371,11 @@ class ChatSession {
       return;
     }
 
-    if (hasHallucination &&
+    if ((hasHallucination || hasSuppressedHallucination) &&
         hallucinationRetry < llm_hooks.maxHallucinationRetries) {
       _log.warning(
-        'Hallucinated tool-call XML (retry '
-        '${hallucinationRetry + 1}/${llm_hooks.maxHallucinationRetries})',
+        '${hasHallucination ? "Hallucinated tool-call XML" : "Suppressed tool-call (empty turn)"} '
+        '(retry ${hallucinationRetry + 1}/${llm_hooks.maxHallucinationRetries})',
       );
       await _retryAfterHallucination(
         deps: deps,
@@ -423,58 +423,6 @@ class ChatSession {
       attachments: deps.attachments,
     );
     await _runPipeline(deps);
-  }
-
-  /// Handle a stalled stream (server went silent without `[DONE]`).
-  ///
-  /// Finalises whatever content arrived so the row is no longer stuck
-  /// in `is_streaming=1`, then — if the active model's hook provides a
-  /// stall-correction prompt and we haven't exhausted retries — injects
-  /// that prompt as a user message and relaunches the pipeline.
-  Future<void> _handleStreamStalled({
-    required ChatSessionDeps deps,
-    required int completionTokens,
-    required int stallRetry,
-  }) async {
-    _log.warning(
-      'Stream stalled (retry $stallRetry/${llm_hooks.maxStallRetries})',
-    );
-    _stopThrottle();
-    _stopwatch.stop();
-
-    final contentString = _contentBuffer.toString();
-    final hasValidToolCalls = _toolCalls.values.any((tc) => tc.isValid);
-    final isSendable = contentString.isNotEmpty || hasValidToolCalls;
-
-    await _commitOrDropPlaceholder(
-      deps: deps,
-      keep: isSendable,
-      completionTokens: completionTokens,
-    );
-
-    // Tool calls mid-flight: finish them first — the model probably
-    // just forgot to close the stream after emitting them.
-    if (hasValidToolCalls) {
-      await _continueWithToolResults(deps);
-      return;
-    }
-
-    final modelName = deps.settings.api.selectedModel;
-    final correction = llm_hooks.streamStallCorrection(modelName);
-    if (correction != null && stallRetry < llm_hooks.maxStallRetries) {
-      final nudge = Message(
-        id: generateId(),
-        conversationId: conversationId,
-        role: MessageRole.user,
-        content: [ContentBlock.text(text: correction)],
-        createdAt: DateTime.now(),
-      );
-      await deps.repo.saveMessage(nudge);
-      await _runPipeline(deps, stallRetry: stallRetry + 1);
-      return;
-    }
-
-    await _autoTitleIfNeeded(deps, contentString);
   }
 
   Future<void> _retryAfterHallucination({

@@ -9,7 +9,7 @@ import 'i_llm_service.dart';
 
 export 'i_llm_service.dart' show
     StreamEvent, ContentDelta, ThinkingDelta,
-    ToolCallDelta, StreamDone, StreamStalled, StreamError;
+    ToolCallDelta, StreamDone, StreamError;
 
 final _log = Logger('LlmService');
 
@@ -73,8 +73,19 @@ class LlmService implements ILlmService {
     required List<Map<String, dynamic>> messages,
     List<Map<String, dynamic>>? tools,
     CancelToken? cancelToken,
-    Duration? inactivityTimeout,
   }) async* {
+    // Per-stream state for the inline <think>/</think> splitter on `content`.
+    // We support two formats:
+    //   1. Reasoning sent on a separate field (reasoning_content / thinking
+    //      / reasoning) — handled directly below, no state needed.
+    //   2. Inline <think>...</think> markers inside `content` itself
+    //      (llama.cpp default, some OpenAI-compatible servers). Both tags
+    //      come from the model's generation, so we always see the opener.
+    bool inThinking = false;
+    String thinkBuf = '';
+    const openTag = '<think>';
+    const closeTag = '</think>';
+
     final body = <String, dynamic>{
       'model': _apiSettings.selectedModel,
       'messages': messages,
@@ -114,26 +125,7 @@ class LlmService implements ILlmService {
         cancelToken: cancelToken,
       );
 
-      Stream<List<int>> stream = response.data.stream as Stream<List<int>>;
-      bool stalled = false;
-      if (inactivityTimeout != null) {
-        _log.info(
-            'Stream inactivity guard armed (${inactivityTimeout.inSeconds}s) '
-            'for model ${_apiSettings.selectedModel}');
-        stream = stream.timeout(
-          inactivityTimeout,
-          onTimeout: (sink) {
-            _log.warning(
-                'Stream inactive for ${inactivityTimeout.inSeconds}s — '
-                'treating as stalled');
-            stalled = true;
-            sink.close();
-          },
-        );
-      } else {
-        _log.fine(
-            'No stream inactivity guard for model ${_apiSettings.selectedModel}');
-      }
+      final stream = response.data.stream as Stream<List<int>>;
       final sseBuffer = StringBuffer();
 
       await for (final chunk in stream) {
@@ -153,6 +145,12 @@ class LlmService implements ILlmService {
 
           final data = trimmed.substring(6);
           if (data == '[DONE]') {
+            if (thinkBuf.isNotEmpty) {
+              yield inThinking
+                  ? ThinkingDelta(thinkBuf)
+                  : ContentDelta(thinkBuf);
+              thinkBuf = '';
+            }
             yield StreamDone();
             return;
           }
@@ -175,16 +173,64 @@ class LlmService implements ILlmService {
                 choices[0]['delta'] as Map<String, dynamic>? ?? {};
 
             // Check for thinking/reasoning content
+            // - reasoning_content: DeepSeek-style
+            // - thinking: Anthropic-style
+            // - reasoning: mlx_vlm server (Qwen with --enable-thinking)
             final reasoning = delta['reasoning_content'] as String? ??
-                delta['thinking'] as String?;
+                delta['thinking'] as String? ??
+                delta['reasoning'] as String?;
             if (reasoning != null && reasoning.isNotEmpty) {
               yield ThinkingDelta(reasoning);
             }
 
-            // Check for regular content
+            // Inline <think>/</think> splitter on `content` — see the
+            // comment at the top of streamChatCompletion for the cases.
             final content = delta['content'] as String?;
             if (content != null && content.isNotEmpty) {
-              yield ContentDelta(content);
+              thinkBuf += content;
+              while (true) {
+                if (inThinking) {
+                  final idx = thinkBuf.indexOf(closeTag);
+                  if (idx >= 0) {
+                    if (idx > 0) {
+                      yield ThinkingDelta(thinkBuf.substring(0, idx));
+                    }
+                    // Strip the blank line some models emit after </think>.
+                    thinkBuf = thinkBuf
+                        .substring(idx + closeTag.length)
+                        .replaceFirst(RegExp(r'^\n{1,2}'), '');
+                    inThinking = false;
+                    continue;
+                  }
+                  final hold = _partialTagSuffixLen(thinkBuf, closeTag);
+                  final safe = thinkBuf.length - hold;
+                  if (safe > 0) {
+                    yield ThinkingDelta(thinkBuf.substring(0, safe));
+                    thinkBuf = thinkBuf.substring(safe);
+                  }
+                  break;
+                } else {
+                  final idx = thinkBuf.indexOf(openTag);
+                  if (idx >= 0) {
+                    if (idx > 0) {
+                      yield ContentDelta(thinkBuf.substring(0, idx));
+                    }
+                    thinkBuf = thinkBuf.substring(idx + openTag.length);
+                    inThinking = true;
+                    continue;
+                  }
+                  // No opening tag — emit safe portion, hold back any
+                  // trailing chars that could be the start of a tag so a
+                  // tag spanning two deltas is still caught next pass.
+                  final hold = _partialTagSuffixLen(thinkBuf, openTag);
+                  final safe = thinkBuf.length - hold;
+                  if (safe > 0) {
+                    yield ContentDelta(thinkBuf.substring(0, safe));
+                    thinkBuf = thinkBuf.substring(safe);
+                  }
+                  break;
+                }
+              }
             }
 
             // Check for tool calls
@@ -209,7 +255,11 @@ class LlmService implements ILlmService {
         }
       }
 
-      yield stalled ? StreamStalled() : StreamDone();
+      if (thinkBuf.isNotEmpty) {
+        yield inThinking ? ThinkingDelta(thinkBuf) : ContentDelta(thinkBuf);
+        thinkBuf = '';
+      }
+      yield StreamDone();
     } on DioException catch (e) {
       if (e.type == DioExceptionType.cancel) {
         _log.info('Stream cancelled by user');
@@ -226,6 +276,18 @@ class LlmService implements ILlmService {
       _log.severe('Unexpected stream error', e, st);
       yield StreamError('Unexpected error: $e');
     }
+  }
+
+  /// Longest suffix of [s] that is also a prefix of [tag]. Used to decide
+  /// how many trailing chars of the content buffer to hold back so that a
+  /// `<think>` or `</think>` tag spanning two streamed deltas is still
+  /// detected on the next pass.
+  static int _partialTagSuffixLen(String s, String tag) {
+    final maxLen = s.length < tag.length - 1 ? s.length : tag.length - 1;
+    for (var n = maxLen; n > 0; n--) {
+      if (s.endsWith(tag.substring(0, n))) return n;
+    }
+    return 0;
   }
 
   /// When responseType is stream, `response.data` is a `ResponseBody`

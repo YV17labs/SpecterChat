@@ -115,6 +115,95 @@ void main() {
       expect((events[0] as ThinkingDelta).text, 'hmm');
     });
 
+    test('splits inline <think>...</think> from content (llama.cpp default)',
+        () async {
+      service = createService([
+        'data: {"choices":[{"delta":{"content":"<think>let me reason"}}]}',
+        'data: {"choices":[{"delta":{"content":" carefully</think>\\n\\nThe answer"}}]}',
+        'data: {"choices":[{"delta":{"content":" is 42"}}]}',
+        'data: [DONE]',
+        '',
+      ]);
+
+      final events = await service
+          .streamChatCompletion(
+            messages: [
+              {'role': 'user', 'content': 'q'}
+            ],
+          )
+          .toList();
+
+      final thinking = events.whereType<ThinkingDelta>().map((e) => e.text).join();
+      final content = events.whereType<ContentDelta>().map((e) => e.text).join();
+      expect(thinking, 'let me reason carefully');
+      expect(content, 'The answer is 42');
+    });
+
+    test('splits <think> tag that spans two deltas', () async {
+      service = createService([
+        'data: {"choices":[{"delta":{"content":"prefix <th"}}]}',
+        'data: {"choices":[{"delta":{"content":"ink>secret</th"}}]}',
+        'data: {"choices":[{"delta":{"content":"ink>visible"}}]}',
+        'data: [DONE]',
+        '',
+      ]);
+
+      final events = await service
+          .streamChatCompletion(
+            messages: [
+              {'role': 'user', 'content': 'q'}
+            ],
+          )
+          .toList();
+
+      final thinking = events.whereType<ThinkingDelta>().map((e) => e.text).join();
+      final content = events.whereType<ContentDelta>().map((e) => e.text).join();
+      expect(thinking, 'secret');
+      expect(content, 'prefix visible');
+    });
+
+    test('splits explicit <think>...</think> from content', () async {
+      // For DeepSeek-R1, llama.cpp default mode, and any server that emits
+      // the opening tag as part of the generated stream.
+      service = createService([
+        'data: {"choices":[{"delta":{"content":"<think>plan</think>do it"}}]}',
+        'data: [DONE]',
+        '',
+      ]);
+
+      final events = await service
+          .streamChatCompletion(
+            messages: [
+              {'role': 'user', 'content': 'q'}
+            ],
+          )
+          .toList();
+
+      final thinking = events.whereType<ThinkingDelta>().map((e) => e.text).join();
+      final content = events.whereType<ContentDelta>().map((e) => e.text).join();
+      expect(thinking, 'plan');
+      expect(content, 'do it');
+    });
+
+    test('yields ThinkingDelta for mlx_vlm reasoning field', () async {
+      service = createService([
+        'data: {"choices":[{"delta":{"reasoning":"step by step"}}]}',
+        'data: [DONE]',
+        '',
+      ]);
+
+      final events = await service
+          .streamChatCompletion(
+            messages: [
+              {'role': 'user', 'content': 'test'}
+            ],
+          )
+          .toList();
+
+      expect(events[0], isA<ThinkingDelta>());
+      expect((events[0] as ThinkingDelta).text, 'step by step');
+    });
+
     test('yields ToolCallDelta for tool calls', () async {
       service = createService([
         'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"tc-1","function":{"name":"search","arguments":"{\\"q\\":"}}]}}]}',

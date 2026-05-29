@@ -1,5 +1,13 @@
-// Vendored from mcp_dart 2.1.0 (lib/src/client/streamable_https.dart) with two
-// small changes:
+// Vendored from mcp_dart 2.1.0 (lib/src/client/streamable_https.dart),
+// which is licensed under the MIT License:
+//
+//   Copyright (c) 2025 Jhin Lee
+//   Permission is hereby granted, free of charge, to any person obtaining a
+//   copy of this software and associated documentation files (the "Software"),
+//   to deal in the Software without restriction. The full MIT license text is
+//   available at https://github.com/leehack/mcp_dart/blob/main/LICENSE
+//
+// Adapted with two small changes:
 //   1. The constructor accepts an injected `http.Client` (upstream hardcodes
 //      `http.Client()` with no override).
 //   2. The GET (SSE open) and POST (JSON-RPC) requests are built with

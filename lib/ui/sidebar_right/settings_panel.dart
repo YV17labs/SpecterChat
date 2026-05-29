@@ -2,12 +2,15 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../models/app_settings.dart';
 import '../../models/conversation_settings.dart';
 import '../../providers/conversation_provider.dart';
 import '../../providers/effective_settings_provider.dart';
 import '../../providers/mcp_provider.dart';
+import '../../providers/package_info_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../widgets/settings_fields.dart';
 import 'mcp_server_tile.dart';
@@ -344,6 +347,13 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
                         server.id, enabled)
                     : null,
               )),
+
+        const Divider(height: 32),
+
+        // --- About ---
+        const SectionHeader(title: 'About'),
+        const SizedBox(height: 8),
+        _AboutSection(),
       ],
     );
   }
@@ -445,5 +455,76 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
     }
 
     ref.read(settingsProvider.notifier).replaceMcpServers(result);
+  }
+}
+
+/// App identity footer: name, dynamic version, copyright, and a link to the
+/// bundled open-source license list. The version is read from the running
+/// bundle, so it always matches pubspec `version` with no manual updates.
+class _AboutSection extends ConsumerWidget {
+  static const _copyright = 'Copyright © 2026 YV17 — Open source (MIT)';
+  static final _siteUri = Uri.parse('https://www.yv17labs.com');
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final muted = theme.colorScheme.onSurface.withValues(alpha: 0.6);
+    final info = ref.watch(packageInfoProvider);
+    final version = info.when(
+      data: (i) => 'Version ${i.version} (build ${i.buildNumber})',
+      loading: () => 'Version …',
+      error: (_, _) => 'Version unknown',
+    );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'SpecterChat',
+          style: theme.textTheme.bodyMedium?.copyWith(
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(version, style: TextStyle(fontSize: 12, color: muted)),
+        const SizedBox(height: 2),
+        Text(_copyright, style: TextStyle(fontSize: 12, color: muted)),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            TextButton(
+              onPressed: () => _showLicenses(context, info.value),
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                minimumSize: const Size(0, 32),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: const Text('Licenses', style: TextStyle(fontSize: 12)),
+            ),
+            TextButton(
+              onPressed: () =>
+                  launchUrl(_siteUri, mode: LaunchMode.externalApplication),
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                minimumSize: const Size(0, 32),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: const Text('yv17labs.com', style: TextStyle(fontSize: 12)),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  void _showLicenses(BuildContext context, PackageInfo? info) {
+    showLicensePage(
+      context: context,
+      applicationName: 'SpecterChat',
+      applicationVersion: info == null
+          ? null
+          : '${info.version} (build ${info.buildNumber})',
+      applicationLegalese: _copyright,
+    );
   }
 }

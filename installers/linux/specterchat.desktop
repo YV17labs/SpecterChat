@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=SpecterChat
+GenericName=MCP Chat Client
+Comment=Lightweight cross-platform MCP chat client
+Exec=specterchat
+Icon=specterchat
+Terminal=false
+Categories=Network;Chat;Utility;
+Keywords=LLM;AI;MCP;chat;
+StartupWMClass=com.yv17labs.specterchat

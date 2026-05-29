@@ -1,0 +1,71 @@
+name: CI
+
+# Validation build: confirms the app compiles on all three desktop targets
+# (and that tests pass) on every push/PR to main. No artifacts are published —
+# this is the safety net you run before cutting a tagged release.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:        # allow manual runs from the Actions tab
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: '3.41.6'
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Static analysis + tests (fast, fails early).
+  # ---------------------------------------------------------------------------
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+      - run: flutter pub get
+      - run: dart run build_runner build --delete-conflicting-outputs
+      - run: flutter analyze
+      - run: flutter test
+
+  # ---------------------------------------------------------------------------
+  # Compile each desktop target to catch platform-specific build breakage.
+  # ---------------------------------------------------------------------------
+  build:
+    needs: analyze
+    strategy:
+      fail-fast: false        # report all platforms, don't stop at the first failure
+      matrix:
+        include:
+          - os: macos-latest
+            target: macos
+          - os: windows-latest
+            target: windows
+          - os: ubuntu-latest
+            target: linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+      - name: Install Linux build dependencies
+        if: matrix.target == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang cmake ninja-build pkg-config \
+            libgtk-3-dev liblzma-dev libstdc++-12-dev
+      - run: flutter pub get
+      - run: dart run build_runner build --delete-conflicting-outputs
+      - run: flutter build ${{ matrix.target }} --release

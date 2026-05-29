@@ -12,7 +12,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/platform-macOS%20|%20Linux%20|%20Windows-blue" alt="Platforms">
   <img src="https://img.shields.io/badge/flutter-%3E%3D3.29-02569B?logo=flutter" alt="Flutter">
-  <img src="https://img.shields.io/badge/license-Proprietary-red" alt="License">
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
 </p>
 
 ---
@@ -35,6 +35,21 @@ Existing chat clients fail at one critical thing: when an MCP tool returns an im
 - **Full generation controls** — temperature, top-p, top-k, max tokens, penalties
 - **Local storage** — chat history and settings persisted in SQLite
 - **Dark theme** by default
+
+## Download
+
+Prebuilt installers for each tagged release are on the
+[Releases](https://github.com/YV17labs/specterchat/releases) page:
+
+| Platform | File |
+|----------|------|
+| macOS | `SpecterChat-<version>-macos.dmg` |
+| Windows | `SpecterChat-<version>-windows-x64-setup.exe` |
+| Linux | `SpecterChat-<version>-linux-x86_64.AppImage` or `…-linux-amd64.deb` |
+
+> **Note:** the binaries are not code-signed yet. On macOS, right-click the app
+> and choose **Open** (or run `xattr -dr com.apple.quarantine /Applications/SpecterChat.app`).
+> On Windows, click **More info → Run anyway** at the SmartScreen prompt.
 
 ## Requirements
 
@@ -157,6 +172,12 @@ SpecterChat uses **Drift** (SQLite ORM) with a versioned migration strategy.
 4. Optionally add MCP servers (name + URL) and connect to them
 5. Create a new conversation and start chatting
 
+## Acknowledgments
+
+The MCP Streamable HTTP transport in [`lib/services/mcp/streamable_http_transport.dart`](lib/services/mcp/streamable_http_transport.dart) is vendored from [mcp_dart](https://pub.dev/packages/mcp_dart) (MIT, © 2025 Jhin Lee) with minor changes. See the file header for details.
+
 ## License
 
-Proprietary. Copyright (c) 2026 Yoann Vanitou / YV17Labs. All rights reserved. See [LICENSE](LICENSE) for details.
+Released under the [MIT License](LICENSE). Third-party dependency licenses are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+Copyright (c) 2026 YV17. SpecterChat is a product built by [YV17labs](https://www.yv17labs.com). Open source.

@@ -1,0 +1,147 @@
+name: Release
+
+# Tag-driven release: push a tag like `v0.4.1` and this builds installers for
+# macOS, Windows, and Linux, then publishes a GitHub Release with all of them.
+# The version shown in the app (About section) comes from the tag, injected via
+# --build-name / --build-number — no manual pubspec edit needed per release.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write          # required to create the GitHub Release
+
+env:
+  FLUTTER_VERSION: '3.41.6'
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Derive version (from tag) + build number (from run number), shared by all.
+  # ---------------------------------------------------------------------------
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      build: ${{ steps.v.outputs.build }}
+    steps:
+      - id: v
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"     # v0.4.1 -> 0.4.1
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "build=$GITHUB_RUN_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "Releasing version $VERSION (build $GITHUB_RUN_NUMBER)"
+
+  # ---------------------------------------------------------------------------
+  # macOS — .dmg (ad-hoc signed / unsigned)
+  # ---------------------------------------------------------------------------
+  build-macos:
+    needs: version
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+      - run: flutter pub get
+      - run: dart run build_runner build --delete-conflicting-outputs
+      - run: |
+          flutter build macos --release \
+            --build-name=${{ needs.version.outputs.version }} \
+            --build-number=${{ needs.version.outputs.build }}
+      - name: Package .dmg
+        run: |
+          APP="build/macos/Build/Products/Release/SpecterChat.app"
+          STAGING="$(mktemp -d)"
+          cp -R "$APP" "$STAGING/"
+          ln -s /Applications "$STAGING/Applications"
+          mkdir -p dist
+          hdiutil create -volname "SpecterChat" -srcfolder "$STAGING" \
+            -ov -format UDZO \
+            "dist/SpecterChat-${{ needs.version.outputs.version }}-macos.dmg"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos
+          path: dist/*.dmg
+
+  # ---------------------------------------------------------------------------
+  # Windows — Inno Setup installer (.exe)
+  # ---------------------------------------------------------------------------
+  build-windows:
+    needs: version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+      - run: flutter pub get
+      - run: dart run build_runner build --delete-conflicting-outputs
+      - run: >
+          flutter build windows --release
+          --build-name=${{ needs.version.outputs.version }}
+          --build-number=${{ needs.version.outputs.build }}
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+      - name: Build installer
+        run: iscc /DMyAppVersion=${{ needs.version.outputs.version }} installers\windows\specterchat.iss
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows
+          path: dist/*.exe
+
+  # ---------------------------------------------------------------------------
+  # Linux — AppImage + .deb
+  # ---------------------------------------------------------------------------
+  build-linux:
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang cmake ninja-build pkg-config \
+            libgtk-3-dev liblzma-dev libstdc++-12-dev
+      - run: flutter pub get
+      - run: dart run build_runner build --delete-conflicting-outputs
+      - run: |
+          flutter build linux --release \
+            --build-name=${{ needs.version.outputs.version }} \
+            --build-number=${{ needs.version.outputs.build }}
+      - name: Package AppImage + .deb
+        run: bash installers/linux/build_packages.sh ${{ needs.version.outputs.version }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux
+          path: |
+            dist/*.AppImage
+            dist/*.deb
+
+  # ---------------------------------------------------------------------------
+  # Publish the GitHub Release with every artifact attached.
+  # ---------------------------------------------------------------------------
+  release:
+    needs: [version, build-macos, build-windows, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+      - name: Publish release
+        uses: softprops/action-gh-release@v3
+        with:
+          name: SpecterChat ${{ needs.version.outputs.version }}
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: artifacts/**/*

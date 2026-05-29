@@ -50,6 +50,9 @@ dependencies:
   # SVG rendering — MCP server icons can be image/svg+xml data URIs,
   # which Flutter's core Image widget cannot decode.
   flutter_svg: ^2.0.10
+  # App version/build metadata for the About section — read from the bundle
+  # at runtime so the displayed version always tracks pubspec `version`.
+  package_info_plus: ^10.1.0
 
 dev_dependencies:
   flutter_test:

@@ -180,4 +180,4 @@ The MCP Streamable HTTP transport in [`lib/services/mcp/streamable_http_transpor
 
 Released under the [MIT License](LICENSE). Third-party dependency licenses are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-Copyright (c) 2026 YV17. SpecterChat is a product built by [YV17labs](https://www.yv17labs.com). Open source.
+Copyright (c) 2026 Yoann Vanitou (YV17labs). SpecterChat is built and maintained by [YV17labs](https://www.yv17labs.com). Open source.

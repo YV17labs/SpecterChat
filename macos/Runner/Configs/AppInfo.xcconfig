@@ -11,4 +11,4 @@ PRODUCT_NAME = SpecterChat
 PRODUCT_BUNDLE_IDENTIFIER = com.yv17labs.specterchat
 
 // The copyright displayed in application information
-PRODUCT_COPYRIGHT = Copyright © 2026 YV17. MIT License.
+PRODUCT_COPYRIGHT = Copyright © 2026 Yoann Vanitou (YV17labs). MIT License.

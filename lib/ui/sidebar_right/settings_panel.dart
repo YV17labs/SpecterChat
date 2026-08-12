@@ -462,7 +462,11 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
 /// bundled open-source license list. The version is read from the running
 /// bundle, so it always matches pubspec `version` with no manual updates.
 class _AboutSection extends ConsumerWidget {
-  static const _copyright = 'Copyright © 2026 YV17 — Open source (MIT)';
+  // Attribution names the individual copyright holder alongside the trading
+  // name: YV17labs is not a registered entity in every jurisdiction, so the
+  // legally operative holder is the natural person.
+  static const _copyright = 'Copyright © 2026 Yoann Vanitou (YV17labs)';
+  static const _licenseLine = 'Open source — MIT License';
   static final _siteUri = Uri.parse('https://www.yv17labs.com');
 
   @override
@@ -489,6 +493,8 @@ class _AboutSection extends ConsumerWidget {
         Text(version, style: TextStyle(fontSize: 12, color: muted)),
         const SizedBox(height: 2),
         Text(_copyright, style: TextStyle(fontSize: 12, color: muted)),
+        const SizedBox(height: 2),
+        Text(_licenseLine, style: TextStyle(fontSize: 12, color: muted)),
         const SizedBox(height: 8),
         Row(
           children: [
@@ -524,7 +530,7 @@ class _AboutSection extends ConsumerWidget {
       applicationVersion: info == null
           ? null
           : '${info.version} (build ${info.buildNumber})',
-      applicationLegalese: _copyright,
+      applicationLegalese: '$_copyright\n$_licenseLine',
     );
   }
 }

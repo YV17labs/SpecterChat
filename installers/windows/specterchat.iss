@@ -8,8 +8,9 @@
 #endif
 
 #define MyAppName "SpecterChat"
-#define MyAppPublisher "YV17labs"
+#define MyAppPublisher "YV17labs (Yoann Vanitou)"
 #define MyAppURL "https://www.yv17labs.com"
+#define MyAppCopyright "Copyright (C) 2026 Yoann Vanitou (YV17labs). MIT License."
 #define MyAppExeName "specterchat.exe"
 
 [Setup]
@@ -20,6 +21,7 @@ AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
+AppCopyright={#MyAppCopyright}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes

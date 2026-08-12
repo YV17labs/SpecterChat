@@ -93,7 +93,7 @@ BEGIN
             VALUE "FileDescription", "SpecterChat" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "specterchat" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 YV17. MIT License." "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 Yoann Vanitou (YV17labs). MIT License." "\0"
             VALUE "OriginalFilename", "specterchat.exe" "\0"
             VALUE "ProductName", "SpecterChat" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"

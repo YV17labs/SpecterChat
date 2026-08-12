@@ -77,7 +77,7 @@ Section: net
 Priority: optional
 Architecture: amd64
 Depends: libgtk-3-0
-Maintainer: YV17labs <yoann@yv17labs.com>
+Maintainer: Yoann Vanitou (YV17labs) <yoann@yv17labs.com>
 Homepage: https://www.yv17labs.com
 Description: Lightweight cross-platform MCP chat client
  SpecterChat connects to any OpenAI-compatible API and to MCP servers,

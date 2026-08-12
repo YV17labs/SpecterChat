@@ -261,7 +261,7 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastSwiftUpdateCheck = 0920;
 				LastUpgradeCheck = 1510;
-				ORGANIZATIONNAME = YV17Labs;
+				ORGANIZATIONNAME = YV17labs;
 				TargetAttributes = {
 					331C80D4294CF70F00263BE5 = {
 						CreatedOnToolsVersion = 14.0;

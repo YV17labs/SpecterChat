@@ -51,9 +51,27 @@ Prebuilt installers for each tagged release are on the
 | Windows | 10 | `SpecterChat-<version>-windows-x64-setup.exe` |
 | Linux | Ubuntu 22.04 / Debian 12 | `SpecterChat-<version>-linux-x86_64.AppImage` or `…-linux-amd64.deb` |
 
-> **Note:** the binaries are not code-signed yet. On macOS, right-click the app
-> and choose **Open** (or run `xattr -dr com.apple.quarantine /Applications/SpecterChat.app`).
-> On Windows, click **More info → Run anyway** at the SmartScreen prompt.
+### The binaries are not signed yet
+
+We have not paid for an Apple Developer Program membership ($99/year), so the
+macOS build is only *ad-hoc* signed — no Developer ID certificate, no
+notarisation. Gatekeeper cannot ask Apple whether the app is safe, so the first
+launch is blocked with *"Apple could not verify SpecterChat.app is free of
+malware"*. Nothing is wrong with the download; it is what an unnotarised app
+looks like.
+
+To run it anyway, strip the quarantine attribute the browser attached:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/SpecterChat.app
+```
+
+Alternatively, open it once, then go to **System Settings → Privacy & Security**
+and click **Open Anyway**. On macOS 15+ the right-click → **Open** trick no
+longer works — the dialog only offers *Move to Trash* / *Done*.
+
+On Windows, the installer is unsigned too: click **More info → Run anyway** at
+the SmartScreen prompt.
 
 ## Building from Source
 
@@ -89,7 +107,10 @@ flutter build macos --release    # → build/macos/Build/Products/Release/Specte
 ```
 
 The app targets macOS 12 (Monterey) and builds a universal binary
-(Intel + Apple Silicon).
+(Intel + Apple Silicon). Release builds use `CODE_SIGN_IDENTITY = "-"` (ad-hoc);
+signing with a real Developer ID and notarising in CI is deliberately not wired
+up until the Apple Developer membership is bought — see
+[the note above](#the-binaries-are-not-signed-yet).
 
 If you are updating an existing clone across a Flutter SDK upgrade, the build
 may stop with `The sandbox is not in sync with the Podfile.lock`. The CocoaPods

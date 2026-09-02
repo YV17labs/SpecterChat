@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0D0B16"/>
+      <stop offset="55%" stop-color="#12101F"/>
+      <stop offset="100%" stop-color="#0A0910"/>
+    </linearGradient>
+
+    <radialGradient id="glowA" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#6C63FF" stop-opacity="0.42"/>
+      <stop offset="55%" stop-color="#6C63FF" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="#6C63FF" stop-opacity="0"/>
+    </radialGradient>
+
+    <radialGradient id="glowB" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#B06CFF" stop-opacity="0.20"/>
+      <stop offset="100%" stop-color="#B06CFF" stop-opacity="0"/>
+    </radialGradient>
+
+    <linearGradient id="tile" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#7C74FF"/>
+      <stop offset="100%" stop-color="#4A3FD4"/>
+    </linearGradient>
+
+    <linearGradient id="ghostFill" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#E8E6FF"/>
+    </linearGradient>
+
+    <linearGradient id="wordmark" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#CFC9FF"/>
+    </linearGradient>
+
+    <linearGradient id="rule" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#6C63FF" stop-opacity="0.9"/>
+      <stop offset="60%" stop-color="#B06CFF" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#B06CFF" stop-opacity="0"/>
+    </linearGradient>
+
+    <pattern id="dots" width="26" height="26" patternUnits="userSpaceOnUse">
+      <circle cx="1.4" cy="1.4" r="1.4" fill="#FFFFFF" opacity="0.05"/>
+    </pattern>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1280" height="640" fill="url(#bgGrad)"/>
+  <rect width="1280" height="640" fill="url(#dots)"/>
+  <ellipse cx="180" cy="300" rx="620" ry="520" fill="url(#glowA)"/>
+  <ellipse cx="1150" cy="600" rx="520" ry="420" fill="url(#glowB)"/>
+
+  <!-- Oversized watermark ghost bleeding off the right edge -->
+  <g opacity="0.045" transform="translate(1010,60) scale(1.25)">
+    <path d="M 256 100 C 170 100, 120 160, 120 240 L 120 370 C 120 380, 130 385, 138 378 L 158 358 C 164 352, 174 352, 180 358 L 200 378 C 206 384, 216 384, 222 378 L 242 358 C 248 352, 258 352, 264 358 L 284 378 C 290 384, 300 384, 306 378 L 326 358 C 332 352, 342 352, 348 358 L 368 378 C 376 385, 386 380, 386 370 L 386 240 C 386 160, 336 100, 256 100 Z" fill="#FFFFFF"/>
+  </g>
+
+  <!-- Logo tile -->
+  <g transform="translate(160,214)">
+    <rect x="6" y="12" width="212" height="212" rx="50" fill="#6C63FF" opacity="0.28"/>
+    <rect x="0" y="0" width="212" height="212" rx="46" fill="url(#tile)"/>
+    <rect x="0" y="0" width="212" height="212" rx="46" fill="none" stroke="#FFFFFF" stroke-opacity="0.18" stroke-width="2"/>
+    <g transform="scale(0.4141)">
+      <!-- Ghost body -->
+      <path d="M 256 100 C 170 100, 120 160, 120 240 L 120 370 C 120 380, 130 385, 138 378 L 158 358 C 164 352, 174 352, 180 358 L 200 378 C 206 384, 216 384, 222 378 L 242 358 C 248 352, 258 352, 264 358 L 284 378 C 290 384, 300 384, 306 378 L 326 358 C 332 352, 342 352, 348 358 L 368 378 C 376 385, 386 380, 386 370 L 386 240 C 386 160, 336 100, 256 100 Z" fill="url(#ghostFill)" opacity="0.95"/>
+      <ellipse cx="215" cy="220" rx="22" ry="26" fill="#6C63FF"/>
+      <ellipse cx="221" cy="214" rx="8" ry="10" fill="#FFFFFF"/>
+      <ellipse cx="301" cy="220" rx="22" ry="26" fill="#6C63FF"/>
+      <ellipse cx="307" cy="214" rx="8" ry="10" fill="#FFFFFF"/>
+      <!-- Chat bubble -->
+      <path d="M 330 130 C 330 108, 350 90, 380 90 L 430 90 C 460 90, 470 108, 470 130 L 470 160 C 470 182, 460 192, 430 192 L 380 192 L 355 215 L 360 192 C 340 190, 330 178, 330 160 Z" fill="#FFFFFF" opacity="0.92"/>
+      <circle cx="380" cy="142" r="8" fill="#6C63FF"/>
+      <circle cx="408" cy="142" r="8" fill="#6C63FF"/>
+      <circle cx="436" cy="142" r="8" fill="#6C63FF"/>
+    </g>
+  </g>
+
+  <!-- Text block -->
+  <g font-family="Helvetica Neue, Helvetica, Arial, sans-serif" transform="translate(56,0)">
+    <text x="376" y="252" font-size="34" font-weight="500" fill="#8F87D6" letter-spacing="7">MCP CHAT CLIENT</text>
+
+    <text x="374" y="352" font-size="96" font-weight="700" fill="url(#wordmark)" letter-spacing="-3">SpecterChat</text>
+
+    <rect x="378" y="382" width="470" height="3" rx="1.5" fill="url(#rule)"/>
+
+    <text x="376" y="436" font-size="31" font-weight="400" fill="#B3AEDA">Lightweight, cross-platform desktop client</text>
+    <text x="376" y="478" font-size="31" font-weight="400" fill="#B3AEDA">for any OpenAI-compatible API.</text>
+
+    <!-- Pills -->
+    <g>
+      <rect x="376" y="518" width="128" height="46" rx="23" fill="#FFFFFF" fill-opacity="0.06" stroke="#8F87D6" stroke-opacity="0.30"/>
+      <text x="440" y="547" font-size="21" font-weight="500" fill="#D7D3F5" text-anchor="middle">macOS</text>
+
+      <rect x="518" y="518" width="112" height="46" rx="23" fill="#FFFFFF" fill-opacity="0.06" stroke="#8F87D6" stroke-opacity="0.30"/>
+      <text x="574" y="547" font-size="21" font-weight="500" fill="#D7D3F5" text-anchor="middle">Linux</text>
+
+      <rect x="644" y="518" width="142" height="46" rx="23" fill="#FFFFFF" fill-opacity="0.06" stroke="#8F87D6" stroke-opacity="0.30"/>
+      <text x="715" y="547" font-size="21" font-weight="500" fill="#D7D3F5" text-anchor="middle">Windows</text>
+
+      <rect x="800" y="518" width="128" height="46" rx="23" fill="#6C63FF" fill-opacity="0.18" stroke="#6C63FF" stroke-opacity="0.55"/>
+      <text x="864" y="547" font-size="21" font-weight="500" fill="#C6C1FF" text-anchor="middle">Flutter</text>
+    </g>
+  </g>
+
+  <!-- Corner accent -->
+  <g opacity="0.5">
+    <rect x="0" y="636" width="1280" height="4" fill="url(#rule)"/>
+  </g>
+</svg>

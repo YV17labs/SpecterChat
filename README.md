@@ -15,6 +15,10 @@
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
 </p>
 
+<p align="center">
+  <img src="assets/screenshot.webp" width="800" alt="SpecterChat — a conversation with MCP tool calls, an inline screenshot returned by a tool, thinking blocks, and the settings sidebar">
+</p>
+
 ---
 
 SpecterChat connects to any OpenAI-compatible API (Ollama, LM Studio, vLLM, llama.cpp server, etc.) and lets you interact with MCP servers to extend your model's capabilities with external tools.
@@ -51,37 +55,68 @@ Prebuilt installers for each tagged release are on the
 > and choose **Open** (or run `xattr -dr com.apple.quarantine /Applications/SpecterChat.app`).
 > On Windows, click **More info → Run anyway** at the SmartScreen prompt.
 
-## Requirements
+## Building from Source
 
-### macOS (primary target)
-- macOS 13+
-- [Flutter SDK](https://docs.flutter.dev/get-started/install/macos/desktop) 3.29+
-- Xcode 15+ (with command-line tools)
-
-### Linux (via DevContainer)
-- Docker
-- VS Code with the Dev Containers extension
-
-## Getting Started
-
-### macOS
+All platforms require the [Flutter SDK](https://docs.flutter.dev/get-started/install) **3.29+** (stable channel) with desktop support enabled. Then, on every platform:
 
 ```bash
 git clone https://github.com/YV17labs/specterchat.git
 cd specterchat
 flutter pub get
 dart run build_runner build --delete-conflicting-outputs
-flutter run -d macos
 ```
 
-### Linux (DevContainer)
+Official installers are produced by the tag-driven
+[release workflow](.github/workflows/release.yml); the steps below build the
+exact same artifacts locally.
 
-1. Open in VS Code and select **"Reopen in Container"** when prompted.
-2. The DevContainer will automatically install Flutter and run code generation.
-3. Run the app:
-   ```bash
-   flutter run -d linux
-   ```
+### macOS (primary target)
+
+Requirements: macOS 13+, Xcode 15+ with command-line tools.
+
+```bash
+flutter run -d macos             # development
+flutter build macos --release    # → build/macos/Build/Products/Release/SpecterChat.app
+```
+
+### Windows
+
+Requirements: Windows 10+, [Visual Studio 2022](https://visualstudio.microsoft.com/downloads/) with the **"Desktop development with C++"** workload.
+
+```powershell
+flutter run -d windows           # development
+flutter build windows --release  # → build\windows\x64\runner\Release\
+```
+
+Optionally, package the installer with [Inno Setup](https://jrsoftware.org/isinfo.php):
+
+```powershell
+iscc /DMyAppVersion=<version> installers\windows\specterchat.iss   # → dist\
+```
+
+### Linux
+
+Requirements (Debian/Ubuntu — adapt package names for other distributions):
+
+```bash
+sudo apt-get install clang cmake ninja-build pkg-config \
+  libgtk-3-dev liblzma-dev libstdc++-12-dev
+```
+
+```bash
+flutter run -d linux             # development
+flutter build linux --release    # → build/linux/x64/release/bundle/
+```
+
+Optionally, package an AppImage and a `.deb`:
+
+```bash
+bash installers/linux/build_packages.sh <version>   # → dist/
+```
+
+**Alternative — DevContainer:** open the repo in VS Code with Docker and the
+Dev Containers extension, select **"Reopen in Container"**, and Flutter plus
+code generation are set up automatically; then `flutter run -d linux`.
 
 ## Development Workflow
 

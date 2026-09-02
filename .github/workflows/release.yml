@@ -33,10 +33,34 @@ jobs:
           echo "Releasing version $VERSION (build $GITHUB_RUN_NUMBER)"
 
   # ---------------------------------------------------------------------------
+  # Gate: analyze + test. A tag must not publish binaries nobody ran.
+  # ---------------------------------------------------------------------------
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+      # Drift's tests open real SQLite databases.
+      - run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      - run: flutter pub get
+      - run: dart run build_runner build
+      # Drift migration-test helpers are gitignored; without this step
+      # migration_test.dart does not compile.
+      - run: >
+          dart run drift_dev schema generate --data-classes --companions
+          drift_schemas/ test/database/generated_migrations/
+      - run: flutter analyze
+      - run: flutter test
+
+  # ---------------------------------------------------------------------------
   # macOS — .dmg (ad-hoc signed / unsigned)
   # ---------------------------------------------------------------------------
   build-macos:
-    needs: version
+    needs: [version, test]
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
@@ -70,7 +94,7 @@ jobs:
   # Windows — Inno Setup installer (.exe)
   # ---------------------------------------------------------------------------
   build-windows:
-    needs: version
+    needs: [version, test]
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
@@ -98,7 +122,7 @@ jobs:
   # Linux — AppImage + .deb
   # ---------------------------------------------------------------------------
   build-linux:
-    needs: version
+    needs: [version, test]
     # Pinned to 22.04 on purpose: the .deb/.AppImage link against the runner's
     # glibc, so building on the OLDEST supported image maximises the range of
     # distros the artifacts run on. Newer runner = artifacts that refuse to
@@ -148,5 +172,7 @@ jobs:
         with:
           name: SpecterChat ${{ needs.version.outputs.version }}
           tag_name: ${{ github.ref_name }}
+          # v0.5.0-rc.1 and friends are marked pre-release automatically.
+          prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true
           files: artifacts/**/*

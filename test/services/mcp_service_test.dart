@@ -22,13 +22,15 @@ void main() {
     });
 
     test('falls back to UnsupportedContent for unhandled types', () {
+      // mcp_dart validates base64 in Content.toJson(), so the fixture must be
+      // real base64 — 'YjY0' decodes to 'b64'.
       final result = contentFromMcp(
-        const mcp.AudioContent(data: 'b64', mimeType: 'audio/wav'),
+        const mcp.AudioContent(data: 'YjY0', mimeType: 'audio/wav'),
       );
       expect(result, isA<McpUnsupportedContent>());
       final unsupported = result as McpUnsupportedContent;
       expect(unsupported.type, 'audio');
-      expect(unsupported.raw['data'], 'b64');
+      expect(unsupported.raw['data'], 'YjY0');
       expect(unsupported.raw['mimeType'], 'audio/wav');
     });
   });

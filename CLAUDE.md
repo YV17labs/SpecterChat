@@ -5,7 +5,7 @@ SpecterChat is a lightweight cross-platform MCP chat client built with Flutter/D
 Desktop only — **macOS first**, then Windows and Linux.
 
 ## Tech Stack
-- **UI**: Flutter 3.29+ with Material 3
+- **UI**: Flutter 3.47+ with Material 3
 - **State management**: Riverpod (StateNotifier pattern)
 - **HTTP**: Dio
 - **Database**: Drift (SQLite)
@@ -33,7 +33,11 @@ lib/
 ## Build & Run
 ```bash
 flutter pub get
-dart run build_runner build --delete-conflicting-outputs
+dart run build_runner build
+# Drift migration-test helpers are gitignored — generate once after cloning,
+# or `flutter analyze` / `flutter test` fail on test/database/migration_test.dart
+dart run drift_dev schema generate --data-classes --companions \
+  drift_schemas/ test/database/generated_migrations/
 flutter run -d macos       # macOS (primary)
 flutter run -d linux       # Linux (DevContainer)
 ```
@@ -41,7 +45,7 @@ flutter run -d linux       # Linux (DevContainer)
 ## Code Generation
 After modifying any Freezed model or Drift database:
 ```bash
-dart run build_runner build --delete-conflicting-outputs
+dart run build_runner build
 ```
 
 ## Database Migrations (Drift)
@@ -67,7 +71,7 @@ onUpgrade: (Migrator m, int from, int to) async {
 },
 ```
 4. If `onCreate` also needs the change (new installs), update it too
-5. Regenerate: `dart run build_runner build --delete-conflicting-outputs`
+5. Regenerate: `dart run build_runner build`
 6. Export the new schema version:
 ```bash
 dart run drift_dev schema dump lib/database/database.dart drift_schemas/

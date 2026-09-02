@@ -11,7 +11,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/platform-macOS%20|%20Linux%20|%20Windows-blue" alt="Platforms">
-  <img src="https://img.shields.io/badge/flutter-%3E%3D3.29-02569B?logo=flutter" alt="Flutter">
+  <img src="https://img.shields.io/badge/flutter-%3E%3D3.47-02569B?logo=flutter" alt="Flutter">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
 </p>
 
@@ -45,11 +45,11 @@ Existing chat clients fail at one critical thing: when an MCP tool returns an im
 Prebuilt installers for each tagged release are on the
 [Releases](https://github.com/YV17labs/specterchat/releases) page:
 
-| Platform | File |
-|----------|------|
-| macOS | `SpecterChat-<version>-macos.dmg` |
-| Windows | `SpecterChat-<version>-windows-x64-setup.exe` |
-| Linux | `SpecterChat-<version>-linux-x86_64.AppImage` or `…-linux-amd64.deb` |
+| Platform | Minimum version | File |
+|----------|-----------------|------|
+| macOS | 12 (Monterey) | `SpecterChat-<version>-macos-universal.dmg` (Intel + Apple Silicon) |
+| Windows | 10 | `SpecterChat-<version>-windows-x64-setup.exe` |
+| Linux | Ubuntu 22.04 / Debian 12 | `SpecterChat-<version>-linux-x86_64.AppImage` or `…-linux-amd64.deb` |
 
 > **Note:** the binaries are not code-signed yet. On macOS, right-click the app
 > and choose **Open** (or run `xattr -dr com.apple.quarantine /Applications/SpecterChat.app`).
@@ -57,13 +57,22 @@ Prebuilt installers for each tagged release are on the
 
 ## Building from Source
 
-All platforms require the [Flutter SDK](https://docs.flutter.dev/get-started/install) **3.29+** (stable channel) with desktop support enabled. Then, on every platform:
+All platforms require the [Flutter SDK](https://docs.flutter.dev/get-started/install) **3.47+** (stable channel) with desktop support enabled. Then, on every platform:
 
 ```bash
 git clone https://github.com/YV17labs/specterchat.git
 cd specterchat
 flutter pub get
-dart run build_runner build --delete-conflicting-outputs
+dart run build_runner build
+```
+
+The Drift migration-test helpers are generated, not committed. Run this once
+after cloning, otherwise `flutter analyze` and `flutter test` fail on
+`test/database/migration_test.dart`:
+
+```bash
+dart run drift_dev schema generate --data-classes --companions \
+  drift_schemas/ test/database/generated_migrations/
 ```
 
 Official installers are produced by the tag-driven
@@ -77,6 +86,17 @@ Requirements: macOS 13+, Xcode 15+ with command-line tools.
 ```bash
 flutter run -d macos             # development
 flutter build macos --release    # → build/macos/Build/Products/Release/SpecterChat.app
+```
+
+The app targets macOS 12 (Monterey) and builds a universal binary
+(Intel + Apple Silicon).
+
+If you are updating an existing clone across a Flutter SDK upgrade, the build
+may stop with `The sandbox is not in sync with the Podfile.lock`. The CocoaPods
+state is stale; refresh it once:
+
+```bash
+(cd macos && pod install)
 ```
 
 ### Windows
@@ -141,7 +161,7 @@ Once running, the terminal offers interactive commands:
 | What you changed | What to do |
 |------------------|------------|
 | Widget, provider, service | Save the file, press `r` (or just Cmd+S in VS Code) |
-| Freezed model or Drift schema | Run `dart run build_runner build --delete-conflicting-outputs`, then press `R` |
+| Freezed model or Drift schema | Run `dart run build_runner build`, then press `R` |
 | `pubspec.yaml` (new dependency) | Run `flutter pub get`, then quit and re-run `flutter run -d macos` |
 | Native code (macOS/Swift) | Quit and re-run `flutter run -d macos` |
 
@@ -152,10 +172,14 @@ Once running, the terminal offers interactive commands:
 flutter pub get
 
 # Run code generation (after modifying models or database schema)
-dart run build_runner build --delete-conflicting-outputs
+dart run build_runner build
 
 # Watch mode — auto-regenerates on file changes (useful during model work)
-dart run build_runner watch --delete-conflicting-outputs
+dart run build_runner watch
+
+# Regenerate Drift migration-test helpers (required once after cloning)
+dart run drift_dev schema generate --data-classes --companions \
+  drift_schemas/ test/database/generated_migrations/
 
 # Run all tests
 flutter test
@@ -182,7 +206,7 @@ SpecterChat uses **Drift** (SQLite ORM) with a versioned migration strategy.
   3. Add a migration step in `onUpgrade` (and update `onCreate` if needed)
   4. Regenerate Drift code:
      ```bash
-     dart run build_runner build --delete-conflicting-outputs
+     dart run build_runner build
      ```
   5. Export the new schema snapshot:
      ```bash

@@ -1,7 +1,7 @@
 FROM mcr.microsoft.com/devcontainers/base:ubuntu-24.04
 
 ARG DEBIAN_FRONTEND=noninteractive
-ARG FLUTTER_VERSION=3.41.5
+ARG FLUTTER_VERSION=3.47.2
 
 # Install dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \

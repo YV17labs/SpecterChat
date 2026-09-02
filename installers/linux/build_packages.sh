@@ -47,7 +47,7 @@ chmod +x "$APPDIR/AppRun"
 TOOL="$ROOT/build/appimagetool-x86_64.AppImage"
 if [ ! -x "$TOOL" ]; then
   curl -fsSL -o "$TOOL" \
-    "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage"
+    "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
   chmod +x "$TOOL"
 fi
 # APPIMAGE_EXTRACT_AND_RUN avoids needing FUSE on CI runners.

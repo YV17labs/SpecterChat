@@ -4,8 +4,8 @@ publish_to: 'none'
 version: 0.4.1+5
 
 environment:
-  sdk: '>=3.7.0 <4.0.0'
-  flutter: '>=3.41.0'
+  sdk: '^3.8.0'
+  flutter: '>=3.47.0'
 
 dependencies:
   flutter:
@@ -27,7 +27,7 @@ dependencies:
   sqlite3_flutter_libs: ^0.6.0+eol
   # JSON serialization
   freezed_annotation: ^3.1.0
-  json_annotation: ^4.9.0
+  json_annotation: ^4.12.0
   # UUID generation
   uuid: ^4.5.3
   # Path utilities
@@ -44,7 +44,7 @@ dependencies:
   # Shared preferences (simple settings)
   shared_preferences: ^2.5.5
   # Image clipboard (mac/win/linux) — Flutter's native Clipboard is text-only
-  pasteboard: ^0.4.0
+  pasteboard: ^0.5.0
   # MCP (Model Context Protocol) client SDK
   mcp_dart: ^2.1.0
   # SVG rendering — MCP server icons can be image/svg+xml data URIs,
@@ -60,7 +60,7 @@ dev_dependencies:
   flutter_lints: ^6.0.0
   # Code generation
   build_runner: ^2.4.14
-  freezed: ^3.2.5
+  freezed: ^4.0.1
   json_serializable: ^6.13.0
   riverpod_generator: ^4.0.3
   drift_dev: ^2.31.0

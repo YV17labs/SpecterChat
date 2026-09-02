@@ -27,6 +27,11 @@ pubspec.lock
 macos/Flutter/ephemeral/
 macos/Pods/
 macos/Flutter/GeneratedPluginRegistrant.swift
+linux/flutter/ephemeral/
+windows/flutter/ephemeral/
+
+# Installer outputs (installers/windows, installers/linux)
+dist/
 
 # Drift generated files (schema dumps are kept, test helpers are generated)
 test/database/generated_migrations/

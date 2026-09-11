@@ -226,5 +226,40 @@ void main() {
       ]);
       expect(codec.toolsToApi(const []), isEmpty);
     });
+
+    test("inlines the schema's local refs before the model sees it", () {
+      const tools = [
+        McpToolInfo(
+          name: 'screen_shot',
+          description: 'Capture',
+          inputSchema: {
+            r'$defs': {
+              'RegionDto': {'type': 'object'},
+            },
+            'type': 'object',
+            'properties': {
+              'region': {
+                'anyOf': [
+                  {r'$ref': r'#/$defs/RegionDto'},
+                  {'type': 'null'},
+                ],
+              },
+            },
+          },
+        ),
+      ];
+      final function = codec.toolsToApi(tools).single['function'] as Map;
+      expect(function['parameters'], {
+        'type': 'object',
+        'properties': {
+          'region': {
+            'anyOf': [
+              {'type': 'object'},
+              {'type': 'null'},
+            ],
+          },
+        },
+      });
+    });
   });
 }

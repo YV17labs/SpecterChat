@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import '../../domain/models/app_settings.dart';
 import '../../domain/models/message.dart';
+import 'schema_inliner.dart';
 
 /// Translates domain messages and tools into the OpenAI chat/completions
 /// wire format. The only place in the app that knows what an
@@ -73,8 +74,9 @@ class OpenAiCodec {
     return messages;
   }
 
-  /// Tools in function-calling format, exactly as given — which tools the
-  /// model may see is decided upstream (`enabledToolsOf`).
+  /// Tools in function-calling format — which tools the model may see is
+  /// decided upstream (`enabledToolsOf`); the schema's local `$ref`s are
+  /// inlined here, see [inlineLocalRefs].
   List<Map<String, dynamic>> toolsToApi(List<McpToolInfo> tools) => [
     for (final t in tools)
       {
@@ -82,7 +84,7 @@ class OpenAiCodec {
         'function': {
           'name': t.name,
           'description': t.description,
-          'parameters': t.inputSchema,
+          'parameters': inlineLocalRefs(t.inputSchema),
         },
       },
   ];

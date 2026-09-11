@@ -66,7 +66,8 @@ class McpClient {
   Future<List<McpToolInfo>> listTools() async {
     // Bypass mcp_dart's typed Tool parsing because its JsonSchema wrapper
     // drops unknown JSON Schema fields like $defs/$ref/anyOf-refs, which
-    // some servers emit and the LLM backend requires to resolve the schema.
+    // some servers emit; the schema is kept verbatim so that the LLM codec
+    // can inline those refs itself (`inlineLocalRefs`).
     final raw = await _client.request<_RawResult>(
       const mcp.JsonRpcListToolsRequest(id: -1),
       _RawResult.new,

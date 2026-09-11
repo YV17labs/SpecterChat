@@ -14,6 +14,16 @@ changes.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Nested tool parameters reach the tool as objects.** A tool schema that
+  describes a nested type through `$defs` + `$ref` (rmcp, pydantic) is now
+  inlined before it is sent to the model. Some runtimes read a parameter's
+  type off the property without following the reference — Ollama's Qwen3
+  parser among them — and handed the tool a JSON string where it expected
+  an object. Runtimes that already resolved references (llama.cpp) see the
+  same schema, spelled out.
+
 ## [0.5.1] - 2026-09-11
 
 Maintenance release: no new features, no breaking changes. Existing

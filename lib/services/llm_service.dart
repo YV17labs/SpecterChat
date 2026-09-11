@@ -5,6 +5,7 @@ import 'package:dio/dio.dart';
 import 'package:logging/logging.dart';
 
 import '../models/app_settings.dart';
+import '../utils/app_info.dart';
 import 'i_llm_service.dart';
 
 export 'i_llm_service.dart' show
@@ -44,6 +45,7 @@ class LlmService implements ILlmService {
       baseUrl: settings.baseUrl,
       headers: {
         'Content-Type': 'application/json',
+        'User-Agent': AppInfo.userAgent,
         if (settings.apiKey.isNotEmpty)
           'Authorization': 'Bearer ${settings.apiKey}',
       },

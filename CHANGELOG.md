@@ -14,6 +14,18 @@ changes.
 
 ## [Unreleased]
 
+### Changed
+
+- **Outbound HTTP requests now identify the client.** Every request to the
+  LLM API and to MCP servers carries
+  `User-Agent: SpecterChat/<version> (<os>) Dart/<runtime>` instead of
+  Dart's default `Dart/3.x (dart:io)`, so server-side logs can tell
+  SpecterChat apart from other clients and which version is talking. A
+  `User-Agent` set in a server's custom headers still takes precedence.
+- **The MCP `clientInfo` reports the real app version.** It was pinned to
+  `0.1.0` regardless of the build; it now follows `pubspec.yaml`, like the
+  About section.
+
 ### Fixed
 
 - **A tool call no longer fails for good once the server has dropped the MCP

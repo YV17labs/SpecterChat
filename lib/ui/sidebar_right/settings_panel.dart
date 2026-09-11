@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../models/app_settings.dart';
@@ -10,8 +9,8 @@ import '../../models/conversation_settings.dart';
 import '../../providers/conversation_provider.dart';
 import '../../providers/effective_settings_provider.dart';
 import '../../providers/mcp_provider.dart';
-import '../../providers/package_info_provider.dart';
 import '../../providers/settings_provider.dart';
+import '../../utils/app_info.dart';
 import '../widgets/settings_fields.dart';
 import 'mcp_server_tile.dart';
 import 'mcp_servers_editor.dart';
@@ -473,18 +472,13 @@ class _AboutSection extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final muted = theme.colorScheme.onSurface.withValues(alpha: 0.6);
-    final info = ref.watch(packageInfoProvider);
-    final version = info.when(
-      data: (i) => 'Version ${i.version} (build ${i.buildNumber})',
-      loading: () => 'Version …',
-      error: (_, _) => 'Version unknown',
-    );
+    final version = 'Version ${AppInfo.versionLabel}';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'SpecterChat',
+          AppInfo.name,
           style: theme.textTheme.bodyMedium?.copyWith(
             fontWeight: FontWeight.w600,
           ),
@@ -499,7 +493,7 @@ class _AboutSection extends ConsumerWidget {
         Row(
           children: [
             TextButton(
-              onPressed: () => _showLicenses(context, info.value),
+              onPressed: () => _showLicenses(context),
               style: TextButton.styleFrom(
                 padding: const EdgeInsets.symmetric(horizontal: 8),
                 minimumSize: const Size(0, 32),
@@ -523,13 +517,11 @@ class _AboutSection extends ConsumerWidget {
     );
   }
 
-  void _showLicenses(BuildContext context, PackageInfo? info) {
+  void _showLicenses(BuildContext context) {
     showLicensePage(
       context: context,
-      applicationName: 'SpecterChat',
-      applicationVersion: info == null
-          ? null
-          : '${info.version} (build ${info.buildNumber})',
+      applicationName: AppInfo.name,
+      applicationVersion: AppInfo.versionLabel,
       applicationLegalese: '$_copyright\n$_licenseLine',
     );
   }

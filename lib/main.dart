@@ -6,6 +6,7 @@ import 'package:logging/logging.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'ui/app_shell.dart';
+import 'utils/app_info.dart';
 import 'utils/logging.dart';
 import 'utils/theme.dart';
 
@@ -39,13 +40,15 @@ void main() async {
     return true;
   };
 
-  await windowManager.ensureInitialized();
+  // AppInfo must be resolved before runApp: the User-Agent header, MCP
+  // clientInfo and About section all read it synchronously.
+  await Future.wait([AppInfo.init(), windowManager.ensureInitialized()]);
 
   const windowOptions = WindowOptions(
     size: Size(1400, 900),
     minimumSize: Size(1024, 640),
     center: true,
-    title: 'SpecterChat',
+    title: AppInfo.name,
     titleBarStyle: TitleBarStyle.normal,
   );
 
@@ -63,7 +66,7 @@ class SpecterApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'SpecterChat',
+      title: AppInfo.name,
       debugShowCheckedModeBanner: false,
       theme: SpecterTheme.darkTheme,
       home: const AppShell(),

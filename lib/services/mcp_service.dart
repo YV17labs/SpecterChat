@@ -1,9 +1,10 @@
-import 'package:http/http.dart' as http;
 import 'package:logging/logging.dart';
 import 'package:mcp_dart/mcp_dart.dart' as mcp;
 
 import '../models/app_settings.dart';
 import '../models/message.dart';
+import '../utils/app_info.dart';
+import '../utils/user_agent_client.dart';
 import 'i_mcp_service.dart';
 import 'mcp/streamable_http_transport.dart' as transport;
 
@@ -21,11 +22,6 @@ export 'i_mcp_service.dart' show
     McpResourceBlobContent;
 
 final _log = Logger('McpService');
-
-const _clientInfo = mcp.Implementation(
-  name: 'SpecterChat',
-  version: '0.1.0',
-);
 
 /// Client for a single MCP server using Streamable HTTP transport.
 ///
@@ -48,7 +44,9 @@ class McpClient {
     mcp.Transport? transport,
   })  : _headers = headers,
         _transport = transport,
-        _client = mcp.McpClient(_clientInfo);
+        _client = mcp.McpClient(
+          mcp.Implementation(name: AppInfo.name, version: AppInfo.version),
+        );
 
   bool get isConnected => _initialized;
   String? get instructions => _instructions;
@@ -62,7 +60,7 @@ class McpClient {
         requestInit: _headers.isEmpty
             ? null
             : {'headers': <String, dynamic>{..._headers}},
-        httpClient: http.Client(),
+        httpClient: UserAgentClient(),
       ),
     );
     await _client.connect(_transport!);

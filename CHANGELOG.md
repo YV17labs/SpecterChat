@@ -14,6 +14,8 @@ changes.
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-09-11
+
 ### Fixed
 
 - **Nested tool parameters reach the tool as objects.** A tool schema that

@@ -12,7 +12,25 @@ sealed class ChatSessionState {
   bool get isGenerating => this is SessionStreaming;
   int get promptTokens => 0;
   int get completionTokens => 0;
-  int get totalTokens => promptTokens + completionTokens;
+
+  // Transitions keep the token counters so the context gauge never resets
+  // between turns.
+  SessionIdle toIdle() => SessionIdle(
+    promptTokens: promptTokens,
+    completionTokens: completionTokens,
+  );
+
+  SessionStreaming toStreaming(String streamingMessageId) => SessionStreaming(
+    streamingMessageId: streamingMessageId,
+    promptTokens: promptTokens,
+    completionTokens: completionTokens,
+  );
+
+  SessionError toError(String message) => SessionError(
+    message: message,
+    promptTokens: promptTokens,
+    completionTokens: completionTokens,
+  );
 }
 
 /// The session is not currently streaming. `promptTokens` may still be
@@ -24,10 +42,7 @@ class SessionIdle extends ChatSessionState {
   @override
   final int completionTokens;
 
-  const SessionIdle({
-    this.promptTokens = 0,
-    this.completionTokens = 0,
-  });
+  const SessionIdle({this.promptTokens = 0, this.completionTokens = 0});
 }
 
 /// A stream from the LLM is currently in flight. `streamingMessageId` is

@@ -44,7 +44,7 @@
       }
     }
   },
-  "postCreateCommand": "cd /workspace && flutter pub get && dart run build_runner build && dart run drift_dev schema generate --data-classes --companions drift_schemas/ test/database/generated_migrations/",
+  "postCreateCommand": "cd /workspace && flutter pub get && dart run build_runner build && dart run drift_dev schema generate --data-classes --companions drift_schemas/ test/infrastructure/persistence/generated_migrations/",
   "remoteUser": "vscode",
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
   "workspaceFolder": "/workspace",

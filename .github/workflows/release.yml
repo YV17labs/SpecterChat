@@ -52,7 +52,7 @@ jobs:
       # migration_test.dart does not compile.
       - run: >
           dart run drift_dev schema generate --data-classes --companions
-          drift_schemas/ test/database/generated_migrations/
+          drift_schemas/ test/infrastructure/persistence/generated_migrations/
       - run: flutter analyze
       - run: flutter test
 

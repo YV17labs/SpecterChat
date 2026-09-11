@@ -5,10 +5,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:logging/logging.dart';
 import 'package:window_manager/window_manager.dart';
 
-import 'ui/app_shell.dart';
-import 'utils/app_info.dart';
-import 'utils/logging.dart';
-import 'utils/theme.dart';
+import 'core/app_info.dart';
+import 'core/logging.dart';
+import 'core/theme.dart';
+import 'presentation/ui/app_shell.dart';
 
 final _log = Logger('Main');
 

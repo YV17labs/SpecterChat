@@ -1,3 +1,4 @@
+// ignore_for_file: avoid_print — this is a manual CLI diagnostic, not app code.
 // Manual end-to-end check against a running MCP server: does a tool call
 // survive the server terminating the session? Not part of the suite.
 //
@@ -5,10 +6,10 @@
 import 'dart:io';
 
 import 'package:http/http.dart' as http;
-import 'package:specterchat/models/app_settings.dart';
-import 'package:specterchat/services/mcp/streamable_http_transport.dart'
+import 'package:specterchat/domain/models/app_settings.dart';
+import 'package:specterchat/infrastructure/mcp/mcp_service.dart';
+import 'package:specterchat/infrastructure/mcp/streamable_http_transport.dart'
     as transport;
-import 'package:specterchat/services/mcp_service.dart';
 
 Future<void> main(List<String> args) async {
   if (args.length != 2) {
@@ -24,22 +25,26 @@ Future<void> main(List<String> args) async {
 
   // Transports are injected so the script can read the negotiated session id.
   final made = <transport.StreamableHttpClientTransport>[];
-  final service = McpService(clientFactory: (cfg) {
-    final t = transport.StreamableHttpClientTransport(
-      Uri.parse(cfg.url),
-      opts: transport.StreamableHttpClientTransportOptions(
-        requestInit: {'headers': cfg.headers},
-        httpClient: http.Client(),
-      ),
-    );
-    made.add(t);
-    return McpClient(serverUrl: cfg.url, transport: t);
-  });
+  final service = McpService(
+    clientFactory: (cfg) {
+      final t = transport.StreamableHttpClientTransport(
+        Uri.parse(cfg.url),
+        opts: transport.StreamableHttpClientTransportOptions(
+          requestInit: {'headers': cfg.headers},
+          httpClient: http.Client(),
+        ),
+      );
+      made.add(t);
+      return McpClient(serverUrl: cfg.url, transport: t);
+    },
+  );
 
   final connected = await service.connect(server);
   final tool = connected.tools.first.name;
   final first = await service.callTool('live', tool, {});
-  print('1. $tool on session ${made.single.sessionId}: isError=${first.isError}');
+  print(
+    '1. $tool on session ${made.single.sessionId}: isError=${first.isError}',
+  );
 
   // Terminate the session server-side — same outcome as an idle eviction,
   // without waiting for it.
@@ -50,10 +55,12 @@ Future<void> main(List<String> args) async {
   print('2. DELETE session: HTTP ${del.statusCode}');
 
   final second = await service.callTool('live', tool, {});
-  print('3. $tool again: isError=${second.isError}, '
-      'clients made=${made.length}, '
-      'new session=${made.last.sessionId}, '
-      'connected=${service.isConnected('live')}');
+  print(
+    '3. $tool again: isError=${second.isError}, '
+    'clients made=${made.length}, '
+    'new session=${made.last.sessionId}, '
+    'connected=${service.isConnected('live')}',
+  );
 
   service.disconnectAll();
   exit(second.isError || made.length != 2 ? 1 : 0);

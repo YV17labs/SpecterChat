@@ -86,11 +86,11 @@ dart run build_runner build
 
 The Drift migration-test helpers are generated, not committed. Run this once
 after cloning, otherwise `flutter analyze` and `flutter test` fail on
-`test/database/migration_test.dart`:
+`test/infrastructure/persistence/migration_test.dart`:
 
 ```bash
 dart run drift_dev schema generate --data-classes --companions \
-  drift_schemas/ test/database/generated_migrations/
+  drift_schemas/ test/infrastructure/persistence/generated_migrations/
 ```
 
 Official installers are produced by the tag-driven
@@ -200,13 +200,13 @@ dart run build_runner watch
 
 # Regenerate Drift migration-test helpers (required once after cloning)
 dart run drift_dev schema generate --data-classes --companions \
-  drift_schemas/ test/database/generated_migrations/
+  drift_schemas/ test/infrastructure/persistence/generated_migrations/
 
 # Run all tests
 flutter test
 
 # Run database tests only
-flutter test test/database/
+flutter test test/infrastructure/persistence/
 
 # Build release (macOS)
 flutter build macos --release
@@ -222,7 +222,7 @@ SpecterChat uses **Drift** (SQLite ORM) with a versioned migration strategy.
 - Schema version history and migration steps are documented in `CLAUDE.md`
 - Foreign key constraints are enforced at runtime (`PRAGMA foreign_keys = ON`)
 - When modifying the database schema, follow **all** steps in order:
-  1. Update table definitions in `lib/database/database.dart`
+  1. Update table definitions in `lib/infrastructure/persistence/database.dart`
   2. Increment `schemaVersion`
   3. Add a migration step in `onUpgrade` (and update `onCreate` if needed)
   4. Regenerate Drift code:
@@ -231,17 +231,17 @@ SpecterChat uses **Drift** (SQLite ORM) with a versioned migration strategy.
      ```
   5. Export the new schema snapshot:
      ```bash
-     dart run drift_dev schema dump lib/database/database.dart drift_schemas/
+     dart run drift_dev schema dump lib/infrastructure/persistence/database.dart drift_schemas/
      ```
   6. Regenerate migration test helpers:
      ```bash
      dart run drift_dev schema generate --data-classes --companions \
-       drift_schemas/ test/database/generated_migrations/
+       drift_schemas/ test/infrastructure/persistence/generated_migrations/
      ```
-  7. Add a migration test in `test/database/migration_test.dart` (verify data preservation)
+  7. Add a migration test in `test/infrastructure/persistence/migration_test.dart` (verify data preservation)
   8. Run all database tests:
      ```bash
-     flutter test test/database/
+     flutter test test/infrastructure/persistence/
      ```
 
 ## Usage
@@ -254,7 +254,7 @@ SpecterChat uses **Drift** (SQLite ORM) with a versioned migration strategy.
 
 ## Acknowledgments
 
-The MCP Streamable HTTP transport in [`lib/services/mcp/streamable_http_transport.dart`](lib/services/mcp/streamable_http_transport.dart) is vendored from [mcp_dart](https://pub.dev/packages/mcp_dart) (MIT, © 2025 Jhin Lee) with minor changes. See the file header for details.
+The MCP Streamable HTTP transport in [`lib/infrastructure/mcp/streamable_http_transport.dart`](lib/infrastructure/mcp/streamable_http_transport.dart) is vendored from [mcp_dart](https://pub.dev/packages/mcp_dart) (MIT, © 2025 Jhin Lee) with minor changes. See the file header for details.
 
 ## License
 

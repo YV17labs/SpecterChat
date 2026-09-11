@@ -16,6 +16,22 @@ changes.
 
 ### Changed
 
+- **Codebase reorganised into explicit layers** — `core/`, `domain/`,
+  `application/`, `infrastructure/`, `presentation/` — with the dependency
+  direction enforced by an architecture test. Domain contracts now live
+  next to their consumers; the OpenAI wire format is confined to one codec;
+  `ChatSession` is split into an accumulator, a persister and the session
+  itself; every conversation action (create / fork / rename / delete) goes
+  through one controller; MCP runtime state (connection, tools, prompts)
+  is no longer stored in the persisted server config. No user-facing
+  behaviour change beyond the fixes below.
+- **Stricter static analysis.** `strict-casts`, `strict-inference`,
+  `strict-raw-types` and ~50 additional lint rules; the whole tree is
+  `dart format`ted.
+- **Test suite grew from 164 to 254 tests**, now covering the streaming
+  pipeline end to end (`ChatSession`, `ChatSessionManager`,
+  `ToolExecutor`), providers and the main widgets.
+
 - **Outbound HTTP requests now identify the client.** Every request to the
   LLM API and to MCP servers carries
   `User-Agent: SpecterChat/<version> (<os>) Dart/<runtime>` instead of
@@ -28,6 +44,25 @@ changes.
 
 ### Fixed
 
+- **Stop really stops.** Pressing Stop while the model had already emitted a
+  complete tool call used to execute that tool and start another model
+  turn: the transport reported a cancelled request the same way as a
+  finished one. Cancellation is now its own stream event; a stopped turn
+  keeps its partial text and never runs tools or retries.
+- **Deleting a conversation tears down its streaming session first**, so an
+  in-flight stream can no longer keep writing to rows that are gone.
+- **Message ids are strictly monotonic.** `ORDER BY id` is the canonical
+  message order, but UUIDv7 ids minted within the same millisecond (parallel
+  tool results, a fast local model) carried random low bits and could sort
+  out of creation order. The generator now uses the 12-bit `rand_a` field
+  as an intra-millisecond counter.
+- **A conversation created while the session cap was reached could be
+  handed to the UI already disposed** — the LRU pass no longer evicts the
+  session it is creating.
+- **Conversations created within the same second now keep a stable order**
+  in the sidebar (`updated_at` has one-second precision; ties break on id).
+- **Per-conversation settings edits are no longer lost when switching
+  conversations** during the 500 ms save debounce.
 - **A tool call no longer fails for good once the server has dropped the MCP
   session.** Streamable HTTP servers evict idle sessions (rmcp does after
   5 minutes without a request) and answer every later call carrying the old

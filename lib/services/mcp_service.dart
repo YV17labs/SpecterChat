@@ -150,6 +150,9 @@ class McpClient {
       );
     } on mcp.McpError catch (e) {
       throw McpException(e.message, code: e.code);
+    } on transport.SessionNotFoundError catch (e) {
+      _initialized = false;
+      throw McpSessionLostException(e.message);
     }
   }
 
@@ -163,6 +166,9 @@ class McpClient {
       );
     } on mcp.McpError catch (e) {
       throw McpException(e.message, code: e.code);
+    } on transport.SessionNotFoundError catch (e) {
+      _initialized = false;
+      throw McpSessionLostException(e.message);
     }
   }
 
@@ -178,6 +184,9 @@ class McpClient {
       );
     } on mcp.McpError catch (e) {
       throw McpException(e.message, code: e.code);
+    } on transport.SessionNotFoundError catch (e) {
+      _initialized = false;
+      throw McpSessionLostException(e.message);
     }
   }
 
@@ -277,6 +286,7 @@ typedef McpClientFactory = McpClient Function(McpServerConfig config);
 /// Accepts an optional [McpClientFactory] for testability.
 class McpService implements IMcpService {
   final Map<String, McpClient> _clients = {};
+  final Map<String, McpServerConfig> _configs = {};
   final McpClientFactory _clientFactory;
 
   McpService({McpClientFactory? clientFactory})
@@ -300,6 +310,7 @@ class McpService implements IMcpService {
         client.listResourceTemplates(),
       ]);
       _clients[config.id] = client;
+      _configs[config.id] = config;
       return McpConnectResult(
         tools: results[0] as List<McpToolInfo>,
         prompts: results[1] as List<McpPrompt>,
@@ -319,6 +330,7 @@ class McpService implements IMcpService {
   void disconnect(String serverId) {
     _clients[serverId]?.disconnect();
     _clients.remove(serverId);
+    _configs.remove(serverId);
   }
 
   @override
@@ -327,6 +339,7 @@ class McpService implements IMcpService {
       client.disconnect();
     }
     _clients.clear();
+    _configs.clear();
   }
 
   @override
@@ -340,11 +353,7 @@ class McpService implements IMcpService {
     String toolName,
     Map<String, dynamic> arguments,
   ) async {
-    final client = _clients[serverId];
-    if (client == null) {
-      throw McpException('Server $serverId not connected');
-    }
-    return client.callTool(toolName, arguments);
+    return _withSession(serverId, (c) => c.callTool(toolName, arguments));
   }
 
   @override
@@ -353,20 +362,38 @@ class McpService implements IMcpService {
     String name, {
     Map<String, String> arguments = const {},
   }) async {
-    final client = _clients[serverId];
-    if (client == null) {
-      throw McpException('Server $serverId not connected');
-    }
-    return client.getPrompt(name, arguments: arguments);
+    return _withSession(serverId, (c) => c.getPrompt(name, arguments: arguments));
   }
 
   @override
   Future<McpResourceResult> readResource(String serverId, String uri) async {
+    return _withSession(serverId, (c) => c.readResource(uri));
+  }
+
+  /// Run [op] against [serverId]'s client. If the server has dropped the
+  /// session in the meantime (idle eviction, restart), open a new one and
+  /// run [op] once more — the tool list is unchanged, so the provider's
+  /// view of the server stays valid and the caller never sees the gap.
+  Future<T> _withSession<T>(
+    String serverId,
+    Future<T> Function(McpClient client) op,
+  ) async {
     final client = _clients[serverId];
     if (client == null) {
       throw McpException('Server $serverId not connected');
     }
-    return client.readResource(uri);
+    try {
+      return await op(client);
+    } on McpSessionLostException catch (e) {
+      final config = _configs[serverId];
+      if (config == null) rethrow;
+      _log.info('MCP session lost on ${config.url}, re-initializing: $e');
+      client.disconnect();
+      final fresh = _clientFactory(config);
+      await fresh.initialize();
+      _clients[serverId] = fresh;
+      return await op(fresh);
+    }
   }
 
   /// Convert MCP tools to OpenAI function-calling format.
@@ -384,6 +411,13 @@ class McpService implements IMcpService {
             })
         .toList();
   }
+}
+
+/// The server no longer knows our session; the request was never handled.
+/// [McpService] recovers from this once per call, so it only reaches a
+/// caller when re-initializing failed too.
+class McpSessionLostException extends McpException {
+  McpSessionLostException(super.message) : super(code: 404);
 }
 
 class McpException implements Exception {

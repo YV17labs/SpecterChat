@@ -3,6 +3,46 @@ import 'package:mcp_dart/mcp_dart.dart' as mcp;
 import 'package:specterchat/models/app_settings.dart';
 import 'package:specterchat/services/mcp_service.dart';
 
+const _server = McpServerConfig(
+  id: 'srv-1',
+  name: 'ghostdesk',
+  url: 'http://localhost:3001/mcp',
+);
+
+/// A client whose session the server drops after [callsBeforeLoss] calls.
+/// Every instance the factory hands out is recorded, so a test can tell a
+/// silent re-initialize from a retry on the same dead client.
+class _SessionLosingClient extends McpClient {
+  final int callsBeforeLoss;
+  final List<String> calls = [];
+  bool initialized = false;
+  bool disconnected = false;
+
+  _SessionLosingClient(this.callsBeforeLoss) : super(serverUrl: _server.url);
+
+  @override
+  bool get isConnected => initialized && !disconnected;
+
+  @override
+  Future<void> initialize() async => initialized = true;
+
+  @override
+  Future<List<McpToolInfo>> listTools() async => const [];
+
+  @override
+  Future<McpToolResult> callTool(
+      String name, Map<String, dynamic> arguments) async {
+    calls.add(name);
+    if (calls.length > callsBeforeLoss) {
+      throw McpSessionLostException('Session dead-session no longer exists');
+    }
+    return McpToolResult(content: [McpTextContent('ok from $name')]);
+  }
+
+  @override
+  void disconnect() => disconnected = true;
+}
+
 void main() {
   group('contentFromMcp', () {
     test('converts TextContent', () {
@@ -76,6 +116,48 @@ void main() {
       final service = McpService();
       service.disconnectAll();
       // Should not throw
+    });
+
+    group('when the server drops the session', () {
+      test('callTool re-initializes once and replays the call', () async {
+        final made = <_SessionLosingClient>[];
+        final service = McpService(clientFactory: (_) {
+          // The first client survives exactly one call; its replacement
+          // never loses its session.
+          final client = _SessionLosingClient(made.isEmpty ? 1 : 1 << 30);
+          made.add(client);
+          return client;
+        });
+        await service.connect(_server);
+        await service.callTool('srv-1', 'screen_shot', {});
+
+        final result = await service.callTool('srv-1', 'app_list', {});
+
+        expect((result.content.single as McpTextContent).text,
+            'ok from app_list');
+        expect(made, hasLength(2), reason: 'one fresh client, no more');
+        expect(made.first.calls, ['screen_shot', 'app_list']);
+        expect(made.first.disconnected, isTrue);
+        expect(made.last.calls, ['app_list'], reason: 'replayed, not lost');
+        expect(service.isConnected('srv-1'), isTrue);
+      });
+
+      test('a session lost right after re-initializing is not retried again',
+          () async {
+        final made = <_SessionLosingClient>[];
+        final service = McpService(clientFactory: (_) {
+          final client = _SessionLosingClient(0);
+          made.add(client);
+          return client;
+        });
+        await service.connect(_server);
+
+        await expectLater(
+          service.callTool('srv-1', 'screen_shot', {}),
+          throwsA(isA<McpSessionLostException>()),
+        );
+        expect(made, hasLength(2), reason: 'exactly one recovery attempt');
+      });
     });
 
     group('toolsToOpenAiFormat', () {

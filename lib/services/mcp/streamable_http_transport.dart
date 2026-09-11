@@ -7,16 +7,21 @@
 //   to deal in the Software without restriction. The full MIT license text is
 //   available at https://github.com/leehack/mcp_dart/blob/main/LICENSE
 //
-// Adapted with two small changes:
+// Adapted with three small changes:
 //   1. The constructor accepts an injected `http.Client` (upstream hardcodes
 //      `http.Client()` with no override).
 //   2. The GET (SSE open) and POST (JSON-RPC) requests are built with
 //      `persistentConnection = false`, so every MCP call does a fresh
 //      TCP/TLS handshake rather than reusing a pooled socket that the
 //      server may have already closed.
+//   3. An HTTP 404 on a request that carried `mcp-session-id` means the
+//      server terminated the session (idle eviction, restart). The spec says
+//      the client MUST then start a new session, so the transport forgets the
+//      id and raises [SessionNotFoundError] instead of a generic error — and
+//      the SSE reconnection loop stops rather than re-offering the dead id.
 //
 // Keep this file diffable against the upstream source; if you upgrade
-// mcp_dart, re-vendor and re-apply both changes.
+// mcp_dart, re-vendor and re-apply all three changes.
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
@@ -40,6 +45,14 @@ class StreamableHttpError extends Error {
 
   @override
   String toString() => 'Streamable HTTP error: $message';
+}
+
+/// The server answered 404 to a request carrying a session id: the session
+/// was terminated on its side. Nothing sent with that id can succeed again;
+/// the only recovery is a fresh `initialize`.
+class SessionNotFoundError extends StreamableHttpError {
+  SessionNotFoundError(String sessionId, String body)
+      : super(404, 'Session $sessionId no longer exists on the server: $body');
 }
 
 class StartSseOptions {
@@ -197,6 +210,12 @@ class StreamableHttpClientTransport
           return;
         }
 
+        if (response.statusCode == 404 && _sessionId != null) {
+          throw _sessionNotFound(
+            await response.stream.transform(utf8.decoder).join(),
+          );
+        }
+
         throw StreamableHttpError(
           response.statusCode,
           'Failed to open SSE stream: ${response.reasonPhrase}',
@@ -243,6 +262,12 @@ class StreamableHttpClientTransport
 
     Future.delayed(Duration(milliseconds: delay), () {
       _startOrAuthSse(options).catchError((error) {
+        // The session is gone, not the network: retrying with the same id
+        // can only produce the same 404. The next POST re-initializes.
+        if (error is SessionNotFoundError) {
+          return null;
+        }
+
         final errorMessage =
             error is Error ? error.toString() : error.toString();
         onerror?.call(
@@ -254,6 +279,14 @@ class StreamableHttpClientTransport
         return null;
       });
     });
+  }
+
+  /// Forget the id the server just refused, so nothing else re-offers it,
+  /// and name it in the error so the log says which session was lost.
+  SessionNotFoundError _sessionNotFound(String body) {
+    final lost = _sessionId!;
+    _sessionId = null;
+    return SessionNotFoundError(lost, body);
   }
 
   void _handleSseStream(http.StreamedResponse stream, StartSseOptions options) {
@@ -492,6 +525,11 @@ class StreamableHttpClientTransport
         }
 
         final text = await response.stream.transform(utf8.decoder).join();
+
+        if (response.statusCode == 404 && _sessionId != null) {
+          throw _sessionNotFound(text);
+        }
+
         throw McpError(
           0,
           'Error POSTing to endpoint (HTTP ${response.statusCode}): $text',

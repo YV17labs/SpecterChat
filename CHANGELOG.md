@@ -12,6 +12,21 @@ changes.
 > and no binaries were distributed before `0.5.0`. Dates are the dates of the
 > version bump.
 
+## [Unreleased]
+
+### Fixed
+
+- **A tool call no longer fails for good once the server has dropped the MCP
+  session.** Streamable HTTP servers evict idle sessions (rmcp does after
+  5 minutes without a request) and answer every later call carrying the old
+  `mcp-session-id` with `404 Session not found`. The client used to surface
+  that as a generic `Error POSTing to endpoint (HTTP 404)` to the model,
+  retry the dead id on its SSE stream, and stay marked connected; the only
+  way out was a manual reconnect. The transport now treats that 404 for what
+  the spec says it is — the session is gone — forgets the id and stops the
+  reconnection loop, and `McpService` opens a new session and replays the
+  call once, so a pause in the conversation is invisible to the model.
+
 ## [0.5.0] - 2026-09-01
 
 First release with prebuilt installers for macOS, Windows, and Linux.

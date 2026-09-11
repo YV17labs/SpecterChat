@@ -14,6 +14,11 @@ changes.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-09-11
+
+Maintenance release: no new features, no breaking changes. Existing
+settings and chat history are read as-is.
+
 ### Changed
 
 - **Codebase reorganised into explicit layers** — `core/`, `domain/`,

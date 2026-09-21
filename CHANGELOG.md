@@ -67,6 +67,11 @@ unaffected. Existing settings and chat history are read as-is.
   normalisation, rendering, file dialogs and the clipboard; widgets no
   longer touch platform plugins directly. Enforced by the architecture
   test. Test suite grew from 254 to 406.
+- **Dependencies brought up to date.** Markdown is rendered by
+  `flutter_markdown_plus`, the maintained successor of the discontinued
+  `flutter_markdown` (same rendering); `flutter_highlight`, `highlight` and
+  `collection` were declared but never used and are gone. Every other
+  dependency is at its latest version.
 
 ### Fixed
 

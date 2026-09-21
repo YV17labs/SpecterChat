@@ -18,10 +18,7 @@ dependencies:
   # http: used by mcp_dart and our vendored MCP transport.
   http: ^1.2.0
   # Markdown rendering
-  flutter_markdown: ^0.7.7
-  # Syntax highlighting for code blocks
-  flutter_highlight: ^0.7.0
-  highlight: ^0.7.0
+  flutter_markdown_plus: ^1.0.12
   # SQLite (drift)
   drift: ^2.31.0
   sqlite3_flutter_libs: ^0.6.0+eol
@@ -33,8 +30,6 @@ dependencies:
   # Path utilities
   path_provider: ^2.1.5
   path: ^1.9.1
-  # Collection utilities
-  collection: ^1.19.1
   # URL launcher
   url_launcher: ^6.3.2
   # Window management

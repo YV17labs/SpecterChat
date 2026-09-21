@@ -10,7 +10,7 @@ Desktop only — **macOS first**, then Windows and Linux.
 - **HTTP**: Dio
 - **Database**: Drift (SQLite)
 - **Models**: Freezed + json_serializable
-- **Markdown**: flutter_markdown
+- **Markdown**: flutter_markdown_plus
 
 ## Architecture
 

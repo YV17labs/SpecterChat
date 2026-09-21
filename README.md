@@ -57,7 +57,7 @@ Image models are discovered from the server's `GET /models` (entries tagged
 
 - **3-panel layout** — conversation list, chat area, and settings sidebar
 - **Streaming responses** with real-time token display and stop button
-- **Markdown rendering** with syntax-highlighted code blocks
+- **Markdown rendering** with monospace code blocks
 - **Thinking/reasoning display** — collapsible chain-of-thought blocks
 - **MCP integration** via Streamable HTTP — connect to multiple servers, discover tools, execute them
 - **Image handling** — MCP `ImageContent` displayed inline and forwarded to the model

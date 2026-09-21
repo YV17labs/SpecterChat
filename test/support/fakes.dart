@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:specterchat/application/chat/chat_session_deps.dart';
+import 'package:specterchat/application/chat/message_writes.dart';
 import 'package:specterchat/application/llm_hooks/llm_hook_registry.dart';
 import 'package:specterchat/application/mcp/active_mcp_server.dart';
 import 'package:specterchat/core/id_gen.dart';
@@ -26,7 +27,8 @@ import 'package:specterchat/domain/services/i_image_io.dart';
 import 'package:specterchat/domain/services/i_image_normalizer.dart';
 import 'package:specterchat/domain/services/i_llm_service.dart';
 import 'package:specterchat/domain/services/i_mcp_service.dart';
-import 'package:specterchat/infrastructure/images/exif_photo_metadata_codec.dart';
+
+import 'exif_fixtures.dart';
 
 /// In-memory [IConversationRepository].
 class InMemoryConversationRepository implements IConversationRepository {
@@ -164,8 +166,24 @@ class InMemoryMessageRepository implements IMessageRepository {
   Future<T> runInTransaction<T>(Future<T> Function() action) => action();
 }
 
+/// In-memory [IAttachmentRepository]. Like the Drift one, never hands out
+/// photo metadata as an image. Records which message owns each blob.
 class InMemoryAttachmentRepository implements IAttachmentRepository {
   final Map<String, ImageBytes> rows = {};
+  final Map<String, String> owners = {};
+  int metadataLoads = 0;
+
+  /// The photo metadata attachments, decoded.
+  Map<String, PhotoMetadataBlocks> get photoMetadata => {
+    for (final MapEntry(:key, :value) in rows.entries)
+      if (value.mimeType == PhotoMetadataBlocks.mimeType)
+        key: PhotoMetadataBlocks.decode(value.bytes)!,
+  };
+
+  ImageBytes? _image(String id) => switch (rows[id]) {
+    final row? when row.mimeType != PhotoMetadataBlocks.mimeType => row,
+    _ => null,
+  };
 
   @override
   Future<String> storeBytes({
@@ -176,17 +194,37 @@ class InMemoryAttachmentRepository implements IAttachmentRepository {
   }) async {
     final id = attachmentId ?? generateId();
     rows[id] = (bytes: bytes, mimeType: mimeType);
+    owners[id] = messageId;
     return id;
   }
 
   @override
+  Future<bool> copy({
+    required String sourceId,
+    required String attachmentId,
+    required String messageId,
+  }) async {
+    final source = rows[sourceId];
+    if (source == null) return false;
+    rows[attachmentId] = source;
+    owners[attachmentId] = messageId;
+    return true;
+  }
+
+  @override
   Future<Uint8List?> loadBytes(String attachmentId) async =>
-      rows[attachmentId]?.bytes;
+      _image(attachmentId)?.bytes;
 
   @override
   Future<ImageBytesMap> loadMany(Iterable<String> attachmentIds) async => {
-    for (final id in attachmentIds) id: ?rows[id],
+    for (final id in attachmentIds) id: ?_image(id),
   };
+
+  @override
+  Future<PhotoMetadataBlocks?> loadPhotoMetadata(String attachmentId) async {
+    metadataLoads++;
+    return photoMetadata[attachmentId];
+  }
 }
 
 class InMemorySettingsStore implements ISettingsStore {
@@ -266,6 +304,10 @@ class FakeImageIo implements IImageIo {
   /// What the clipboard holds, if anything.
   Uint8List? clipboardImage;
 
+  /// The user cancels the next save dialogs.
+  bool cancelSave = false;
+  int saveDialogs = 0;
+
   final List<ImageBytes> saved = [];
   final List<Uint8List> copied = [];
 
@@ -277,8 +319,13 @@ class FakeImageIo implements IImageIo {
   Future<List<ImageFileSource>> pickImages() async => picked;
 
   @override
-  Future<bool> saveImage(ImageBytes image) async {
-    saved.add(image);
+  Future<bool> saveImage({
+    required String mimeType,
+    required Future<Uint8List> Function() contents,
+  }) async {
+    saveDialogs++;
+    if (cancelSave) return false;
+    saved.add((bytes: await contents(), mimeType: mimeType));
     return true;
   }
 
@@ -289,9 +336,10 @@ class FakeImageIo implements IImageIo {
   Future<void> writeClipboardImage(Uint8List bytes) async => copied.add(bytes);
 }
 
-/// What the iPhone photo of the fixtures says about itself.
-const kPhotoMetadata = PhotoMetadata(
-  camera: CameraInfo(
+/// What the iPhone photo of the fixtures ([fakeJpegPhoto]) shows about
+/// itself.
+final kPhotoSummary = PhotoSummary(
+  camera: const CameraInfo(
     make: 'Apple',
     model: 'iPhone 17',
     focalLength: 5.96,
@@ -299,22 +347,32 @@ const kPhotoMetadata = PhotoMetadata(
     exposureTime: 1 / 4329,
     iso: 40,
   ),
-  captured: CaptureTime(local: '2026:07:05 19:41:50', offset: '+02:00'),
-  location: GeoLocation(latitude: 42.56858, longitude: 8.75145),
+  captured: CaptureTime(
+    local: DateTime(2026, 7, 5, 19, 41, 50),
+    offset: '+02:00',
+  ),
+  location: const GeoLocation(latitude: 42.56858, longitude: 8.75145),
 );
 
-/// A JPEG carrying [kPhotoMetadata] as EXIF: well-formed for the MIME
-/// sniffer and the metadata codec, no decodable pixels. Pair with
-/// [PassThroughImageNormalizer].
-Uint8List fakeJpegPhoto() {
-  final bare = Uint8List.fromList([
-    0xFF, 0xD8, // SOI
-    0xFF, 0xDB, 0x00, 0x03, 0x01, // DQT
-    0xFF, 0xDA, 0x00, 0x02, 0x00, // SOS + one byte of scan
-    0xFF, 0xD9, // EOI
-  ]);
-  return const ExifPhotoMetadataCodec().write(bare, kPhotoMetadata)!;
-}
+/// A JPEG carrying an iPhone's EXIF ([iphoneTiff], shown as
+/// [kPhotoSummary]): well-formed for the MIME sniffer and the metadata
+/// codec, no decodable pixels. Pair with [PassThroughImageNormalizer].
+Uint8List fakeJpegPhoto() => jpeg(exif: iphoneTiff());
+
+/// Photo metadata blocks, for tests that only need some.
+const kPhotoBlocks = PhotoMetadataBlocks(exif: 'TU0AKg==', xmp: '<x:xmpmeta/>');
+
+/// Stores [blocks] as the photo metadata attachment [id] of [messageId],
+/// the way a sent message does.
+Future<void> storePhotoMetadata(
+  IAttachmentRepository attachments,
+  String id, {
+  String messageId = 'm',
+  PhotoMetadataBlocks blocks = kPhotoBlocks,
+}) => attachments.store(
+  PendingAttachment.photoMetadata(attachmentId: id, blocks: blocks),
+  messageId: messageId,
+);
 
 /// A minimal valid PNG header — enough for the MIME sniffer, not a
 /// decodable image. Pair with [PassThroughImageNormalizer].

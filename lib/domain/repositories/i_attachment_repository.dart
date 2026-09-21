@@ -1,8 +1,10 @@
 import 'dart:typed_data';
 
 import '../models/message.dart' show ImageBytesMap;
+import '../models/photo_metadata.dart' show PhotoMetadataBlocks;
 
-/// Persistence contract for binary attachments (images).
+/// Persistence contract for binary attachments: images, and the photo
+/// metadata that goes with them ([PhotoMetadataBlocks.mimeType]).
 ///
 /// Attachments live in their own table so `Message.content` JSON can
 /// stay small — it carries only attachment ids, never bytes. Bytes are
@@ -21,13 +23,28 @@ abstract interface class IAttachmentRepository {
     required String mimeType,
   });
 
-  /// Load bytes for a single attachment. Returns `null` if the
-  /// attachment has been deleted (e.g. its owning message was removed).
+  /// A copy of the attachment [sourceId] under [attachmentId], bound to
+  /// [messageId]: it lives as long as that message, whatever becomes of
+  /// the source's. `false` when [sourceId] does not exist (any more).
+  Future<bool> copy({
+    required String sourceId,
+    required String attachmentId,
+    required String messageId,
+  });
+
+  /// Load bytes for a single image. Returns `null` if the attachment has
+  /// been deleted (e.g. its owning message was removed) or holds photo
+  /// metadata, which is never drawn.
   Future<Uint8List?> loadBytes(String attachmentId);
 
-  /// Bulk-load bytes for a set of attachment ids, used by the chat
-  /// pipeline right before serialising an API request. Missing ids are
-  /// silently omitted from the result rather than throwing — callers
-  /// already handle partial resolution.
+  /// Bulk-load bytes for a set of image ids, used by the chat pipeline
+  /// right before serialising an API request. Missing ids — and photo
+  /// metadata, which never goes to the model — are silently omitted from
+  /// the result rather than throwing; callers already handle partial
+  /// resolution.
   Future<ImageBytesMap> loadMany(Iterable<String> attachmentIds);
+
+  /// The photo metadata stored under [attachmentId], or `null` when there
+  /// is no such attachment.
+  Future<PhotoMetadataBlocks?> loadPhotoMetadata(String attachmentId);
 }

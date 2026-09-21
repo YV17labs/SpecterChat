@@ -2,6 +2,7 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:logging/logging.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -41,8 +42,13 @@ void main() async {
   };
 
   // AppInfo must be resolved before runApp: the User-Agent header, MCP
-  // clientInfo and About section all read it synchronously.
-  await Future.wait([AppInfo.init(), windowManager.ensureInitialized()]);
+  // clientInfo and About section all read it synchronously. So are the
+  // date formats of every locale (photo metadata tooltips).
+  await Future.wait([
+    AppInfo.init(),
+    windowManager.ensureInitialized(),
+    initializeDateFormatting(),
+  ]);
 
   const windowOptions = WindowOptions(
     size: Size(1400, 900),

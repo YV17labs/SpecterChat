@@ -4,7 +4,6 @@ import 'package:file_selector/file_selector.dart';
 import 'package:pasteboard/pasteboard.dart';
 
 import '../../core/image_mime.dart';
-import '../../domain/models/message.dart' show ImageBytes;
 import '../../domain/services/i_image_io.dart';
 
 /// [IImageIo] on the desktop plugins: `file_selector` for the dialogs,
@@ -31,8 +30,11 @@ class DesktopImageIo implements IImageIo {
   }
 
   @override
-  Future<bool> saveImage(ImageBytes image) async {
-    final ext = extensionForMime(image.mimeType);
+  Future<bool> saveImage({
+    required String mimeType,
+    required Future<Uint8List> Function() contents,
+  }) async {
+    final ext = extensionForMime(mimeType);
     final location = await getSaveLocation(
       suggestedName: 'image.$ext',
       acceptedTypeGroups: [
@@ -41,8 +43,8 @@ class DesktopImageIo implements IImageIo {
     );
     if (location == null) return false;
     await XFile.fromData(
-      image.bytes,
-      mimeType: image.mimeType,
+      await contents(),
+      mimeType: mimeType,
     ).saveTo(location.path);
     return true;
   }

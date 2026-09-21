@@ -1,30 +1,25 @@
-import 'dart:typed_data';
-
-import '../../domain/models/photo_metadata.dart';
+import '../../domain/models/message.dart' show DescribedImage;
 import 'drawing_session.dart' show AnnotationResult;
 
 /// Upper bound on images attached to one message, counting the extra
 /// copies an annotation may add (see [PendingImage.outgoingCount]).
 const int kMaxPendingImages = 10;
 
-/// An image the user attached to the message being composed. [bytes] are
-/// the validated/downscaled original (see `IImageNormalizer`); what the
-/// editor produced, if anything, is kept separately in [annotation] and
-/// only rendered onto a copy when the message is sent
+/// An image the user attached to the message being composed. [image] is
+/// the validated/downscaled original (see `IImageNormalizer`) with what is
+/// known about it: the photo metadata read from the file before the
+/// normaliser may have re-encoded it away — or, for an image of the
+/// conversation reused, its metadata and how a model made it. What the
+/// editor produced, if anything, is kept separately
+/// in [annotation] and only rendered onto a copy when the message is sent
 /// (`expandPendingImages`), so the editor can be reopened on the untouched
 /// original.
 class PendingImage {
   final String id;
-  final Uint8List bytes;
-  final String mimeType;
 
   /// Display name (file name, or a synthetic one for pasted images).
   final String name;
-
-  /// What the file said about the photo, read before the normaliser may
-  /// have re-encoded it away — or carried over from the image being
-  /// reused.
-  final PhotoMetadata? metadata;
+  final DescribedImage image;
 
   /// The editor's result — outlines / mask strokes plus which extra images
   /// to send with the annotated copy. Never holds an empty annotation:
@@ -33,10 +28,8 @@ class PendingImage {
 
   const PendingImage({
     required this.id,
-    required this.bytes,
-    required this.mimeType,
     required this.name,
-    this.metadata,
+    required this.image,
     this.annotation,
   });
 
@@ -51,10 +44,8 @@ class PendingImage {
   /// The same image with [result] applied; an empty annotation clears it.
   PendingImage withAnnotation(AnnotationResult result) => PendingImage(
     id: id,
-    bytes: bytes,
-    mimeType: mimeType,
     name: name,
-    metadata: metadata,
+    image: image,
     annotation: result.annotation.isEmpty ? null : result,
   );
 }

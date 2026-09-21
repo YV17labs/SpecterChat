@@ -5,7 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../application/images/drawing_session.dart' show AnnotationResult;
 import '../../application/images/pending_image.dart';
 import '../../core/id_gen.dart';
-import '../../domain/models/photo_metadata.dart';
+import '../../domain/models/message.dart' show DescribedImage;
 import 'image_providers.dart';
 
 /// Outcome of [ComposerNotifier.attach]. The widget turns refusals into
@@ -64,16 +64,18 @@ class ComposerNotifier extends Notifier<List<PendingImage>> {
 
   /// Validate, downscale and queue [bytes] under [name]. The photo's
   /// metadata is read from [bytes] before the normaliser may re-encode it
-  /// away; an image reused from the conversation passes its own
-  /// [metadata] instead (its stored bytes carry none).
+  /// away — unless they are those of [reused], an image of the
+  /// conversation: what its block knows comes along instead (its stored
+  /// bytes are not the photo's file).
   Future<AttachResult> attach(
     Uint8List bytes, {
     required String name,
-    PhotoMetadata? metadata,
+    DescribedImage? reused,
   }) async {
     if (freeSlots <= 0) return const NoRoomForImage();
-    final carried =
-        metadata ?? ref.read(photoMetadataCodecProvider).read(bytes);
+    final metadata = reused == null
+        ? ref.read(photoMetadataCodecProvider).read(bytes)
+        : reused.metadata;
     final prepared = await ref.read(imageNormalizerProvider).normalize(bytes);
     if (!ref.mounted) return const NoRoomForImage();
     if (prepared == null) return const UnsupportedImage();
@@ -84,10 +86,13 @@ class ComposerNotifier extends Notifier<List<PendingImage>> {
       ...state,
       PendingImage(
         id: id,
-        bytes: prepared.bytes,
-        mimeType: prepared.mimeType,
         name: name,
-        metadata: carried,
+        image: DescribedImage(
+          bytes: prepared.bytes,
+          mimeType: prepared.mimeType,
+          metadata: metadata,
+          aiOrigin: reused?.aiOrigin,
+        ),
       ),
     ];
     return Attached(id);

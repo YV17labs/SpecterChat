@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:specterchat/application/images/pending_image.dart';
 import 'package:specterchat/domain/models/annotation.dart';
 import 'package:specterchat/domain/models/message.dart';
+import 'package:specterchat/domain/models/photo_metadata.dart';
 import 'package:specterchat/domain/services/i_llm_service.dart';
 import 'package:specterchat/presentation/providers/composer_provider.dart';
 import 'package:specterchat/presentation/providers/conversation_provider.dart';
@@ -243,20 +244,38 @@ void main() {
   ) async {
     final (harness, container, id) = await _pump(tester);
     // A real PNG so the editor can decode it.
-    final png = await tester.runAsync(() => pngFixture(8, 8));
+    final png = (await tester.runAsync(() => pngFixture(8, 8)))!;
+    await storePhotoMetadata(harness.attachments, 'meta');
     // The editor decodes the image on the engine (real async), so the
     // request runs under `runAsync` with a real delay before pumping.
     await tester.runAsync(() async {
-      container
+      await container
           .read(imageReuseProvider.notifier)
-          .request(png!, 'image/png', metadata: kPhotoMetadata);
+          .request(
+            ImageContentBlock(
+              attachmentId: 'att',
+              mimeType: 'image/png',
+              byteSize: png.length,
+              photoMetadata: PhotoMetadataRef(
+                summary: kPhotoSummary,
+                blocksId: 'meta',
+              ),
+              aiOrigin: AiOrigin.editedPhoto,
+            ),
+            png,
+          );
       await Future<void>.delayed(const Duration(milliseconds: 200));
     });
     await tester.pump();
     final reused = container.read(composerProvider(id)).single;
     expect(reused.name, 'Reused image');
-    // Its stored bytes carry no EXIF: the block's metadata travels along.
-    expect(reused.metadata, kPhotoMetadata);
+    // Its stored bytes carry no EXIF: the block's metadata travels along,
+    // its blocks loaded from their attachment.
+    expect(
+      reused.image.metadata,
+      PhotoMetadata(summary: kPhotoSummary, blocks: kPhotoBlocks),
+    );
+    expect(reused.image.aiOrigin, AiOrigin.editedPhoto);
     expect(find.byType(AnnotationEditor), findsOneWidget);
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
@@ -281,21 +300,26 @@ void main() {
     await tester.pumpAndSettle();
 
     final pending = container.read(composerProvider(id));
-    final read = pending.first.metadata!;
-    expect(read.camera, kPhotoMetadata.camera);
-    expect(read.exif, isNotNull, reason: 'the EXIF block itself is kept');
-    expect(pending.last.metadata, isNull);
+    final read = pending.first.image.metadata!;
+    expect(read.summary, kPhotoSummary);
+    expect(read.blocks.exif, isNotNull, reason: 'the EXIF block itself');
+    expect(pending.last.image.metadata, isNull);
     expect(find.bySemanticsLabel('Photo metadata'), findsOneWidget);
 
     await tester.enterText(find.byType(TextField), 'warmer light');
     await tester.tap(find.byTooltip('Send (Enter)'));
     await tester.pumpAndSettle();
-    final blocks = harness.messages
+    final [withPhoto, plain] = harness.messages
         .messagesFor(id)
         .first
         .content
-        .whereType<ImageContentBlock>();
-    expect(blocks.map((b) => b.photoMetadata), [read, null]);
+        .whereType<ImageContentBlock>()
+        .toList();
+    // What is shown on the block, the blocks in an attachment beside it.
+    final stored = withPhoto.photoMetadata!;
+    expect(stored.summary, read.summary);
+    expect(harness.attachments.photoMetadata[stored.blocksId], read.blocks);
+    expect(plain.photoMetadata, isNull);
   });
 
   testWidgets('removing a thumbnail drops it from the draft', (tester) async {

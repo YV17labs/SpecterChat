@@ -10,6 +10,7 @@ import '../../domain/models/message.dart';
 import '../../domain/models/photo_metadata.dart';
 import '../../domain/services/cancellation_token.dart';
 import '../../domain/services/i_llm_service.dart';
+import '../images/stored_photo_metadata.dart';
 import '../mcp/active_mcp_server.dart';
 import 'chat_logic.dart';
 import 'chat_session_deps.dart';
@@ -104,7 +105,7 @@ class ChatSession {
   /// An empty [userText] is allowed when at least one image is given.
   Future<void> sendMessage(
     String userText, {
-    List<OutgoingImage> images = const [],
+    List<DescribedImage> images = const [],
   }) async {
     if (_disposed) return;
     if (isGenerating) {
@@ -150,7 +151,7 @@ class ChatSession {
 
   Future<void> _send(
     String userText,
-    List<OutgoingImage> images,
+    List<DescribedImage> images,
     ChatSessionDeps deps,
   ) async {
     try {
@@ -172,35 +173,27 @@ class ChatSession {
     }
   }
 
-  /// Persist the user turn: the row and its attachment blobs in one
-  /// transaction, like every other message with images.
+  /// Persist the user turn: the row and its attachment blobs (images and
+  /// their photo metadata) in one transaction, like every other message
+  /// with images.
   Future<void> _saveUserMessage(
     ChatSessionDeps deps,
     String text,
-    List<OutgoingImage> images,
+    List<DescribedImage> images,
   ) async {
-    final attached = [
-      for (final image in images)
-        PendingAttachment(
-          attachmentId: generateId(),
-          bytes: image.bytes,
-          mimeType: image.mimeType,
-          metadata: image.metadata,
-        ),
-    ];
-    final message = _logic.buildUserMessage(
+    final write = _logic.buildUserMessage(
       id: generateId(),
       conversationId: conversationId,
       text: text,
-      images: attached,
+      images: images,
     );
-    await saveMessagesWithAttachments(deps.messages, deps.attachments, [
-      MessageWrite(message, attachments: attached),
-    ]);
+    await saveMessagesWithAttachments(deps.messages, deps.attachments, [write]);
     // The bytes are needed for the request we are about to build; keep
     // them so the pipeline does not re-read what it just wrote.
-    for (final a in attached) {
-      _imageBytes[a.attachmentId] = (bytes: a.bytes, mimeType: a.mimeType);
+    final blobs = {for (final a in write.attachments) a.attachmentId: a};
+    for (final id in write.message.imageAttachmentIds()) {
+      final image = blobs[id]!;
+      _imageBytes[id] = (bytes: image.bytes, mimeType: image.mimeType);
     }
   }
 
@@ -244,8 +237,10 @@ class ChatSession {
     );
     _stopwatch = Stopwatch()..start();
     var completionTokens = 0;
-    // What an image produced by this turn inherits from the photo it edits.
-    final inherited = _logic.inheritedPhotoMetadata(history);
+    // The photo metadata an image of this turn inherits, copied once for
+    // the turn: bound to the placeholder, it lives and dies with it (the
+    // source's message may go, a discarded placeholder takes it along).
+    Future<PhotoMetadataRef>? inherited;
 
     // Publish the streaming id so the UI can flag the live message.
     state.value = state.value.toStreaming(messageId);
@@ -278,12 +273,26 @@ class ChatSession {
         case ProgressDelta(:final progress):
           state.value = state.value.withProgress(progress);
         case ImageDelta(:final bytes, :final mimeType, :final textToImage):
+          final (:origin, :metadata) = _logic.generatedImageOrigin(
+            history,
+            textToImage: textToImage,
+          );
+          // Stored before any block references it, like the image bytes.
+          final inheritedCopy = metadata == null
+              ? null
+              : await (inherited ??= copyPhotoMetadata(
+                  deps.attachments,
+                  metadata,
+                  attachmentId: generateId(),
+                  messageId: messageId,
+                ));
           await _storeStreamedImage(
             deps: deps,
             messageId: messageId,
             bytes: bytes,
             mimeType: mimeType,
-            metadata: textToImage ? null : inherited,
+            origin: origin,
+            metadata: inheritedCopy,
           );
           // Show the image as soon as it lands rather than on the next
           // throttle tick — it is the whole point of the turn.
@@ -372,14 +381,16 @@ class ChatSession {
 
   /// Write a streamed image's bytes to the attachments table (bound to the
   /// placeholder row, which already exists) and reference it from the
-  /// accumulator. Bytes go first so the next upsert never points at an id
-  /// the watcher cannot resolve.
+  /// accumulator, with how the model made it ([origin]) and the photo
+  /// [metadata] it inherits, already stored. Bytes go first so the next
+  /// upsert never points at an id the watcher cannot resolve.
   Future<void> _storeStreamedImage({
     required ChatSessionDeps deps,
     required String messageId,
     required Uint8List bytes,
     required String mimeType,
-    required PhotoMetadata? metadata,
+    required AiOrigin origin,
+    required PhotoMetadataRef? metadata,
   }) async {
     final attachmentId = generateId();
     await deps.attachments.storeBytes(
@@ -394,6 +405,7 @@ class ChatSession {
         mimeType: mimeType,
         byteSize: bytes.length,
         photoMetadata: metadata,
+        aiOrigin: origin,
       ),
     );
     // The model may be asked to edit its own output on the next turn.
@@ -419,11 +431,13 @@ class ChatSession {
     final hook = deps.hook;
     if (hook == null) return;
     await deps.messages.saveMessage(
-      _logic.buildUserMessage(
-        id: generateId(),
-        conversationId: conversationId,
-        text: hook.hallucinationCorrection,
-      ),
+      _logic
+          .buildUserMessage(
+            id: generateId(),
+            conversationId: conversationId,
+            text: hook.hallucinationCorrection,
+          )
+          .message,
     );
     await _runPipeline(deps, hallucinationRetry: nextRetry);
   }

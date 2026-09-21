@@ -97,7 +97,6 @@ class MessageBubble extends StatelessWidget {
         block: block,
         isStreaming: message.isStreaming,
         selectable: !wrappedInSelectionArea,
-        fromModel: message.role == MessageRole.assistant,
       );
       // Markdown text appears in place as it streams; every other block
       // type fades in as a whole on first appearance.

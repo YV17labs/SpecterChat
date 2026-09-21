@@ -5,21 +5,40 @@ import '../../domain/models/photo_metadata.dart';
 import '../../domain/repositories/i_attachment_repository.dart';
 import '../../domain/repositories/i_message_repository.dart';
 
-/// A blob an image block of a message refers to, not yet stored.
+/// A blob an image block of a message refers to, not yet stored: an
+/// image, or the photo metadata that goes with one.
 class PendingAttachment {
   final String attachmentId;
   final Uint8List bytes;
   final String mimeType;
 
-  /// Stored on the image block that references the blob.
-  final PhotoMetadata? metadata;
-
   const PendingAttachment({
     required this.attachmentId,
     required this.bytes,
     required this.mimeType,
-    this.metadata,
   });
+
+  /// A photo's metadata [blocks], as the attachment a
+  /// `PhotoMetadataRef.blocksId` points to.
+  PendingAttachment.photoMetadata({
+    required this.attachmentId,
+    required PhotoMetadataBlocks blocks,
+  }) : bytes = blocks.encode(),
+       mimeType = PhotoMetadataBlocks.mimeType;
+}
+
+/// Storing a [PendingAttachment]: the one place its bytes and MIME type
+/// reach the repository together.
+extension StorePendingAttachment on IAttachmentRepository {
+  Future<String> store(
+    PendingAttachment pending, {
+    required String messageId,
+  }) => storeBytes(
+    attachmentId: pending.attachmentId,
+    messageId: messageId,
+    bytes: pending.bytes,
+    mimeType: pending.mimeType,
+  );
 }
 
 /// A message row together with the blobs its image blocks reference.
@@ -42,12 +61,7 @@ Future<void> saveMessagesWithAttachments(
   for (final write in writes) {
     await messages.saveMessage(write.message);
     for (final pending in write.attachments) {
-      await attachments.storeBytes(
-        attachmentId: pending.attachmentId,
-        messageId: write.message.id,
-        bytes: pending.bytes,
-        mimeType: pending.mimeType,
-      );
+      await attachments.store(pending, messageId: write.message.id);
     }
   }
 });

@@ -11,8 +11,7 @@ import '../../../application/images/outgoing_images.dart';
 import '../../../application/images/pending_image.dart';
 import '../../../core/image_mime.dart';
 import '../../../domain/models/annotation.dart';
-import '../../../domain/models/message.dart' show OutgoingImage;
-import '../../../domain/models/photo_metadata.dart';
+import '../../../domain/models/message.dart' show DescribedImage;
 import '../../../domain/services/i_image_io.dart' show ImageFileSource;
 import '../../providers/chat_input_provider.dart';
 import '../../providers/composer_provider.dart';
@@ -104,7 +103,7 @@ class ChatComposerState extends ConsumerState<ChatComposer> {
   /// hands the message to the session. The composer was already cleared so
   /// the user can keep typing; on a rendering failure the draft comes back.
   Future<void> _expandAndSend(String text, List<PendingImage> images) async {
-    List<OutgoingImage> outgoing;
+    List<DescribedImage> outgoing;
     try {
       outgoing = await expandPendingImages(
         images,
@@ -130,13 +129,9 @@ class ChatComposerState extends ConsumerState<ChatComposer> {
   Future<String?> _attach(
     Uint8List bytes, {
     required String name,
-    PhotoMetadata? metadata,
+    DescribedImage? reused,
   }) async {
-    final result = await _composer.attach(
-      bytes,
-      name: name,
-      metadata: metadata,
-    );
+    final result = await _composer.attach(bytes, name: name, reused: reused);
     if (!mounted) return null;
     switch (result) {
       case Attached(:final id):
@@ -208,7 +203,7 @@ class ChatComposerState extends ConsumerState<ChatComposer> {
     final applied = image.annotation;
     final result = await showAnnotationEditor(
       context,
-      imageBytes: image.bytes,
+      imageBytes: image.image.bytes,
       initial: applied?.annotation ?? Annotation.empty,
       includeMask: applied?.includeMask ?? false,
       keepOriginal: applied?.keepOriginal ?? false,
@@ -226,12 +221,8 @@ class ChatComposerState extends ConsumerState<ChatComposer> {
 
   /// "Annotate & reuse" on an image in the conversation: attach a copy and
   /// open the editor on it.
-  Future<void> _reuseImage(ImageReuseRequest request) async {
-    final id = await _attach(
-      request.bytes,
-      name: 'Reused image',
-      metadata: request.metadata,
-    );
+  Future<void> _reuseImage(DescribedImage image) async {
+    final id = await _attach(image.bytes, name: 'Reused image', reused: image);
     if (!mounted || id == null) return;
     await _editImage(id);
   }
@@ -252,7 +243,7 @@ class ChatComposerState extends ConsumerState<ChatComposer> {
       _appendToInput(next);
       ref.read(chatInputInjectionProvider.notifier).consume();
     });
-    ref.listen<ImageReuseRequest?>(imageReuseProvider, (_, next) {
+    ref.listen<DescribedImage?>(imageReuseProvider, (_, next) {
       if (next == null) return;
       ref.read(imageReuseProvider.notifier).consume();
       unawaited(_reuseImage(next));

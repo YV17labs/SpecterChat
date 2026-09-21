@@ -40,7 +40,7 @@ class PendingImageStrip extends StatelessWidget {
           final image = images[index];
           return _Thumbnail(
             key: ValueKey(image.id),
-            image: image,
+            pending: image,
             size: _thumbSize,
             enabled: enabled,
             onRemove: () => onRemove(image.id),
@@ -53,7 +53,7 @@ class PendingImageStrip extends StatelessWidget {
 }
 
 class _Thumbnail extends StatelessWidget {
-  final PendingImage image;
+  final PendingImage pending;
   final double size;
   final bool enabled;
   final VoidCallback onRemove;
@@ -61,7 +61,7 @@ class _Thumbnail extends StatelessWidget {
 
   const _Thumbnail({
     super.key,
-    required this.image,
+    required this.pending,
     required this.size,
     required this.enabled,
     required this.onRemove,
@@ -72,13 +72,16 @@ class _Thumbnail extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final canEdit = enabled && onEdit != null;
-    final name = switch (image.annotation) {
-      null => image.name,
-      final a => '${image.name} (annotated${a.includeMask ? ', + mask' : ''})',
+    final name = switch (pending.annotation) {
+      null => pending.name,
+      final a =>
+        '${pending.name} (annotated${a.includeMask ? ', + mask' : ''})',
     };
-    final tooltip = switch (image.metadata) {
+    final tooltip = switch (pending.image.metadata) {
       null => name,
-      final m => '$name\n${photoMetadataSummary(m)}',
+      final m =>
+        '$name\n'
+            '${photoMetadataSummary(m.summary, locale: systemLocaleOf(context))}',
     };
     // Pending images are up to 2048 px a side; decode them at thumbnail
     // size (2× the box, so a wide image still covers it) rather than
@@ -95,10 +98,10 @@ class _Thumbnail extends StatelessWidget {
             height: size,
             decoration: BoxDecoration(
               border: Border.all(
-                color: image.isAnnotated
+                color: pending.isAnnotated
                     ? cs.primary
                     : cs.outline.withValues(alpha: 0.3),
-                width: image.isAnnotated ? 1.5 : 1,
+                width: pending.isAnnotated ? 1.5 : 1,
               ),
               borderRadius: BorderRadius.circular(8),
             ),
@@ -107,7 +110,7 @@ class _Thumbnail extends StatelessWidget {
               onTap: canEdit ? onEdit : null,
               child: Image(
                 image: ResizeImage(
-                  MemoryImage(image.bytes),
+                  MemoryImage(pending.image.bytes),
                   width: cachePx,
                   height: cachePx,
                   policy: ResizeImagePolicy.fit,
@@ -121,7 +124,7 @@ class _Thumbnail extends StatelessWidget {
               ),
             ),
           ),
-          if (image.isAnnotated)
+          if (pending.isAnnotated)
             Positioned(
               top: 4,
               left: 4,
@@ -131,7 +134,7 @@ class _Thumbnail extends StatelessWidget {
                 semanticLabel: 'Annotated',
               ),
             ),
-          if (image.metadata != null)
+          if (pending.image.metadata != null)
             Positioned(
               bottom: 4,
               left: 4,

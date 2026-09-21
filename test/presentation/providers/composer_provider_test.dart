@@ -36,7 +36,7 @@ void main() {
     final image = images().single;
     expect(image.id, (result as Attached).id);
     expect(image.name, 'a.png');
-    expect(image.mimeType, 'image/png');
+    expect(image.image.mimeType, 'image/png');
     expect(image.isAnnotated, isFalse);
   });
 

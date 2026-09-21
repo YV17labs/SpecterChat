@@ -13,19 +13,33 @@ part 'message.g.dart';
 /// import any class just to hand bytes to the API serializer.
 typedef ImageBytes = ({Uint8List bytes, String mimeType});
 
-/// An image going out with a user message. [metadata], what the photo it
-/// comes from said about itself, is stored on its image block for "Save
-/// as…"; it is not part of the request.
-class OutgoingImage {
+/// An image and what is known about it: [metadata], what the photo it
+/// comes from said about itself, and [aiOrigin], how a model made it.
+///
+/// What the composer holds and sends — the two are then kept on the image
+/// block for "Save as…", they are not part of the request — and what an
+/// image of the conversation comes back as for "Annotate & reuse".
+class DescribedImage {
   final Uint8List bytes;
   final String mimeType;
   final PhotoMetadata? metadata;
+  final AiOrigin? aiOrigin;
 
-  const OutgoingImage({
+  const DescribedImage({
     required this.bytes,
     required this.mimeType,
     this.metadata,
+    this.aiOrigin,
   });
+
+  /// The same picture as other [bytes] (an annotated copy): still the same
+  /// photo, made the same way.
+  DescribedImage withBytes(Uint8List bytes, String mimeType) => DescribedImage(
+    bytes: bytes,
+    mimeType: mimeType,
+    metadata: metadata,
+    aiOrigin: aiOrigin,
+  );
 }
 
 /// Map of attachment id → decoded bytes, preloaded by the chat pipeline
@@ -46,13 +60,21 @@ sealed class ContentBlock with _$ContentBlock {
   ///
   /// [photoMetadata] is what the photo behind this image said about itself:
   /// read from the file the user attached, or inherited by an image the
-  /// model made from it. Kept here, not in the bytes, and written into the
-  /// file only when the user saves it.
+  /// model made from it. Kept here — what is shown of it, the rest in an
+  /// attachment of its own — not in the bytes, and written into the file
+  /// only when the user saves it.
+  ///
+  /// [aiOrigin] says how a model made the image, `null` when none did (a
+  /// photo, a screenshot, a tool result). Set once, when the block is
+  /// written: by the chat session for a streamed image, carried along when
+  /// the user sends a result again. Blocks written before it existed get it
+  /// from their message's role when read (`MessageRepository`).
   const factory ContentBlock.image({
     required String attachmentId,
     required String mimeType,
     required int byteSize,
-    PhotoMetadata? photoMetadata,
+    PhotoMetadataRef? photoMetadata,
+    AiOrigin? aiOrigin,
   }) = ImageContentBlock;
 
   const factory ContentBlock.toolCall({
@@ -96,7 +118,9 @@ abstract class Message with _$Message {
 /// Read-only helpers over a message's content blocks.
 extension MessageContentX on Message {
   /// All image attachment ids referenced anywhere in this message,
-  /// including inside tool results.
+  /// including inside tool results. The attachments holding photo metadata
+  /// (`PhotoMetadataRef.blocksId`) are not images: they are left out, so
+  /// they are never loaded with the pictures nor sent to the model.
   List<String> imageAttachmentIds() {
     final ids = <String>[];
     for (final block in content) {

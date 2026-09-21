@@ -5,6 +5,7 @@ import 'package:specterchat/application/images/drawing_session.dart';
 import 'package:specterchat/application/images/outgoing_images.dart';
 import 'package:specterchat/application/images/pending_image.dart';
 import 'package:specterchat/domain/models/annotation.dart';
+import 'package:specterchat/domain/models/message.dart';
 import 'package:specterchat/domain/models/photo_metadata.dart';
 
 import '../../support/fakes.dart';
@@ -21,9 +22,8 @@ void main() {
   final original = Uint8List.fromList([1, 2, 3]);
   final plain = PendingImage(
     id: 'p',
-    bytes: original,
-    mimeType: 'image/jpeg',
     name: 'p',
+    image: DescribedImage(bytes: original, mimeType: 'image/jpeg'),
   );
   PendingImage annotated({bool mask = false, bool original = false}) =>
       plain.withAnnotation(
@@ -86,26 +86,39 @@ void main() {
     expect(renderer.rendered, isEmpty);
   });
 
-  test("the copies carry the photo's metadata, the mask does not", () async {
-    const metadata = PhotoMetadata(camera: CameraInfo(model: 'iPhone 17'));
-    final photo = PendingImage(
-      id: 'p',
-      bytes: original,
-      mimeType: 'image/jpeg',
-      name: 'p',
-      metadata: metadata,
-    );
-    final out = await expandPendingImages([
-      photo.withAnnotation(
-        const AnnotationResult(
-          annotation: annotation,
-          includeMask: true,
-          keepOriginal: true,
+  test(
+    "the copies carry the image's metadata and origin, the mask does not",
+    () async {
+      const metadata = PhotoMetadata(
+        summary: PhotoSummary(camera: CameraInfo(model: 'iPhone 17')),
+      );
+      final photo = PendingImage(
+        id: 'p',
+        name: 'p',
+        image: DescribedImage(
+          bytes: original,
+          mimeType: 'image/jpeg',
+          metadata: metadata,
+          aiOrigin: AiOrigin.editedPhoto,
         ),
-      ),
-    ], renderer: FakeAnnotationRenderer());
-    expect(out.map((i) => i.metadata), [metadata, null, metadata]);
-  });
+      );
+      final out = await expandPendingImages([
+        photo.withAnnotation(
+          const AnnotationResult(
+            annotation: annotation,
+            includeMask: true,
+            keepOriginal: true,
+          ),
+        ),
+      ], renderer: FakeAnnotationRenderer());
+      expect(out.map((i) => i.metadata), [metadata, null, metadata]);
+      expect(out.map((i) => i.aiOrigin), [
+        AiOrigin.editedPhoto,
+        null,
+        AiOrigin.editedPhoto,
+      ]);
+    },
+  );
 
   test('a renderer failure propagates so the caller can restore the draft', () {
     final renderer = FakeAnnotationRenderer()..failWith = Exception('gpu');

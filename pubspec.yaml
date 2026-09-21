@@ -52,6 +52,9 @@ dependencies:
   file_selector: ^1.1.0
   # Drag-and-drop of files from Finder/Explorer onto the chat panel.
   desktop_drop: ^0.8.4
+  # Dates in the system's language (photo metadata tooltips). Only the date
+  # formats: the UI itself is not translated, so no flutter_localizations.
+  intl: ^0.20.3
 
 dev_dependencies:
   flutter_test:

@@ -9,6 +9,7 @@ import '../../infrastructure/images/desktop_image_io.dart';
 import '../../infrastructure/images/exif_photo_metadata_codec.dart';
 import '../../infrastructure/images/ui_image_normalizer.dart';
 import '../rendering/ui_annotation_renderer.dart';
+import 'database_provider.dart';
 
 /// Validates and downscales images before they are attached. Override in
 /// tests with a pass-through fake: the real one decodes on the engine.
@@ -30,7 +31,12 @@ final photoMetadataCodecProvider = Provider<IPhotoMetadataCodec>(
   (_) => const ExifPhotoMetadataCodec(),
 );
 
-/// "Save as…": the image with the photo metadata the user chose to keep.
+/// "Save as…": the image with the photo metadata the user chose to keep,
+/// loaded from its attachment, written where the user says.
 final imageExporterProvider = Provider<ImageExporter>(
-  (ref) => ImageExporter(ref.watch(photoMetadataCodecProvider)),
+  (ref) => ImageExporter(
+    ref.watch(photoMetadataCodecProvider),
+    ref.watch(attachmentRepositoryProvider),
+    ref.watch(imageIoProvider),
+  ),
 );

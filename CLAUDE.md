@@ -11,6 +11,8 @@ Desktop only — **macOS first**, then Windows and Linux.
 - **Database**: Drift (SQLite)
 - **Models**: Freezed + json_serializable
 - **Markdown**: flutter_markdown_plus
+- **Dates**: intl, formats only (the UI is not localised: no
+  flutter_localizations)
 
 ## Architecture
 
@@ -34,8 +36,9 @@ lib/
                          effective_settings, message, image_settings,
                          model_info, annotation, request_profile (what a
                          request carries: text sampling vs image options),
-                         photo_metadata (a photo's metadata blocks,
-                         verbatim)
+                         photo_metadata (PhotoMetadata = PhotoSummary +
+                         the verbatim PhotoMetadataBlocks; the
+                         PhotoMetadataRef an image block keeps; AiOrigin)
     repositories/      — i_conversation_repository, i_message_repository,
                          i_attachment_repository, i_settings_store,
                          i_model_catalog_store
@@ -57,7 +60,10 @@ lib/
                          History/Geometry, expandPendingImages (outgoing
                          bytes via IAnnotationRenderer), annotation prompt
                          template, ImageExporter ("Save as…" with the
-                         photo metadata the user keeps)
+                         photo metadata the user keeps),
+                         stored_photo_metadata (load / copy the blocks
+                         attachment behind a PhotoMetadataRef; a stored
+                         block as a DescribedImage)
   infrastructure/      — Implementations of domain contracts.
     llm/               — LlmService (Dio), OpenAiCodec (wire format incl.
                          the per-profile request body), SseThinkSplitter
@@ -249,9 +255,11 @@ fields). Since protocol 0.3.0 the extension object is named `generation`
 everywhere (model entry, request body, `images[]` meta); it was
 `specterforge` before, and `parseModelInfo` still accepts that key on read.
 
-**User → model.** `ChatSession.sendMessage(text, images: [...])` writes one
-`ContentBlock.image` per attachment (`ChatLogic.buildUserMessage`), bytes in
-the `attachments` table, in the same transaction as the message row (same
+**User → model.** `ChatSession.sendMessage(text, images: [...])` takes
+`DescribedImage`s (domain: bytes, MIME type, photo metadata, AI origin) and
+writes one `ContentBlock.image` per image (`ChatLogic.buildUserMessage`,
+which returns the row and its blobs as one `MessageWrite`), bytes in the
+`attachments` table, in the same transaction as the message row (same
 rule as tool-result images). Input paths, all landing in `ComposerNotifier`
 (`composerProvider(conversationId)`, auto-disposed with the view):
 - attach button → `IImageIo.pickImages` (`DesktopImageIo` on
@@ -274,7 +282,9 @@ on the `PendingImage` and only rendered at send time by
 mask, then original, per the editor's options. A render failure restores
 the draft. `annotationPromptTemplate` pre-fills an empty composer with the
 colours used. "Annotate & reuse" on a bubble goes through the one-shot
-`imageReuseProvider`, like `chatInputInjectionProvider`.
+`imageReuseProvider`, like `chatInputInjectionProvider`; its `request`
+loads the block's photo metadata (`describeStoredImage`) before handing
+the `DescribedImage` over.
 
 **Image models.** `ModelCatalogNotifier` owns the `/models` fetch (at
 startup, on base URL / key change, on refresh) and merges the image-model
@@ -341,38 +351,85 @@ pieces, inward to outward:
 list of known fields — the user's requirement is that no metadata is ever
 lost, including kinds that do not exist yet. `IPhotoMetadataCodec`
 (`ExifPhotoMetadataCodec`, pure Dart) reads, in `ComposerNotifier.attach`
-and *before* the normaliser may re-encode it away, the blocks verbatim:
-the EXIF TIFF (maker notes and unknown tags included; only the IFD1
-thumbnail is dropped), the XMP packet (padding trimmed), the Photoshop
-resources holding IPTC (thumbnail resources dropped), PNG text chunks and
-JPEG comments — from JPEG, PNG and WebP. They sit in `PhotoMetadata`
-(`exif` / `iptc` base64, `xmp`, `texts`, ~5 KB for an iPhone photo) next to
-`camera` / `captured` / `location`, parsed for display only. The object
-travels `PendingImage` → `OutgoingImage` → `PendingAttachment` →
-`ImageContentBlock.photoMetadata`, JSON in the message row: no schema bump.
-An annotation's mask carries none.
-- A generated image inherits through `ChatLogic.inheritedPhotoMetadata`:
-  the first image with metadata in the last user turn, else the
-  conversation's latest image (the server reuses it for "make it blue"), so
-  it follows a chain of edits. `ImageDelta.textToImage`
-  (`generation.mode: text_to_image`) inherits nothing. "Annotate & reuse"
-  passes the block's metadata along (`ImageReuseRequest.metadata`).
-- Nothing is written into stored bytes. "Save as…" goes through
-  `ImageExporter` and two global switches, `AppSettings.photoMetadata`
+and *before* the normaliser may re-encode it away, a `PhotoMetadata`:
+- `blocks` (`PhotoMetadataBlocks`), verbatim: the EXIF TIFF (maker notes
+  and unknown tags included; only the IFD1 thumbnail is dropped), the XMP
+  packet (padding trimmed), the Photoshop resources holding IPTC
+  (thumbnail resources dropped), PNG text chunks and JPEG comments — from
+  JPEG, PNG and WebP (`exif` / `iptc` base64, `xmp`, `texts`; ~5 KB for an
+  iPhone photo, far more for a Lightroom XMP or a ComfyUI workflow);
+- `summary` (`PhotoSummary`: `camera`, `captured` — a wall-clock
+  `DateTime` + UTC offset —, `location`), parsed from the EXIF for display
+  only. Nothing is ever written from it.
+
+In memory the whole `PhotoMetadata` travels on a `DescribedImage`
+(`PendingImage.image` → `expandPendingImages` → `sendMessage`); an
+annotation's mask carries none. Once sent it is split
+(`ChatLogic.buildUserMessage`): the block keeps a `PhotoMetadataRef`
+(summary + `blocksId`), JSON in the message row; the blocks go to an
+attachment of the same message, MIME type `PhotoMetadataBlocks.mimeType`,
+written in the same transaction (one per message for images sharing them,
+an annotated copy and its original). So `watchMessages`, which decodes the
+JSON on every streaming emission, never carries them. That attachment is
+not an image: `imageAttachmentIds` never lists it, `loadBytes` / `loadMany`
+never return it (never drawn, never sent to the model); only
+`loadPhotoMetadata` does, at "Save as…" (after the save location is chosen)
+and "Annotate & reuse" — through `ImageExporter` and `imageReuseProvider`,
+never from a widget (`application/images/stored_photo_metadata.dart`). No
+schema bump: JSON column and the existing `attachments` table.
+- A block's `aiOrigin` (`AiOrigin.editedPhoto` / `generated`, `null` for a
+  photo, screenshot or tool result) says how a model made the image. Set
+  once, when the block is written: `ChatLogic.generatedImageOrigin` decides
+  it together with the inherited metadata. `ImageDelta.textToImage` is what
+  the server says (`generation.mode`: `text_to_image` → generated,
+  `reference_edit` → edited, absent → `null`); unsaid, the image is an edit
+  whenever there is a reference. The references are the images of the last
+  user turn, else the conversation's latest image (the server reuses it for
+  "make it blue"); the first with metadata is inherited, so metadata
+  follows a chain of edits. An edit is `editedPhoto` even without metadata
+  (an edited screenshot); an edit of a text-to-image result is
+  `editedPhoto` too.
+- An inherited `PhotoMetadataRef` gets its own copy of the blocks
+  (`IAttachmentRepository.copy`, an `INSERT … SELECT` in SQLite) bound to
+  the streaming placeholder, once per turn and before the upsert that
+  references it — the source's message may be deleted, a discarded
+  placeholder takes its copy along (FK cascade). "Annotate & reuse" carries
+  the metadata (loaded) and the `aiOrigin` to the new blocks.
+- Earlier builds, read not written: blocks from b5e996e kept the blocks
+  inline and the summary fields at the top level (`PhotoMetadataRef`
+  reads both through `readValue`; `inlineBlocks` is used for save, reuse
+  and inheritance, which then stores a proper attachment); their EXIF-shaped
+  date (`2026:07:05 19:41:50`) still parses. Blocks from the very first
+  build hold display fields only and are saved without metadata. Images a
+  model made before `aiOrigin` existed get it from their message's role in
+  `MessageRepository._withLegacyAiOrigin` — the one place the role still
+  decides it.
+- Nothing is written into stored bytes. "Save as…" is
+  `ImageExporter.save`: `IImageIo.saveImage` asks for a location first and
+  only then calls back for the file (`prepare`), so a cancelled dialog
+  loads and copies nothing. Two global switches, `AppSettings.photoMetadata`
   (`PhotoMetadataExport`, right panel "Photo Metadata"): keep the original
   metadata and mark generated images as AI, both on by default (the latter
   is `markGeneratedAsAi`; the first version's `markAiEdited: false` is
-  ignored on load so the new default applies). The codec splices
-  the blocks into a copy — JPEG APP1 / APP13 / COM, PNG `eXIf` / `iTXt` /
+  ignored on load so the new default applies). The codec splices the
+  blocks into a copy — JPEG APP1 / APP13 / COM, PNG `eXIf` / `iTXt` /
   `tEXt "Raw profile type 8bim"` — pixels untouched, every older EXIF /
   XMP / IPTC / text block of the file replaced. What describes the file
   rather than the photo stays the file's: orientation and pixel size are
-  patched in place into the copied EXIF (and XMP `tiff:Orientation`), the
-  colour profile and any other segment or chunk (MPF, Apple `AROT`…) are
-  the file's own and never brought from the photo. The AI mark sets
-  `Iptc4xmpExt:DigitalSourceType` in the XMP, updating an existing
-  declaration. Blocks attached by the first version (display fields only)
-  are saved with an EXIF rebuilt from those fields.
+  patched in place into the copied EXIF (and XMP `tiff:Orientation`); a
+  file stored sideways with no EXIF to write gets one holding only its
+  orientation (a constant template); the colour profile and any other
+  segment or chunk (MPF, Apple `AROT`…) are the file's own and never
+  brought from the photo. The AI mark sets `Iptc4xmpExt:DigitalSourceType`
+  in the XMP, updating an existing declaration.
+- macOS ImageIO reads no IPTC-IIM from a PNG (not even from its own
+  conversions): the IIM-only fields are in the file, readable by exiftool,
+  but Preview does not show them.
+- Dates in tooltips follow the system's language (`photo_metadata_text`,
+  `intl` date formats loaded in `main` — and in
+  `test/flutter_test_config.dart` for tests —, `systemLocaleOf` reads the
+  platform locale: `Localizations.localeOf` is always English since the
+  app declares no other locale). The rest of the UI stays English.
 - Small images reach the server untouched, EXIF included: stripping
   metadata on send is not done yet.
 

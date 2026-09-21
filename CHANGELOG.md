@@ -38,10 +38,19 @@ this version carry no metadata; attach the photo again to use the feature.
     that photo apps read to flag AI images. When the photo already declares
     one (Apple Photos does after Clean Up), it is updated rather than
     duplicated.
+- **Each image records how the model made it**, when the model returns it:
+  edited from a picture you sent (a photo, a screenshot, an earlier
+  result) or drawn from the prompt alone. The AI mark declares exactly
+  that, "edited" or "generated", even for an edited screenshot that
+  carries no metadata. A result you annotate and send again keeps it.
+  Images generated before this version are marked from where they appear
+  in the conversation.
 - **You can see what a photo carries.**
   - Thumbnails in the composer get a camera badge.
   - On hover, images in the conversation show the camera model; its tooltip
-    adds lens, exposure, date and place.
+    adds exposure, date and place, the date in your system's language
+    ("5 juil. 2026, 19:41" on a Mac set to French). The rest of the app
+    stays in English.
   - After "Save as…", a message says whether the original metadata and the
     AI mark went into the file.
 
@@ -49,16 +58,27 @@ this version carry no metadata; attach the photo again to use the feature.
 
 - **"Annotate & reuse" carries the image's metadata** to the new draft, so
   an edit of an edit still has the original photo's metadata.
+- **"Save as…" asks where first**, then prepares the file: cancelling the
+  dialog costs nothing.
+- **Metadata stays out of the way of the chat.** A message keeps only what
+  is shown (camera, date, place); the metadata itself is stored beside the
+  image and read only to save or reuse it, so a large XMP from Lightroom
+  or a ComfyUI workflow embedded in a PNG does not slow the conversation
+  down. Each image made from a photo has its own copy, so deleting a
+  message never takes another image's metadata with it. No schema change:
+  the chat history is kept.
 - **Metadata handling is a domain contract** (`IPhotoMetadataCodec`) with a
-  pure-Dart implementation: no new dependency, same behaviour on macOS,
-  Windows and Linux. It is stored as JSON in the message row, so there is
-  no schema change and the chat history is kept. Test suite grew from 406
-  to 446.
+  pure-Dart implementation: same behaviour on macOS, Windows and Linux.
+  Dates are formatted with `intl` (new dependency, date formats only).
+  Test suite grew from 406 to 467.
 
 ### Known limitations
 
 - Metadata is written into PNG and JPEG files. WebP and GIF are saved as
   they are.
+- In a saved PNG, IPTC fields that have no XMP equivalent (IPTC date and
+  time created, for instance) are in the file but not shown by macOS
+  Preview, which reads no IPTC from PNG files; exiftool shows them.
 - "Copy image" carries no metadata: the macOS clipboard keeps only the
   pixels. Pasting a photo into the composer loses its metadata for the same
   reason; attach it with the paperclip or by drag-and-drop instead.

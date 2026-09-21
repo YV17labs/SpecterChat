@@ -1,3 +1,4 @@
+import '../../core/id_gen.dart';
 import '../../domain/models/message.dart';
 import '../../domain/models/photo_metadata.dart';
 import '../../domain/services/llm_hook.dart';
@@ -90,50 +91,116 @@ class ChatLogic {
     );
   }
 
-  /// A user turn: the text block (when there is text) followed by one
-  /// image block per entry of [images]. The caller stores the blobs under
-  /// those ids in the same transaction as the row
-  /// (`saveMessagesWithAttachments`).
-  Message buildUserMessage({
+  /// A user turn and the blobs to store with it, in the same transaction
+  /// (`saveMessagesWithAttachments`): the text block (when there is text),
+  /// then one image block per entry of [images], backed by an attachment
+  /// of its bytes. An image's photo metadata is split: what is shown stays
+  /// on its block, the verbatim blocks go to an attachment of their own —
+  /// one for the images that share them (an annotated copy and its
+  /// original). [newId] mints the attachment ids.
+  MessageWrite buildUserMessage({
     required String id,
     required String conversationId,
     required String text,
-    List<PendingAttachment> images = const [],
-  }) => Message(
-    id: id,
-    conversationId: conversationId,
-    role: MessageRole.user,
-    content: [
-      if (text.isNotEmpty) ContentBlock.text(text: text),
-      for (final a in images)
-        ContentBlock.image(
-          attachmentId: a.attachmentId,
-          mimeType: a.mimeType,
-          byteSize: a.bytes.length,
-          photoMetadata: a.metadata,
-        ),
-    ],
-    createdAt: DateTime.now(),
-  );
-
-  /// The metadata an image the model is producing inherits: that of the
-  /// photo it starts from. The server edits the images of the last user
-  /// turn; when that turn has none it reuses the latest image of the
-  /// conversation ("now make it blue"), which may itself have inherited
-  /// from an earlier photo — so the metadata follows a chain of edits.
-  /// Among several images the first one carrying metadata wins.
-  PhotoMetadata? inheritedPhotoMetadata(List<Message> history) {
-    final lastUser = history.lastIndexWhere((m) => m.role == MessageRole.user);
-    if (lastUser < 0) return null;
-    final attached = history[lastUser].content.whereType<ImageContentBlock>();
-    if (attached.isNotEmpty) {
-      return attached.map((b) => b.photoMetadata).nonNulls.firstOrNull;
+    List<DescribedImage> images = const [],
+    String Function() newId = generateId,
+  }) {
+    final attachments = <PendingAttachment>[];
+    final blocksIds = <PhotoMetadataBlocks, String>{};
+    String storeBlocks(PhotoMetadataBlocks blocks) {
+      final blocksId = newId();
+      attachments.add(
+        PendingAttachment.photoMetadata(attachmentId: blocksId, blocks: blocks),
+      );
+      return blocksId;
     }
+
+    final content = <ContentBlock>[
+      if (text.isNotEmpty) ContentBlock.text(text: text),
+    ];
+    for (final image in images) {
+      final attachmentId = newId();
+      attachments.add(
+        PendingAttachment(
+          attachmentId: attachmentId,
+          bytes: image.bytes,
+          mimeType: image.mimeType,
+        ),
+      );
+      final metadata = switch (image.metadata) {
+        null => null,
+        PhotoMetadata(:final summary, :final blocks) => PhotoMetadataRef(
+          summary: summary,
+          blocksId: blocks.isEmpty
+              ? null
+              : blocksIds.putIfAbsent(blocks, () => storeBlocks(blocks)),
+        ),
+      };
+      content.add(
+        ContentBlock.image(
+          attachmentId: attachmentId,
+          mimeType: image.mimeType,
+          byteSize: image.bytes.length,
+          photoMetadata: metadata,
+          aiOrigin: image.aiOrigin,
+        ),
+      );
+    }
+    return MessageWrite(
+      Message(
+        id: id,
+        conversationId: conversationId,
+        role: MessageRole.user,
+        content: content,
+        createdAt: DateTime.now(),
+      ),
+      attachments: attachments,
+    );
+  }
+
+  /// Where an image the model is producing comes from: how it was made,
+  /// and the photo metadata it inherits — that of its reference, whose
+  /// blocks the caller copies for it. Decided once, when its block is
+  /// written.
+  ///
+  /// [textToImage] is what the server says it did. Drawn from the prompt
+  /// alone, the image is [AiOrigin.generated] and inherits nothing.
+  /// Otherwise it starts from a reference — assumed whenever there is one
+  /// when the server does not say — and is an [AiOrigin.editedPhoto] even
+  /// when nothing is known about that reference (a screenshot).
+  ///
+  /// The references are the images of the last user turn; when that turn
+  /// has none the server reuses the latest image of the conversation ("now
+  /// make it blue"), which may itself have inherited from an earlier photo
+  /// — so the metadata follows a chain of edits. Among several references
+  /// the first one carrying metadata wins.
+  ({AiOrigin origin, PhotoMetadataRef? metadata}) generatedImageOrigin(
+    List<Message> history, {
+    bool? textToImage,
+  }) {
+    const fromPrompt = (origin: AiOrigin.generated, metadata: null);
+    if (textToImage ?? false) return fromPrompt;
+    final references = _referenceImages(history);
+    if (references.isEmpty && textToImage == null) return fromPrompt;
+    return (
+      origin: AiOrigin.editedPhoto,
+      metadata: references.map((b) => b.photoMetadata).nonNulls.firstOrNull,
+    );
+  }
+
+  /// The images an image model works from (see [generatedImageOrigin]).
+  List<ImageContentBlock> _referenceImages(List<Message> history) {
+    final lastUser = history.lastIndexWhere((m) => m.role == MessageRole.user);
+    if (lastUser < 0) return const [];
+    final attached = history[lastUser].content
+        .whereType<ImageContentBlock>()
+        .toList();
+    if (attached.isNotEmpty) return attached;
     for (final message in history.take(lastUser).toList().reversed) {
       final images = message.content.whereType<ImageContentBlock>();
-      if (images.isNotEmpty) return images.last.photoMetadata;
+      if (images.isNotEmpty) return [images.last];
     }
-    return null;
+    return const [];
   }
 
   /// Classify a finished turn from its buffers. [hook] is the model-specific

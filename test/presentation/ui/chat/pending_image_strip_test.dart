@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:specterchat/application/images/drawing_session.dart';
 import 'package:specterchat/application/images/pending_image.dart';
 import 'package:specterchat/domain/models/annotation.dart';
+import 'package:specterchat/domain/models/message.dart';
 import 'package:specterchat/presentation/ui/chat/chat_input_area.dart';
 import 'package:specterchat/presentation/ui/chat/pending_image_strip.dart';
 
@@ -22,15 +23,13 @@ void main() {
           images: [
             PendingImage(
               id: 'a',
-              bytes: bytes,
-              mimeType: 'image/png',
               name: 'a.png',
+              image: DescribedImage(bytes: bytes, mimeType: 'image/png'),
             ),
             PendingImage(
               id: 'b',
-              bytes: bytes,
-              mimeType: 'image/png',
               name: 'b.png',
+              image: DescribedImage(bytes: bytes, mimeType: 'image/png'),
             ),
           ],
           onRemove: removed.add,
@@ -63,15 +62,13 @@ void main() {
             images: [
               PendingImage(
                 id: 'plain',
-                bytes: bytes,
-                mimeType: 'image/png',
                 name: 'plain.png',
+                image: DescribedImage(bytes: bytes, mimeType: 'image/png'),
               ),
               PendingImage(
                 id: 'drawn',
-                bytes: bytes,
-                mimeType: 'image/png',
                 name: 'drawn.png',
+                image: DescribedImage(bytes: bytes, mimeType: 'image/png'),
                 annotation: const AnnotationResult(
                   annotation: annotation,
                   includeMask: true,
@@ -122,9 +119,8 @@ void main() {
           pendingImages: [
             PendingImage(
               id: 'a',
-              bytes: bytes,
-              mimeType: 'image/png',
               name: 'a',
+              image: DescribedImage(bytes: bytes, mimeType: 'image/png'),
             ),
           ],
           onSend: () {},

@@ -2,7 +2,6 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:specterchat/application/chat/chat_logic.dart';
-import 'package:specterchat/application/chat/message_writes.dart';
 import 'package:specterchat/application/chat/stream_accumulator.dart';
 import 'package:specterchat/domain/models/message.dart';
 import 'package:specterchat/domain/models/photo_metadata.dart';
@@ -110,38 +109,43 @@ void main() {
   });
 
   group('ChatLogic.buildUserMessage', () {
+    /// Attachment ids a1, a2… in the order they are minted.
+    String Function() ids() {
+      var n = 0;
+      return () => 'a${++n}';
+    }
+
     test('text only', () {
-      final msg = logic.buildUserMessage(
+      final write = logic.buildUserMessage(
         id: 'u',
         conversationId: 'c',
         text: 'hello',
       );
+      final msg = write.message;
       expect(msg.id, 'u');
       expect(msg.conversationId, 'c');
       expect(msg.role, MessageRole.user);
       expect(msg.content, [const ContentBlock.text(text: 'hello')]);
       expect(msg.isStreaming, isFalse);
+      expect(write.attachments, isEmpty);
     });
 
-    test('text then one image block per attachment, sizes from bytes', () {
-      final msg = logic.buildUserMessage(
+    test('text then one image block per image, sizes from bytes', () {
+      final write = logic.buildUserMessage(
         id: 'u',
         conversationId: 'c',
         text: 'look',
         images: [
-          PendingAttachment(
-            attachmentId: 'a1',
-            bytes: Uint8List(3),
-            mimeType: 'image/png',
-          ),
-          PendingAttachment(
-            attachmentId: 'a2',
+          DescribedImage(bytes: Uint8List(3), mimeType: 'image/png'),
+          DescribedImage(
             bytes: Uint8List(5),
             mimeType: 'image/jpeg',
+            aiOrigin: AiOrigin.generated,
           ),
         ],
+        newId: ids(),
       );
-      expect(msg.content, [
+      expect(write.message.content, [
         const ContentBlock.text(text: 'look'),
         const ContentBlock.image(
           attachmentId: 'a1',
@@ -152,23 +156,75 @@ void main() {
           attachmentId: 'a2',
           mimeType: 'image/jpeg',
           byteSize: 5,
+          aiOrigin: AiOrigin.generated,
         ),
+      ]);
+      expect(write.attachments.map((a) => (a.attachmentId, a.mimeType)), [
+        ('a1', 'image/png'),
+        ('a2', 'image/jpeg'),
       ]);
     });
 
-    test('an image-only turn has no empty text block', () {
-      final msg = logic.buildUserMessage(
+    test('photo metadata: shown on the block, blocks in an attachment', () {
+      const shown = PhotoSummary(camera: CameraInfo(model: 'iPhone 17'));
+      const blocks = PhotoMetadataBlocks(exif: 'TU0AKg==');
+      const photo = PhotoMetadata(summary: shown, blocks: blocks);
+      final original = DescribedImage(
+        bytes: Uint8List(3),
+        mimeType: 'image/jpeg',
+        metadata: photo,
+      );
+      final write = logic.buildUserMessage(
         id: 'u',
         conversationId: 'c',
         text: '',
         images: [
-          PendingAttachment(
-            attachmentId: 'a1',
-            bytes: Uint8List(1),
+          // An annotated copy, its mask, the original: the copy and the
+          // original share one attachment of blocks.
+          original.withBytes(Uint8List(4), 'image/png'),
+          DescribedImage(bytes: Uint8List(1), mimeType: 'image/png'),
+          original,
+          // What is shown alone needs no attachment.
+          DescribedImage(
+            bytes: Uint8List(2),
             mimeType: 'image/png',
+            metadata: const PhotoMetadata(summary: shown),
           ),
         ],
+        newId: ids(),
       );
+      final images = write.message.content.cast<ImageContentBlock>();
+      expect(images.map((b) => b.photoMetadata), [
+        const PhotoMetadataRef(summary: shown, blocksId: 'a2'),
+        null,
+        const PhotoMetadataRef(summary: shown, blocksId: 'a2'),
+        const PhotoMetadataRef(summary: shown),
+      ]);
+      expect(write.attachments.map((a) => a.attachmentId), [
+        'a1',
+        'a2',
+        'a3',
+        'a4',
+        'a5',
+      ]);
+      final metadata = write.attachments[1];
+      expect(metadata.mimeType, PhotoMetadataBlocks.mimeType);
+      expect(PhotoMetadataBlocks.decode(metadata.bytes), blocks);
+      // Only the images are images.
+      expect(write.message.imageAttachmentIds(), ['a1', 'a3', 'a4', 'a5']);
+    });
+
+    test('an image-only turn has no empty text block', () {
+      final msg = logic
+          .buildUserMessage(
+            id: 'u',
+            conversationId: 'c',
+            text: '',
+            images: [
+              DescribedImage(bytes: Uint8List(1), mimeType: 'image/png'),
+            ],
+          )
+          .message;
       expect(msg.content.whereType<TextContentBlock>(), isEmpty);
       expect(msg.content, hasLength(1));
     });
@@ -275,15 +331,21 @@ void main() {
     });
   });
 
-  group('ChatLogic.inheritedPhotoMetadata', () {
-    const photo = PhotoMetadata(camera: CameraInfo(model: 'iPhone 17'));
-    const other = PhotoMetadata(camera: CameraInfo(model: 'EOS R5'));
-    ImageContentBlock image(String id, [PhotoMetadata? m]) => ImageContentBlock(
-      attachmentId: id,
-      mimeType: 'image/png',
-      byteSize: 1,
-      photoMetadata: m,
+  group('ChatLogic.generatedImageOrigin', () {
+    const photo = PhotoMetadataRef(
+      summary: PhotoSummary(camera: CameraInfo(model: 'iPhone 17')),
+      blocksId: 'photo-meta',
     );
+    const other = PhotoMetadataRef(
+      summary: PhotoSummary(camera: CameraInfo(model: 'EOS R5')),
+    );
+    ImageContentBlock image(String id, [PhotoMetadataRef? m]) =>
+        ImageContentBlock(
+          attachmentId: id,
+          mimeType: 'image/png',
+          byteSize: 1,
+          photoMetadata: m,
+        );
     Message turn(MessageRole role, List<ContentBlock> content) => Message(
       id: 'm${content.length}',
       conversationId: 'c',
@@ -291,13 +353,18 @@ void main() {
       content: content,
       createdAt: DateTime(2026),
     );
+    const edited = AiOrigin.editedPhoto;
+    const generated = AiOrigin.generated;
 
     test('the first image of the last user turn that carries some', () {
       final history = [
         turn(MessageRole.user, [image('old', other)]),
         turn(MessageRole.user, [image('a'), image('b', photo)]),
       ];
-      expect(logic.inheritedPhotoMetadata(history), photo);
+      expect(logic.generatedImageOrigin(history), (
+        origin: edited,
+        metadata: photo,
+      ));
     });
 
     test("without attachments, the conversation's latest image", () {
@@ -306,17 +373,49 @@ void main() {
         turn(MessageRole.assistant, [image('b', photo)]),
         turn(MessageRole.user, [const ContentBlock.text(text: 'again')]),
       ];
-      expect(logic.inheritedPhotoMetadata(history), photo);
+      expect(logic.generatedImageOrigin(history), (
+        origin: edited,
+        metadata: photo,
+      ));
     });
 
-    test('nothing to inherit from', () {
-      expect(logic.inheritedPhotoMetadata(const []), isNull);
-      expect(
-        logic.inheritedPhotoMetadata([
-          turn(MessageRole.user, [const ContentBlock.text(text: 'a cat')]),
-        ]),
-        isNull,
-      );
+    test('an edited screenshot: from a reference, nothing inherited', () {
+      final history = [
+        turn(MessageRole.user, [image('screenshot')]),
+      ];
+      for (final said in [null, false]) {
+        expect(logic.generatedImageOrigin(history, textToImage: said), (
+          origin: edited,
+          metadata: null,
+        ));
+      }
+    });
+
+    test('drawn from the prompt alone: generated, nothing inherited', () {
+      final withPhoto = [
+        turn(MessageRole.user, [image('a', photo)]),
+      ];
+      expect(logic.generatedImageOrigin(withPhoto, textToImage: true), (
+        origin: generated,
+        metadata: null,
+      ));
+      // No reference to start from, and the server does not say.
+      final promptOnly = [
+        turn(MessageRole.user, [const ContentBlock.text(text: 'a cat')]),
+      ];
+      expect(logic.generatedImageOrigin(const []), (
+        origin: generated,
+        metadata: null,
+      ));
+      expect(logic.generatedImageOrigin(promptOnly), (
+        origin: generated,
+        metadata: null,
+      ));
+      // The server says it edited: an edit, even of nothing we know of.
+      expect(logic.generatedImageOrigin(promptOnly, textToImage: false), (
+        origin: edited,
+        metadata: null,
+      ));
     });
   });
 

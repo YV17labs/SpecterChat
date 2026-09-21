@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:specterchat/application/images/drawing_session.dart';
 import 'package:specterchat/application/images/pending_image.dart';
 import 'package:specterchat/domain/models/annotation.dart';
+import 'package:specterchat/domain/models/message.dart';
 
 void main() {
   const annotation = Annotation(
@@ -18,9 +19,8 @@ void main() {
   );
   final plain = PendingImage(
     id: 'a',
-    bytes: Uint8List(0),
-    mimeType: 'image/png',
     name: 'a',
+    image: DescribedImage(bytes: Uint8List(0), mimeType: 'image/png'),
   );
 
   test('outgoingCount expands annotated entries', () {

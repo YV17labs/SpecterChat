@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:drift/drift.dart';
 
 import '../../domain/models/message.dart' as model;
+import '../../domain/models/photo_metadata.dart' show AiOrigin;
 import '../../domain/repositories/i_message_repository.dart';
 import 'database.dart';
 
@@ -119,18 +120,39 @@ class MessageRepository implements IMessageRepository {
       rows.map(_toModel).toList(growable: false);
 
   static model.Message _toModel(Message row) {
+    final role = model.MessageRole.values.byName(row.role);
     final blocks = (jsonDecode(row.content) as List)
         .map((c) => model.ContentBlock.fromJson(c as Map<String, dynamic>))
         .toList();
     return model.Message(
       id: row.id,
       conversationId: row.conversationId,
-      role: model.MessageRole.values.byName(row.role),
-      content: blocks,
+      role: role,
+      content: role == model.MessageRole.assistant
+          ? _withLegacyAiOrigin(blocks)
+          : blocks,
       createdAt: row.createdAt,
       completionTokens: row.completionTokens,
       durationMs: row.durationMs,
       isStreaming: row.isStreaming,
     );
   }
+
+  /// Images a model made before their block recorded it have no
+  /// [model.ImageContentBlock.aiOrigin]: an image in a reply is the
+  /// model's, an edited photo when it inherited a photo's metadata. The one
+  /// place the message's role still says how an image was made.
+  static List<model.ContentBlock> _withLegacyAiOrigin(
+    List<model.ContentBlock> blocks,
+  ) => [
+    for (final b in blocks)
+      if (b case model.ImageContentBlock(aiOrigin: null, :final photoMetadata))
+        b.copyWith(
+          aiOrigin: photoMetadata == null
+              ? AiOrigin.generated
+              : AiOrigin.editedPhoto,
+        )
+      else
+        b,
+  ];
 }

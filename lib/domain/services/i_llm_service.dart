@@ -49,14 +49,15 @@ class ImageDelta extends StreamEvent {
   final Uint8List bytes;
   final String mimeType;
 
-  /// The server says it drew this from the prompt alone, not from the
-  /// images it was sent: it inherits no photo's metadata.
-  final bool textToImage;
+  /// What the server says it did: `true` drawn from the prompt alone,
+  /// `false` edited from the images it was sent, `null` when it does not
+  /// say (`ChatLogic.generatedImageOrigin` then decides).
+  final bool? textToImage;
 
   const ImageDelta({
     required this.bytes,
     required this.mimeType,
-    this.textToImage = false,
+    this.textToImage,
   });
 }
 

@@ -281,7 +281,7 @@ void main() {
       ]);
     });
 
-    test('reads whether the server generated from the prompt alone', () {
+    test('reads what the server says it generated from', () {
       Map<String, Object> entry(Object? meta) => {
         'type': 'image_url',
         'image_url': {'url': 'https://x/y.png'},
@@ -300,8 +300,8 @@ void main() {
       expect(images.map((i) => i.textToImage), [
         false,
         true,
-        false,
-        false,
+        null,
+        null,
         false,
       ]);
     });

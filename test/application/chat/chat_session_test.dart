@@ -381,6 +381,23 @@ void main() {
     });
   });
 
+  test(
+    'a stream that ends without a terminal event completes the turn',
+    () async {
+      final llm = FakeLlmService.events([
+        [const ContentDelta('cut short')],
+      ]);
+      final s = session(llm);
+      await s.sendMessage('hi');
+
+      final reply = persisted().last;
+      expect(reply.role, MessageRole.assistant);
+      expect(reply.plainText, 'cut short');
+      expect(reply.isStreaming, isFalse);
+      expect(s.state.value, isA<SessionIdle>());
+    },
+  );
+
   group('images', () {
     final pngBytes = fakePngBytes();
     late InMemoryAttachmentRepository attachments;
@@ -399,8 +416,8 @@ void main() {
       await s.sendMessage(
         'look',
         images: [
-          OutgoingImage(bytes: pngBytes, mimeType: 'image/png'),
-          OutgoingImage(bytes: pngBytes, mimeType: 'image/jpeg'),
+          DescribedImage(bytes: pngBytes, mimeType: 'image/png'),
+          DescribedImage(bytes: pngBytes, mimeType: 'image/jpeg'),
         ],
       );
 
@@ -426,7 +443,7 @@ void main() {
         final s = imageSession(llm);
         await s.sendMessage(
           '',
-          images: [OutgoingImage(bytes: pngBytes, mimeType: 'image/png')],
+          images: [DescribedImage(bytes: pngBytes, mimeType: 'image/png')],
         );
 
         final user = persisted().first;
@@ -571,53 +588,144 @@ void main() {
 
     setUp(() => attachments = InMemoryAttachmentRepository());
 
-    const photo = PhotoMetadata(
+    const shown = PhotoSummary(
       camera: CameraInfo(make: 'Apple', model: 'iPhone 17'),
       location: GeoLocation(latitude: 42.56858, longitude: 8.75145),
     );
+    const blocks = kPhotoBlocks;
+    const photo = PhotoMetadata(summary: shown, blocks: blocks);
+    DescribedImage photoImage() =>
+        DescribedImage(bytes: pngBytes, mimeType: 'image/png', metadata: photo);
+    final edit = [
+      ImageDelta(bytes: pngBytes, mimeType: 'image/png'),
+      const StreamDone(),
+    ];
 
     ImageContentBlock lastImage() =>
         persisted().last.content.whereType<ImageContentBlock>().single;
 
-    test('an attached photo keeps its metadata on its image block', () async {
+    /// [image]'s photo metadata: what is shown, the stored blocks, and the
+    /// message that owns them.
+    (PhotoSummary, PhotoMetadataBlocks?, String?) stored(
+      ImageContentBlock image,
+    ) {
+      final ref = image.photoMetadata!;
+      final id = ref.blocksId;
+      return (
+        ref.summary,
+        id == null ? null : attachments.photoMetadata[id],
+        id == null ? null : attachments.owners[id],
+      );
+    }
+
+    test('an attached photo: shown on its block, blocks alongside', () async {
       final llm = FakeLlmService.events([
         [const ContentDelta('nice'), const StreamDone()],
       ]);
       await imageSession(llm).sendMessage(
         'look',
         images: [
-          OutgoingImage(
-            bytes: pngBytes,
-            mimeType: 'image/png',
-            metadata: photo,
-          ),
-          OutgoingImage(bytes: pngBytes, mimeType: 'image/png'),
+          photoImage(),
+          DescribedImage(bytes: pngBytes, mimeType: 'image/png'),
         ],
       );
 
-      final blocks = persisted().first.content.whereType<ImageContentBlock>();
-      expect(blocks.map((b) => b.photoMetadata), [photo, null]);
+      final user = persisted().first;
+      final [withPhoto, plain] = user.content
+          .whereType<ImageContentBlock>()
+          .toList();
+      expect(stored(withPhoto), (shown, blocks, user.id));
+      expect(plain.photoMetadata, isNull);
+      // The blocks are not an image: not loaded as one, not sent.
+      final metadataId = withPhoto.photoMetadata!.blocksId!;
+      expect(user.imageAttachmentIds(), isNot(contains(metadataId)));
+      expect(await attachments.loadBytes(metadataId), isNull);
+      expect(llm.receivedHistories.single.single.imageAttachmentIds(), [
+        withPhoto.attachmentId,
+        plain.attachmentId,
+      ]);
     });
 
-    test('an edit of the photo inherits its metadata', () async {
+    test('an edit of the photo inherits a copy of its own', () async {
+      final llm = FakeLlmService.events([edit]);
+      await imageSession(
+        llm,
+      ).sendMessage('make the sky orange', images: [photoImage()]);
+
+      final [user, reply] = persisted();
+      final source = user.content.whereType<ImageContentBlock>().single;
+      expect(stored(lastImage()), (shown, blocks, reply.id));
+      expect(
+        lastImage().photoMetadata!.blocksId,
+        isNot(source.photoMetadata!.blocksId),
+      );
+      expect(lastImage().aiOrigin, AiOrigin.editedPhoto);
+    });
+
+    test(
+      'the inherited blocks are stored before the reply refers to them',
+      () async {
+        final checked = messages = _ReferencesChecked();
+        final llm = FakeLlmService.events([
+          [...edit.take(1), ...edit],
+        ]);
+        await imageSession(
+          llm,
+        ).sendMessage('two takes', images: [photoImage()]);
+        checked.attachments = attachments;
+
+        final images = persisted().last.content.whereType<ImageContentBlock>();
+        expect(images, hasLength(2));
+        // One copy for the turn, shared by its images.
+        expect(
+          images.map((i) => i.photoMetadata!.blocksId).toSet(),
+          hasLength(1),
+        );
+        expect(checked.unresolved, isEmpty);
+      },
+    );
+
+    test(
+      'an edited screenshot is an edited photo, inheriting nothing',
+      () async {
+        final llm = FakeLlmService.events([edit]);
+        await imageSession(llm).sendMessage(
+          'crop it',
+          images: [DescribedImage(bytes: pngBytes, mimeType: 'image/png')],
+        );
+
+        expect(lastImage().photoMetadata, isNull);
+        expect(lastImage().aiOrigin, AiOrigin.editedPhoto);
+      },
+    );
+
+    test('with nothing to start from, the image is generated', () async {
+      final llm = FakeLlmService.events([edit]);
+      await imageSession(llm).sendMessage('a cat');
+
+      expect(lastImage().photoMetadata, isNull);
+      expect(lastImage().aiOrigin, AiOrigin.generated);
+    });
+
+    test('a result sent again keeps how it was made', () async {
       final llm = FakeLlmService.events([
-        [
-          ImageDelta(bytes: pngBytes, mimeType: 'image/png'),
-          const StreamDone(),
-        ],
+        [const ContentDelta('ok'), const StreamDone()],
       ]);
       await imageSession(llm).sendMessage(
-        'make the sky orange',
+        'in the red area: a hat',
         images: [
-          OutgoingImage(
+          DescribedImage(
             bytes: pngBytes,
             mimeType: 'image/png',
-            metadata: photo,
+            aiOrigin: AiOrigin.generated,
           ),
         ],
       );
 
-      expect(lastImage().photoMetadata, photo);
+      final block = persisted().first.content
+          .whereType<ImageContentBlock>()
+          .single;
+      expect(block.aiOrigin, AiOrigin.generated);
     });
 
     test('an image generated from the prompt alone inherits nothing', () async {
@@ -627,68 +735,63 @@ void main() {
           const StreamDone(),
         ],
       ]);
-      await imageSession(llm).sendMessage(
-        'a cat instead',
-        images: [
-          OutgoingImage(
-            bytes: pngBytes,
-            mimeType: 'image/png',
-            metadata: photo,
-          ),
-        ],
-      );
+      await imageSession(
+        llm,
+      ).sendMessage('a cat instead', images: [photoImage()]);
 
       expect(lastImage().photoMetadata, isNull);
+      expect(lastImage().aiOrigin, AiOrigin.generated);
     });
 
-    test('the metadata follows a chain of edits', () async {
-      final edit = [
-        ImageDelta(bytes: pngBytes, mimeType: 'image/png'),
-        const StreamDone(),
-      ];
+    test('the metadata follows a chain of edits, a copy each', () async {
       final llm = FakeLlmService.events([edit, edit, edit]);
       final s = imageSession(llm);
-      await s.sendMessage(
-        'make it blue',
-        images: [
-          OutgoingImage(
-            bytes: pngBytes,
-            mimeType: 'image/png',
-            metadata: photo,
-          ),
-        ],
-      );
+      await s.sendMessage('make it blue', images: [photoImage()]);
       // No image attached: the server edits its latest output, and so the
       // new image inherits from it — twice.
       await s.sendMessage('add a hat');
       await s.sendMessage('now at night');
 
-      final generated = persisted()
-          .where((m) => m.role == MessageRole.assistant)
-          .map((m) => m.content.whereType<ImageContentBlock>().single);
-      expect(generated.map((b) => b.photoMetadata), [photo, photo, photo]);
+      final replies = persisted().where((m) => m.role == MessageRole.assistant);
+      expect(replies, hasLength(3));
+      for (final reply in replies) {
+        final image = reply.content.whereType<ImageContentBlock>().single;
+        expect(stored(image), (shown, blocks, reply.id));
+      }
+    });
+
+    test('blocks an earlier build kept inline are inherited too', () async {
+      await messages.saveMessage(
+        testMessage(
+          MessageRole.user,
+          const [
+            ImageContentBlock(
+              attachmentId: 'old',
+              mimeType: 'image/png',
+              byteSize: 1,
+              photoMetadata: PhotoMetadataRef(
+                summary: shown,
+                inlineBlocks: blocks,
+              ),
+            ),
+          ],
+          id: '0',
+          conversationId: _conv,
+        ),
+      );
+      final llm = FakeLlmService.events([edit]);
+      await imageSession(llm).sendMessage('make it blue');
+
+      expect(stored(lastImage()), (shown, blocks, persisted().last.id));
     });
 
     test('a fresh attachment without metadata breaks the chain', () async {
-      final edit = [
-        ImageDelta(bytes: pngBytes, mimeType: 'image/png'),
-        const StreamDone(),
-      ];
       final llm = FakeLlmService.events([edit, edit]);
       final s = imageSession(llm);
-      await s.sendMessage(
-        'make it blue',
-        images: [
-          OutgoingImage(
-            bytes: pngBytes,
-            mimeType: 'image/png',
-            metadata: photo,
-          ),
-        ],
-      );
+      await s.sendMessage('make it blue', images: [photoImage()]);
       await s.sendMessage(
         'use this one instead',
-        images: [OutgoingImage(bytes: pngBytes, mimeType: 'image/png')],
+        images: [DescribedImage(bytes: pngBytes, mimeType: 'image/png')],
       );
 
       expect(lastImage().photoMetadata, isNull);
@@ -717,4 +820,23 @@ void main() {
       expect(llm.calls, 1);
     });
   });
+}
+
+/// Records every attachment id a streaming upsert refers to that is not
+/// stored yet (set [attachments] before the upserts to check).
+class _ReferencesChecked extends InMemoryMessageRepository {
+  InMemoryAttachmentRepository? attachments;
+  final List<String> unresolved = [];
+
+  @override
+  Future<void> upsertStreamingMessage(Message message) {
+    if (attachments case final stored?) {
+      for (final image in message.content.whereType<ImageContentBlock>()) {
+        for (final id in [image.attachmentId, ?image.photoMetadata?.blocksId]) {
+          if (!stored.rows.containsKey(id)) unresolved.add(id);
+        }
+      }
+    }
+    return super.upsertStreamingMessage(message);
+  }
 }

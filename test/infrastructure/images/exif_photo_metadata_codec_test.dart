@@ -6,28 +6,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:specterchat/domain/models/photo_metadata.dart';
 import 'package:specterchat/infrastructure/images/exif_photo_metadata_codec.dart';
 
+import '../../support/exif_fixtures.dart';
+
 const codec = ExifPhotoMetadataCodec();
 
-const iphone = PhotoMetadata(
-  camera: CameraInfo(
-    make: 'Apple',
-    model: 'iPhone 17',
-    lensMake: 'Apple',
-    lensModel: 'iPhone 17 back dual wide camera 5.96mm f/1.6',
-    focalLength: 5.96,
-    focalLength35mm: 26,
-    fNumber: 1.6,
-    exposureTime: 1 / 4329,
-    iso: 40,
-  ),
-  captured: CaptureTime(local: '2026:07:05 19:41:50', offset: '+02:00'),
-  location: GeoLocation(
-    latitude: 42.56858,
-    longitude: 8.75145,
-    altitude: 33.97,
-    direction: 64.82,
-  ),
-);
+/// What reading an iPhone photo yields: display fields and the EXIF block.
+final iphone = codec.read(jpeg(exif: iphoneTiff()))!;
 
 void main() {
   group('read', () {
@@ -35,7 +19,7 @@ void main() {
       final metadata = codec.read(jpeg(exif: canonTiff()));
 
       expect(
-        metadata?.camera,
+        metadata?.summary.camera,
         const CameraInfo(
           make: 'Canon',
           model: 'EOS R5',
@@ -46,16 +30,14 @@ void main() {
         ),
       );
       expect(
-        metadata?.captured,
-        const CaptureTime(local: '2024:05:01 10:20:30', offset: '-04:00'),
+        metadata?.summary.captured,
+        CaptureTime(local: DateTime(2024, 5, 1, 10, 20, 30), offset: '-04:00'),
       );
-      final location = metadata!.location!;
+      final location = metadata!.summary.location!;
       // South and west are negative; the altitude is below sea level.
       expect(location.latitude, closeTo(-(33 + 51 / 60 + 30.84 / 3600), 1e-8));
       expect(location.longitude, closeTo(-151.21, 1e-8));
       expect(location.altitude, -5);
-      expect(location.direction, 270);
-      expect(location.magneticNorth, isTrue);
     });
 
     test('drops what a camera without clock or fix writes', () {
@@ -70,9 +52,9 @@ void main() {
         ],
       );
       final read = codec.read(jpeg(exif: tiff))!;
-      expect(read.camera, const CameraInfo(make: 'Canon'));
-      expect(read.captured, isNull);
-      expect(read.location, isNull);
+      expect(read.summary.camera, const CameraInfo(make: 'Canon'));
+      expect(read.summary.captured, isNull);
+      expect(read.summary.location, isNull);
     });
 
     test('from PNG eXIf and WebP EXIF chunks, with or without header', () {
@@ -84,7 +66,7 @@ void main() {
         webp(exif: tiff),
         webp(exif: withHeader),
       ]) {
-        expect(codec.read(bytes)?.camera?.model, 'EOS R5');
+        expect(codec.read(bytes)?.summary.camera?.model, 'EOS R5');
       }
     });
 
@@ -108,26 +90,9 @@ void main() {
   group('write', () {
     test('round-trips through JPEG and PNG', () {
       for (final target in [jpeg(), png()]) {
-        final written = codec.write(target, iphone)!;
-        final read = codec.read(written)!;
-
-        expect(read.camera, iphone.camera);
-        expect(read.captured, iphone.captured);
-        expect(read.location!.latitude, 42.56858);
-        expect(read.location!.longitude, 8.75145);
-        expect(read.location!.altitude, closeTo(33.97, 1e-9));
-        expect(read.location!.direction, closeTo(64.82, 1e-9));
+        // Display fields and the EXIF block, byte for byte.
+        expect(codec.read(codec.write(target, iphone.blocks)!), iphone);
       }
-    });
-
-    test('rebuilds EXIF from display fields alone (earlier versions)', () {
-      const dateOnly = PhotoMetadata(
-        captured: CaptureTime(local: '2026:07:05 19:41:50'),
-      );
-      final read = codec.read(codec.write(png(), dateOnly)!)!;
-      expect(read.captured, dateOnly.captured);
-      expect(read.camera, isNull);
-      expect(read.location, isNull);
     });
 
     test('PNG: EXIF right after IHDR, old metadata out, the file kept', () {
@@ -144,7 +109,7 @@ void main() {
         ],
       );
 
-      final written = codec.write(source, iphone)!;
+      final written = codec.write(source, iphone.blocks)!;
 
       final chunks = pngChunks(written);
       // The file's own text is metadata too: replaced like the rest.
@@ -173,7 +138,7 @@ void main() {
         ]);
         final source = jpeg(exif: canonTiff(), before: [xmp, app13, app2]);
 
-        final written = codec.write(source, iphone)!;
+        final written = codec.write(source, iphone.blocks)!;
 
         final markers = jpegMarkers(written);
         expect(markers, [0xE0, 0xE1, 0xE2, 0xDB, 0xDA]);
@@ -185,32 +150,48 @@ void main() {
 
     test("keeps the file's own orientation, never the photo's", () {
       // A JPEG attached untouched still stores its pixels sideways.
-      final sideways = leTiff(ifd0: [short(0x0112, 6)]);
-      final kept = codec.write(jpeg(exif: sideways), iphone)!;
-      expect(tiffInteger(exifOfJpeg(kept)!, 0x0112), 6);
+      final sideways = jpeg(exif: leTiff(ifd0: [short(0x0112, 6)]));
+      expect(
+        tiffInteger(exifOfJpeg(codec.write(sideways, iphone.blocks)!)!, 0x0112),
+        6,
+      );
 
-      // A generated image has none: none is invented.
-      final generated = codec.write(png(), iphone)!;
-      expect(tiffInteger(exifOfPng(generated)!, 0x0112), isNull);
+      // A generated image is upright, whatever the photo said.
+      final sidewaysPhoto = codec.read(jpeg(exif: iphoneTiff(orientation: 6)))!;
+      final generated = codec.write(png(), sidewaysPhoto.blocks)!;
+      expect(tiffInteger(exifOfPng(generated)!, 0x0112), 1);
+    });
+
+    test('a file stored sideways says so even with no EXIF to write', () {
+      final sideways = jpeg(
+        exif: leTiff(ifd0: [textEntry(0x0110, 'iPhone 17'), short(0x0112, 8)]),
+      );
+      final exif = exifOfJpeg(
+        codec.write(sideways, const PhotoMetadataBlocks())!,
+      )!;
+      expect(tiffInteger(exif, 0x0112), 8);
+      // Its orientation and nothing else: no Exif IFD, no camera.
+      expect(exif, hasLength(26));
+      expect(codec.read(exif.asPng)!.summary.camera, isNull);
     });
 
     test('with nothing to write, strips the old metadata', () {
       final written = codec.write(
         jpeg(exif: canonTiff()),
-        const PhotoMetadata(),
+        const PhotoMetadataBlocks(),
       )!;
       expect(jpegMarkers(written), [0xE0, 0xDB, 0xDA]);
     });
 
     test('declares AI only when asked', () {
-      final plain = codec.write(png(), iphone)!;
+      final plain = codec.write(png(), iphone.blocks)!;
       expect(containsBytes(plain, ascii8('SpecterChat')), isFalse);
       expect(containsBytes(plain, ascii8('xmp')), isFalse);
 
       final edited = codec.write(
         png(),
-        iphone,
-        aiMark: AiEditMark.editedPhoto,
+        iphone.blocks,
+        aiMark: AiOrigin.editedPhoto,
       )!;
       expect(xmpOf(edited), contains('compositeWithTrainedAlgorithmicMedia'));
       expect(xmpOf(edited), contains('xmp:CreatorTool="SpecterChat"'));
@@ -218,15 +199,15 @@ void main() {
 
       final generated = codec.write(
         jpeg(),
-        const PhotoMetadata(),
-        aiMark: AiEditMark.generated,
+        const PhotoMetadataBlocks(),
+        aiMark: AiOrigin.generated,
       )!;
       expect(xmpOf(generated), contains('/trainedAlgorithmicMedia"'));
     });
 
     test('is null for formats it does not splice into', () {
-      expect(codec.write(webp(exif: canonTiff()), iphone), isNull);
-      expect(codec.write(png().sublist(0, 20), iphone), isNull);
+      expect(codec.write(webp(exif: canonTiff()), iphone.blocks), isNull);
+      expect(codec.write(png().sublist(0, 20), iphone.blocks), isNull);
     });
   });
 
@@ -249,24 +230,24 @@ void main() {
         );
 
         final read = codec.read(jpeg(exif: source))!;
-        final kept = read.exifBytes!;
+        final kept = read.blocks.exifBytes!;
         expect(containsBytes(kept, makerNote), isTrue);
         expect(containsBytes(kept, future), isTrue);
         expect(containsBytes(kept, ascii8('OLD PICTURE')), isFalse);
         expect(nextIfdOf(kept), 0);
 
         // Into a 1×1 generated PNG: upright, its own size, the rest as read.
-        final written = exifOfPng(codec.write(png(), read)!)!;
+        final written = exifOfPng(codec.write(png(), read.blocks)!)!;
         expect(containsBytes(written, makerNote), isTrue);
         expect(containsBytes(written, future), isTrue);
         expect(tiffInteger(written, 0x0112), 1);
         expect(tiffInteger(written, 0xA002, inExifIfd: true), 1);
         expect(tiffInteger(written, 0xA003, inExifIfd: true), 1);
-        expect(codec.read(written.asPng)?.camera?.model, 'iPhone 17');
+        expect(codec.read(written.asPng)?.summary.camera?.model, 'iPhone 17');
 
         // Into a file stored sideways: its orientation stays its own.
         final sideways = jpeg(exif: leTiff(ifd0: [short(0x0112, 6)]));
-        final intoSideways = exifOfJpeg(codec.write(sideways, read)!)!;
+        final intoSideways = exifOfJpeg(codec.write(sideways, read.blocks)!)!;
         expect(tiffInteger(intoSideways, 0x0112), 6);
         expect(containsBytes(intoSideways, future), isTrue);
       },
@@ -285,10 +266,10 @@ void main() {
           ],
         ),
       )!;
-      expect(read.xmp, contains('future:Scene="kept"'));
-      expect(read.xmp!.length, lessThan(packet.length - 1000));
+      expect(read.blocks.xmp, contains('future:Scene="kept"'));
+      expect(read.blocks.xmp!.length, lessThan(packet.length - 1000));
 
-      final written = codec.write(png(), read)!;
+      final written = codec.write(png(), read.blocks)!;
       expect(xmpOf(written), contains('future:Scene="kept"'));
       expect(xmpOf(written), contains('tiff:Orientation="1"'));
     });
@@ -296,14 +277,14 @@ void main() {
     test('the AI mark updates an existing declaration, else adds one', () {
       const capture =
           'http://cv.iptc.org/newscodes/digitalsourcetype/digitalCapture';
-      final declared = PhotoMetadata(
+      final declared = PhotoMetadataBlocks(
         xmp: xmpPacket(
           'xmlns:Iptc4xmpExt="http://iptc.org/std/Iptc4xmpExt/2008-02-29/" '
           'Iptc4xmpExt:DigitalSourceType="$capture"',
         ),
       );
       final updated = xmpOf(
-        codec.write(png(), declared, aiMark: AiEditMark.editedPhoto)!,
+        codec.write(png(), declared, aiMark: AiOrigin.editedPhoto)!,
       )!;
       expect(updated, isNot(contains(capture)));
       expect(
@@ -313,11 +294,11 @@ void main() {
       );
       expect(updated, contains('compositeWithTrainedAlgorithmicMedia'));
 
-      final other = PhotoMetadata(
+      final other = PhotoMetadataBlocks(
         xmp: xmpPacket('xmlns:dc="http://purl.org/dc/elements/1.1/"'),
       );
       final added = xmpOf(
-        codec.write(png(), other, aiMark: AiEditMark.editedPhoto)!,
+        codec.write(png(), other, aiMark: AiOrigin.editedPhoto)!,
       )!;
       expect(added, contains('xmlns:dc='));
       expect(added, contains('compositeWithTrainedAlgorithmicMedia'));
@@ -342,13 +323,13 @@ void main() {
           ],
         ),
       )!;
-      expect(read.iptcBytes, iptc);
+      expect(read.blocks.iptcBytes, iptc);
 
-      final intoJpeg = codec.write(jpeg(), read)!;
+      final intoJpeg = codec.write(jpeg(), read.blocks)!;
       expect(containsBytes(intoJpeg, [...photoshopHeader, ...iptc]), isTrue);
       expect(containsBytes(intoJpeg, ascii8('OLD PICTURE')), isFalse);
 
-      final intoPng = codec.write(png(), read)!;
+      final intoPng = codec.write(png(), read.blocks)!;
       final profile = pngChunks(
         intoPng,
       ).singleWhere((c) => c.type == 'tEXt').raw;
@@ -385,12 +366,12 @@ void main() {
         PhotoText(keyword: 'Author', text: 'Élodie'),
       ];
       final read = codec.read(source)!;
-      expect(read.texts, texts);
+      expect(read.blocks.texts, texts);
 
-      expect(codec.read(codec.write(png(), read)!)!.texts, texts);
+      expect(codec.read(codec.write(png(), read.blocks)!)!.blocks.texts, texts);
 
-      final intoJpeg = codec.write(jpeg(), read)!;
-      expect(codec.read(intoJpeg)!.texts, const [
+      final intoJpeg = codec.write(jpeg(), read.blocks)!;
+      expect(codec.read(intoJpeg)!.blocks.texts, const [
         PhotoText(keyword: 'Comment', text: 'Title: Calvi'),
         PhotoText(keyword: 'Comment', text: 'Description: Coucher de soleil'),
         PhotoText(keyword: 'Comment', text: 'Author: Élodie'),
@@ -406,11 +387,11 @@ void main() {
           segment(0xEA, [...ascii8('AROT'), 0, 7, 7]),
         ],
       );
-      final written = codec.write(png(), codec.read(source)!)!;
+      final written = codec.write(png(), codec.read(source)!.blocks)!;
       for (final marker in ['ICC_PROFILE', 'MPF', 'AROT']) {
         expect(containsBytes(written, ascii8(marker)), isFalse, reason: marker);
       }
-      expect(codec.read(written)?.camera?.model, 'EOS R5');
+      expect(codec.read(written)?.summary.camera?.model, 'EOS R5');
     });
   });
 }
@@ -418,10 +399,6 @@ void main() {
 // =====================================================================
 // Fixtures: containers and a little-endian TIFF, built by hand
 // =====================================================================
-
-const exifHeader = [0x45, 0x78, 0x69, 0x66, 0x00, 0x00];
-
-List<int> ascii8(String s) => ascii.encode(s);
 
 extension on Uint8List {
   /// This TIFF structure as the EXIF of a PNG.
@@ -455,27 +432,6 @@ List<int> resource(int id, List<int> data) => [
 String hex(List<int> bytes) =>
     bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
 
-/// Entropy-coded data after SOS, then EOI: must come out byte for byte.
-final scan = [0xFF, 0xDA, 0x00, 0x04, 0x01, 0x02, 0x10, 0x20, 0xFF, 0xD9];
-
-List<int> segment(int marker, List<int> payload) => [
-  0xFF,
-  marker,
-  (payload.length + 2) >> 8,
-  (payload.length + 2) & 0xFF,
-  ...payload,
-];
-
-Uint8List jpeg({Uint8List? exif, List<List<int>> before = const []}) =>
-    Uint8List.fromList([
-      0xFF, 0xD8, //
-      ...segment(0xE0, [...ascii8('JFIF'), 0, 1, 1, 0, 0, 1, 0, 1, 0, 0]),
-      if (exif != null) ...segment(0xE1, [...exifHeader, ...exif]),
-      for (final s in before) ...s,
-      ...segment(0xDB, List.filled(65, 1)),
-      ...scan,
-    ]);
-
 List<int> chunk(String type, List<int> data) {
   final body = [...ascii8(type), ...data];
   final crc = crc32(body);
@@ -506,15 +462,6 @@ Uint8List webp({required Uint8List exif}) {
   ]);
 }
 
-List<int> u32be(int v) => [
-  v >> 24 & 0xFF,
-  v >> 16 & 0xFF,
-  v >> 8 & 0xFF,
-  v & 0xFF,
-];
-List<int> u32le(int v) => u32be(v).reversed.toList();
-List<int> u16le(int v) => [v & 0xFF, v >> 8 & 0xFF];
-
 /// Bitwise CRC-32 — deliberately not the codec's table-driven one.
 int crc32(List<int> bytes) {
   var c = 0xFFFFFFFF;
@@ -525,83 +472,6 @@ int crc32(List<int> bytes) {
     }
   }
   return (c ^ 0xFFFFFFFF) & 0xFFFFFFFF;
-}
-
-/// One little-endian IFD entry.
-typedef Entry = ({int tag, int type, int count, List<int> value});
-
-Entry textEntry(int tag, String s) {
-  final v = [...utf8.encode(s), 0];
-  return (tag: tag, type: 2, count: v.length, value: v);
-}
-
-Entry short(int tag, int v) => (tag: tag, type: 3, count: 1, value: u16le(v));
-
-Entry byte(int tag, int v) => (tag: tag, type: 1, count: 1, value: [v]);
-
-Entry long(int tag, int v) => (tag: tag, type: 4, count: 1, value: u32le(v));
-
-Entry undefined(int tag, List<int> v) =>
-    (tag: tag, type: 7, count: v.length, value: v);
-
-Entry rationals(int tag, List<(int, int)> values) => (
-  tag: tag,
-  type: 5,
-  count: values.length,
-  value: [
-    for (final (n, d) in values) ...[...u32le(n), ...u32le(d)],
-  ],
-);
-
-/// IFD0 → Exif IFD → GPS IFD, then — with a [thumbnail] — IFD1 and the
-/// thumbnail's bytes at the end, as cameras lay them out.
-Uint8List leTiff({
-  List<Entry> ifd0 = const [],
-  List<Entry> exif = const [],
-  List<Entry> gps = const [],
-  List<int>? thumbnail,
-}) {
-  int size(List<Entry> es) =>
-      6 +
-      12 * es.length +
-      es.fold<int>(0, (n, e) => e.value.length > 4 ? n + e.value.length : n);
-  Entry pointer(int tag, int at) =>
-      (tag: tag, type: 4, count: 1, value: u32le(at));
-  List<int> ifd(List<Entry> es, int start, [int nextIfd = 0]) {
-    var next = start + 6 + 12 * es.length;
-    final head = <int>[...u16le(es.length)];
-    final data = <int>[];
-    for (final e in es) {
-      head.addAll([...u16le(e.tag), ...u16le(e.type), ...u32le(e.count)]);
-      if (e.value.length <= 4) {
-        head.addAll([...e.value, ...List.filled(4 - e.value.length, 0)]);
-      } else {
-        head.addAll(u32le(next));
-        data.addAll(e.value);
-        next += e.value.length;
-      }
-    }
-    return [...head, ...u32le(nextIfd), ...data];
-  }
-
-  final ifd0Size = size([...ifd0, pointer(0, 0), pointer(0, 0)]);
-  final exifAt = 8 + ifd0Size;
-  final gpsAt = exifAt + size(exif);
-  final fullIfd0 = [...ifd0, pointer(0x8769, exifAt), pointer(0x8825, gpsAt)];
-  final ifd1At = gpsAt + size(gps);
-  final ifd1 = thumbnail == null
-      ? const <Entry>[]
-      : [
-          long(0x0201, ifd1At + size([long(0, 0), long(0, 0)])),
-          long(0x0202, thumbnail.length),
-        ];
-  return Uint8List.fromList([
-    0x49, 0x49, 0x2A, 0x00, 0x08, 0x00, 0x00, 0x00, //
-    ...ifd(fullIfd0, 8, thumbnail == null ? 0 : ifd1At),
-    ...ifd(exif, exifAt),
-    ...ifd(gps, gpsAt),
-    if (thumbnail != null) ...[...ifd(ifd1, ifd1At), ...thumbnail],
-  ]);
 }
 
 Uint8List canonTiff() => leTiff(

@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:logging/logging.dart';
 
 import '../../../application/images/image_export.dart';
+import '../../../domain/models/message.dart';
 import '../../../domain/models/photo_metadata.dart';
 import '../../../domain/services/i_image_io.dart';
 import '../../providers/attachment_provider.dart';
@@ -22,48 +23,36 @@ final _overlayBackground = Colors.black.withValues(alpha: 0.55);
 /// Renders an image whose bytes live in the attachments table. The
 /// widget watches [attachmentBytesProvider] so bytes are loaded only
 /// when the widget is mounted and released shortly after it disposes.
+///
+/// "Save as…" writes the block's photo metadata into the file and declares
+/// how a model made it, as the settings allow; "Annotate & reuse" hands
+/// both to the composer.
 class ImageBlock extends ConsumerWidget {
-  final String attachmentId;
-  final String mimeType;
+  final ImageContentBlock block;
 
-  /// What the photo behind this image said about itself; written into the
-  /// file on "Save as…", as the settings allow.
-  final PhotoMetadata? photoMetadata;
-
-  /// The model made this image (it may then be declared as AI-generated
-  /// when saved).
-  final bool generated;
-
-  const ImageBlock({
-    super.key,
-    required this.attachmentId,
-    required this.mimeType,
-    this.photoMetadata,
-    this.generated = false,
-  });
+  const ImageBlock({super.key, required this.block});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final attachmentId = block.attachmentId;
     final bytesAsync = ref.watch(attachmentBytesProvider(attachmentId));
     return bytesAsync.when(
       data: (bytes) {
         if (bytes == null) return const _ImageError(label: 'Image unavailable');
         return _LoadedImageBlock(
           bytes: bytes,
-          mimeType: mimeType,
-          metadata: photoMetadata,
+          photo: block.photoMetadata?.summary,
           io: ref.watch(imageIoProvider),
-          prepareSave: () => ref
+          save: () => ref
               .read(imageExporterProvider)
-              .prepare(
-                (bytes: bytes, mimeType: mimeType),
-                metadata: photoMetadata,
-                generated: generated,
+              .save(
+                block,
+                bytes,
                 choices: ref.read(settingsProvider).photoMetadata,
               ),
-          onAnnotate: () => ref
-              .read(imageReuseProvider.notifier)
-              .request(bytes, mimeType, metadata: photoMetadata),
+          onAnnotate: () => unawaited(
+            ref.read(imageReuseProvider.notifier).request(block, bytes),
+          ),
         );
       },
       loading: () => const _ImageLoadingPlaceholder(),
@@ -117,25 +106,25 @@ class _ImageError extends StatelessWidget {
 
 class _LoadedImageBlock extends StatefulWidget {
   final Uint8List bytes;
-  final String mimeType;
-  final PhotoMetadata? metadata;
 
-  /// Clipboard and "Save as…" go through here, never a plugin directly.
+  /// What is shown of the photo behind the image, when there is one.
+  final PhotoSummary? photo;
+
+  /// The clipboard goes through here, never a plugin directly.
   final IImageIo io;
 
-  /// The file "Save as…" writes: [bytes] with the photo metadata the user
-  /// chose to keep.
-  final ImageExport Function() prepareSave;
+  /// "Save as…": [bytes] with the photo metadata the user chose to keep,
+  /// where the user says; what went in, or `null` when cancelled.
+  final Future<ImageExport?> Function() save;
 
   /// Hands the image back to the composer, annotation editor open.
   final VoidCallback? onAnnotate;
 
   const _LoadedImageBlock({
     required this.bytes,
-    required this.mimeType,
     required this.io,
-    required this.prepareSave,
-    this.metadata,
+    required this.save,
+    this.photo,
     this.onAnnotate,
   });
 
@@ -209,10 +198,11 @@ class _LoadedImageBlockState extends State<_LoadedImageBlock> {
 
   Future<void> _saveAs() async {
     try {
-      final export = widget.prepareSave();
-      final saved = await widget.io.saveImage(export.image);
-      final message = savedMetadataMessage(export);
-      if (!saved || message == null || !mounted) return;
+      final message = switch (await widget.save()) {
+        final export? => savedMetadataMessage(export),
+        null => null,
+      };
+      if (message == null || !mounted) return;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(message)));
@@ -273,14 +263,14 @@ class _LoadedImageBlockState extends State<_LoadedImageBlock> {
               child: imageWidget,
             ),
           ),
-          if (widget.metadata case final metadata?)
+          if (widget.photo case final photo?)
             Positioned(
               left: 8,
               bottom: 8,
               child: AnimatedOpacity(
                 opacity: _hovering ? 1.0 : 0.0,
                 duration: const Duration(milliseconds: 150),
-                child: _MetadataBadge(metadata: metadata),
+                child: _MetadataBadge(photo: photo),
               ),
             ),
           Positioned(
@@ -324,18 +314,21 @@ class _LoadedImageBlockState extends State<_LoadedImageBlock> {
 /// Where the photo behind the image was taken, and with what: the camera
 /// on the pill, the rest in its tooltip.
 class _MetadataBadge extends StatelessWidget {
-  final PhotoMetadata metadata;
+  final PhotoSummary photo;
 
-  const _MetadataBadge({required this.metadata});
+  const _MetadataBadge({required this.photo});
 
   @override
   Widget build(BuildContext context) {
-    final label = switch (metadata.camera) {
+    final label = switch (photo.camera) {
       final camera? => cameraName(camera),
       null => null,
     };
     return Tooltip(
-      message: photoMetadataLines(metadata).join('\n'),
+      message: photoMetadataLines(
+        photo,
+        locale: systemLocaleOf(context),
+      ).join('\n'),
       waitDuration: const Duration(milliseconds: 300),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
@@ -347,7 +340,7 @@ class _MetadataBadge extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
-              metadata.location != null && label == null
+              photo.location != null && label == null
                   ? Icons.place_outlined
                   : Icons.photo_camera_outlined,
               size: 14,

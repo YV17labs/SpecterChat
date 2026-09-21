@@ -1,6 +1,7 @@
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:specterchat/domain/models/message.dart';
+import 'package:specterchat/domain/models/photo_metadata.dart';
 import 'package:specterchat/infrastructure/persistence/conversation_repository.dart';
 import 'package:specterchat/infrastructure/persistence/database.dart'
     hide Message;
@@ -179,5 +180,39 @@ void main() {
       throwsStateError,
     );
     expect(await repo.getMessages(convId), isEmpty);
+  });
+
+  test('images of replies stored before their origin was recorded', () async {
+    // What earlier builds wrote: no `aiOrigin` key.
+    Future<void> row(String id, MessageRole role, String blocks) => db
+        .into(db.messages)
+        .insert(
+          MessagesCompanion.insert(
+            id: id,
+            conversationId: convId,
+            role: role.name,
+            content: '[$blocks]',
+            createdAt: now,
+          ),
+        );
+    String image(String id, {bool withMetadata = false}) =>
+        '{"runtimeType":"image","attachmentId":"$id",'
+        '"mimeType":"image/png","byteSize":1'
+        '${withMetadata ? ',"photoMetadata":{"camera":{"model":"X"}}' : ''}}';
+    await row('m-1', MessageRole.user, image('photo', withMetadata: true));
+    await row(
+      'm-2',
+      MessageRole.assistant,
+      '{"runtimeType":"text","text":"Here"},'
+          '${image('edit', withMetadata: true)},${image('drawn')}',
+    );
+
+    final [user, reply] = await repo.getMessages(convId);
+    ImageContentBlock at(Message m, int i) => m.content[i] as ImageContentBlock;
+    // The role says the model made them; the metadata, from what.
+    expect(reply.content.first, const ContentBlock.text(text: 'Here'));
+    expect(at(reply, 1).aiOrigin, AiOrigin.editedPhoto);
+    expect(at(reply, 2).aiOrigin, AiOrigin.generated);
+    expect(at(user, 0).aiOrigin, isNull);
   });
 }

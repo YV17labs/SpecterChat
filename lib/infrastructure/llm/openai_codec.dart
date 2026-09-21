@@ -355,13 +355,14 @@ class OpenAiCodec {
 
   /// The images of a chat completion delta/message `images` array
   /// (OpenRouter convention: `[{type: image_url, image_url: {url}}]`), with
-  /// whether the server says it generated from the prompt alone
-  /// (`generation.mode: text_to_image`). Entries without a URL are dropped.
-  static List<({String url, bool textToImage})> generatedImages(
+  /// what the server says it did (`generation.mode`): `true` for
+  /// `text_to_image`, `false` for `reference_edit`, `null` when it says
+  /// nothing. Entries without a URL are dropped.
+  static List<({String url, bool? textToImage})> generatedImages(
     Object? images,
   ) {
     if (images is! List) return const [];
-    final out = <({String url, bool textToImage})>[];
+    final out = <({String url, bool? textToImage})>[];
     for (final entry in images) {
       if (entry is! Map) continue;
       final imageUrl = entry['image_url'];
@@ -370,7 +371,11 @@ class OpenAiCodec {
       final meta = entry['generation'] ?? entry['specterforge'];
       out.add((
         url: url,
-        textToImage: meta is Map && meta['mode'] == 'text_to_image',
+        textToImage: switch (meta is Map ? meta['mode'] : null) {
+          'text_to_image' => true,
+          'reference_edit' => false,
+          _ => null,
+        },
       ));
     }
     return out;

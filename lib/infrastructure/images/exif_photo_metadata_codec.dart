@@ -33,25 +33,27 @@ class ExifPhotoMetadataCodec implements IPhotoMetadataCodec {
       final tiff? => _withoutThumbnail(tiff),
       null => null,
     };
-    final metadata = _summaryOf(exif).copyWith(
+    final verbatim = PhotoMetadataBlocks(
       exif: exif == null ? null : base64Encode(exif),
       xmp: blocks.xmp,
       iptc: blocks.iptc == null ? null : base64Encode(blocks.iptc!),
       texts: blocks.texts,
     );
-    return metadata.isEmpty ? null : metadata;
+    // What is shown is read from the EXIF: no blocks, nothing to show.
+    if (verbatim.isEmpty) return null;
+    return PhotoMetadata(summary: _summaryOf(exif), blocks: verbatim);
   }
 
   @override
   Uint8List? write(
     Uint8List bytes,
-    PhotoMetadata metadata, {
-    AiEditMark? aiMark,
+    PhotoMetadataBlocks blocks, {
+    AiOrigin? aiMark,
   }) => _orElse(
     null,
     () => switch (sniffImageMime(bytes)) {
-      'image/jpeg' => _writeJpeg(bytes, metadata, aiMark),
-      'image/png' => _writePng(bytes, metadata, aiMark),
+      'image/jpeg' => _writeJpeg(bytes, blocks, aiMark),
+      'image/png' => _writePng(bytes, blocks, aiMark),
       _ => null,
     },
   );
@@ -103,18 +105,18 @@ int? _orientationOf(Uint8List? exif) {
 }
 
 /// The blocks to splice into a file with [own] properties.
-_Blocks _blocksToWrite(PhotoMetadata m, _Own own, AiEditMark? mark) => _Blocks(
-  exif: _exifFor(m, own),
-  xmp: _xmpFor(m.xmp, own.orientation, mark),
-  iptc: m.iptcBytes,
-  texts: m.texts,
-);
+_Blocks _blocksToWrite(PhotoMetadataBlocks m, _Own own, AiOrigin? mark) =>
+    _Blocks(
+      exif: _exifFor(m, own),
+      xmp: _xmpFor(m.xmp, own.orientation, mark),
+      iptc: m.iptcBytes,
+      texts: m.texts,
+    );
 
-/// The EXIF to write: the photo's own block fitted to the file, or — for
-/// images attached by an earlier version, which kept only the display
-/// fields — one rebuilt from those. A file sideways on disk keeps saying
-/// so even when there is nothing else to write.
-Uint8List? _exifFor(PhotoMetadata m, _Own own) {
+/// The EXIF to write: the photo's own block fitted to the file. A file
+/// stored sideways keeps saying so when there is no such block to write
+/// (none kept, none read): it gets one holding only its orientation.
+Uint8List? _exifFor(PhotoMetadataBlocks m, _Own own) {
   if (m.exifBytes case final raw?) {
     final fitted = _fittedExif(
       raw,
@@ -123,13 +125,17 @@ Uint8List? _exifFor(PhotoMetadata m, _Own own) {
     );
     if (fitted != null) return fitted;
   }
-  final hasDisplay =
-      m.camera != null || m.captured != null || m.location != null;
-  if (!hasDisplay && own.orientation == null) return null;
-  return _writeTiff(m, orientation: own.orientation);
+  return switch (own.orientation) {
+    final orientation? => _fittedExif(
+      _orientationOnlyExif,
+      orientation: orientation,
+      size: null,
+    ),
+    null => null,
+  };
 }
 
-String? _xmpFor(String? xmp, int? orientation, AiEditMark? mark) {
+String? _xmpFor(String? xmp, int? orientation, AiOrigin? mark) {
   final packet = xmp == null ? null : _withOrientation(xmp, orientation ?? 1);
   return mark == null ? packet : _withAiMark(packet, mark);
 }
@@ -276,7 +282,7 @@ _Blocks _jpegBlocks(Uint8List b) {
 
 /// [b] with [m] as its metadata; one walk of the file serves the
 /// orientation, the size and the splice.
-Uint8List _writeJpeg(Uint8List b, PhotoMetadata m, AiEditMark? mark) {
+Uint8List _writeJpeg(Uint8List b, PhotoMetadataBlocks m, AiOrigin? mark) {
   final (:segments, :scan) = _jpegSegments(b);
   final blocks = _blocksToWrite(m, (
     orientation: _orientationOf(_jpegExif(b, segments)),
@@ -417,7 +423,7 @@ PhotoText? _pngText(String type, Uint8List d) {
 
 /// [b] with [m] as its metadata; one walk of the file serves the
 /// orientation, the size and the splice.
-Uint8List _writePng(Uint8List b, PhotoMetadata m, AiEditMark? mark) {
+Uint8List _writePng(Uint8List b, PhotoMetadataBlocks m, AiOrigin? mark) {
   final chunks = _pngChunks(b);
   final ihdr = chunks.first;
   if (ihdr.type != 'IHDR' || ihdr.dataEnd - ihdr.data < 8) {
@@ -592,7 +598,6 @@ abstract final class _Tag {
   static const exposureTime = 0x829A;
   static const fNumber = 0x829D;
   static const iso = 0x8827;
-  static const exifVersion = 0x9000;
   static const dateTimeOriginal = 0x9003;
   static const dateTimeDigitized = 0x9004;
   static const offsetTimeOriginal = 0x9011;
@@ -600,20 +605,14 @@ abstract final class _Tag {
   static const focalLength = 0x920A;
   static const pixelXDimension = 0xA002;
   static const pixelYDimension = 0xA003;
-  static const focalLength35mm = 0xA405;
-  static const lensMake = 0xA433;
-  static const lensModel = 0xA434;
 
   // GPS IFD
-  static const gpsVersion = 0x0000;
   static const latitudeRef = 0x0001;
   static const latitude = 0x0002;
   static const longitudeRef = 0x0003;
   static const longitude = 0x0004;
   static const altitudeRef = 0x0005;
   static const altitude = 0x0006;
-  static const directionRef = 0x0010;
-  static const direction = 0x0011;
 }
 
 /// Byte size of one value of each TIFF field type (129 is Exif 3's UTF-8).
@@ -768,10 +767,20 @@ Uint8List _withoutThumbnail(Uint8List tiff) {
   });
 }
 
+/// An EXIF block holding nothing but an orientation (IFD0, one SHORT), for
+/// [_fittedExif] to set.
+const _orientationOnlyExif = [
+  0x4D, 0x4D, 0x00, 0x2A, 0x00, 0x00, 0x00, 0x08, // big-endian, IFD0 at 8
+  0x00, 0x01, // one entry:
+  0x01, 0x12, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01, // Orientation, SHORT, 1
+  0x00, 0x01, 0x00, 0x00, // its value, padded
+  0x00, 0x00, 0x00, 0x00, // no next IFD
+];
+
 /// A copy of the photo's [raw] EXIF describing the destination file: its
 /// [orientation] and pixel [size]. `null` when [raw] does not parse.
 Uint8List? _fittedExif(
-  Uint8List raw, {
+  List<int> raw, {
   required int orientation,
   required (int, int)? size,
 }) => _orElse(null, () {
@@ -794,14 +803,19 @@ Uint8List? _fittedExif(
 
 final _utcOffset = RegExp(r'^[+-]\d{2}:\d{2}$');
 
+/// EXIF's date and time, `YYYY:MM:DD HH:MM:SS`.
+final _exifDateTime = RegExp(
+  r'^(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})$',
+);
+
 /// Camera, date and place from [exif], for display.
-PhotoMetadata _summaryOf(Uint8List? exif) {
-  if (exif == null) return const PhotoMetadata();
-  return _orElse(const PhotoMetadata(), () {
+PhotoSummary _summaryOf(Uint8List? exif) {
+  if (exif == null) return const PhotoSummary();
+  return _orElse(const PhotoSummary(), () {
     final t = _Tiff(exif);
     final ifd0 = t.ifd0;
     final exifIfd = t.subIfd(ifd0[_Tag.exifIfd]);
-    return PhotoMetadata(
+    return PhotoSummary(
       camera: _readCamera(t, ifd0, exifIfd),
       captured: _readCaptureTime(t, exifIfd),
       location: _readLocation(t, t.subIfd(ifd0[_Tag.gpsIfd])),
@@ -813,10 +827,7 @@ CameraInfo? _readCamera(_Tiff t, Map<int, _Entry> ifd0, Map<int, _Entry> exif) {
   final camera = CameraInfo(
     make: t.text(ifd0[_Tag.make]),
     model: t.text(ifd0[_Tag.model]),
-    lensMake: t.text(exif[_Tag.lensMake]),
-    lensModel: t.text(exif[_Tag.lensModel]),
     focalLength: t.positive(exif[_Tag.focalLength]),
-    focalLength35mm: t.positiveInt(exif[_Tag.focalLength35mm]),
     fNumber: t.positive(exif[_Tag.fNumber]),
     exposureTime: t.positive(exif[_Tag.exposureTime]),
     iso: t.positiveInt(exif[_Tag.iso]),
@@ -830,13 +841,8 @@ CaptureTime? _readCaptureTime(_Tiff t, Map<int, _Entry> exif) {
     (_Tag.dateTimeDigitized, _Tag.offsetTimeDigitized),
   ];
   for (final (dateTag, offsetTag) in pairs) {
-    final local = t.text(exif[dateTag]);
-    // Cameras without a clock write zeros.
-    if (local == null ||
-        local.startsWith('0000') ||
-        CaptureTime(local: local).localDateTime == null) {
-      continue;
-    }
+    final local = _exifDate(t.text(exif[dateTag]));
+    if (local == null) continue;
     final offset = t.text(exif[offsetTag]);
     return CaptureTime(
       local: local,
@@ -844,6 +850,20 @@ CaptureTime? _readCaptureTime(_Tiff t, Map<int, _Entry> exif) {
     );
   }
   return null;
+}
+
+/// [s] as a wall-clock [DateTime]; `null` when it is not EXIF's shape, or
+/// the zeros a camera without a clock writes.
+DateTime? _exifDate(String? s) {
+  final m = s == null ? null : _exifDateTime.firstMatch(s);
+  if (m == null) return null;
+  final [year, month, day, hour, minute, second] = [
+    for (var i = 1; i <= 6; i++) int.parse(m[i]!),
+  ];
+  if (year == 0 || month < 1 || month > 12 || day < 1 || day > 31) {
+    return null;
+  }
+  return DateTime(year, month, day, hour, minute, second);
 }
 
 GeoLocation? _readLocation(_Tiff t, Map<int, _Entry> gps) {
@@ -856,7 +876,6 @@ GeoLocation? _readLocation(_Tiff t, Map<int, _Entry> gps) {
   // What a receiver without a fix writes.
   if (latitude == 0 && longitude == 0) return null;
   final altitude = t.number(gps[_Tag.altitude]);
-  final direction = t.number(gps[_Tag.direction]);
   return GeoLocation(
     latitude: latitude,
     longitude: longitude,
@@ -865,10 +884,6 @@ GeoLocation? _readLocation(_Tiff t, Map<int, _Entry> gps) {
         : t.integer(gps[_Tag.altitudeRef]) == 1
         ? -altitude
         : altitude,
-    direction: direction != null && direction >= 0 && direction <= 360
-        ? direction
-        : null,
-    magneticNorth: t.text(gps[_Tag.directionRef]) == 'M',
   );
 }
 
@@ -882,189 +897,6 @@ double? _readDegrees(_Tiff t, _Entry? e) {
   final seconds = t.number(e, 2) ?? 0;
   final value = degrees + minutes / 60 + seconds / 3600;
   return (value * 1e8).round() / 1e8;
-}
-
-// --- Rebuilding from the display fields ------------------------------
-
-/// One IFD entry with its value already encoded (big-endian).
-class _Field {
-  final int tag;
-  final int type;
-  final int count;
-  final Uint8List value;
-
-  const _Field(this.tag, this.type, this.count, this.value);
-
-  factory _Field.ascii(int tag, String s) {
-    final bytes = Uint8List.fromList([...utf8.encode(s), 0]);
-    return _Field(tag, 2, bytes.length, bytes);
-  }
-
-  factory _Field.bytes(int tag, List<int> values, {int type = 1}) =>
-      _Field(tag, type, values.length, Uint8List.fromList(values));
-
-  factory _Field.short(int tag, int value) => _Field(
-    tag,
-    3,
-    1,
-    (ByteData(2)..setUint16(0, value)).buffer.asUint8List(),
-  );
-
-  factory _Field.long(int tag, int value) => _Field(
-    tag,
-    4,
-    1,
-    (ByteData(4)..setUint32(0, value)).buffer.asUint8List(),
-  );
-
-  factory _Field.rationals(int tag, List<(int, int)> values) {
-    final data = ByteData(8 * values.length);
-    for (final (i, (numerator, denominator)) in values.indexed) {
-      data
-        ..setUint32(8 * i, numerator)
-        ..setUint32(8 * i + 4, denominator);
-    }
-    return _Field(tag, 5, values.length, data.buffer.asUint8List());
-  }
-
-  factory _Field.rational(int tag, (int, int) value) =>
-      _Field.rationals(tag, [value]);
-}
-
-/// TIFF header (big-endian, IFD0 right after it).
-const _tiffHeader = [0x4D, 0x4D, 0x00, 0x2A, 0x00, 0x00, 0x00, 0x08];
-
-/// An EXIF block holding [m]'s display fields, for images attached before
-/// the photo's own blocks were kept.
-Uint8List _writeTiff(PhotoMetadata m, {required int? orientation}) {
-  final camera = m.camera;
-  final captured = m.captured;
-  final location = m.location;
-
-  final exif = [
-    _Field.bytes(_Tag.exifVersion, ascii.encode('0232'), type: 7),
-    if (camera != null) ...[
-      if (camera.exposureTime case final v?)
-        _Field.rational(_Tag.exposureTime, _exposureRational(v)),
-      if (camera.fNumber case final v?)
-        _Field.rational(_Tag.fNumber, _fixed(v, 100)),
-      if (camera.iso case final v?) _Field.short(_Tag.iso, _u16(v)),
-      if (camera.focalLength case final v?)
-        _Field.rational(_Tag.focalLength, _fixed(v, 100)),
-      if (camera.focalLength35mm case final v?)
-        _Field.short(_Tag.focalLength35mm, _u16(v)),
-      if (camera.lensMake case final v?) _Field.ascii(_Tag.lensMake, v),
-      if (camera.lensModel case final v?) _Field.ascii(_Tag.lensModel, v),
-    ],
-    if (captured != null) ...[
-      _Field.ascii(_Tag.dateTimeOriginal, captured.local),
-      _Field.ascii(_Tag.dateTimeDigitized, captured.local),
-      if (captured.offset case final o?) ...[
-        _Field.ascii(_Tag.offsetTimeOriginal, o),
-        _Field.ascii(_Tag.offsetTimeDigitized, o),
-      ],
-    ],
-  ];
-
-  final gps = [
-    if (location != null) ...[
-      _Field.bytes(_Tag.gpsVersion, const [2, 2, 0, 0]),
-      _Field.ascii(_Tag.latitudeRef, location.latitude < 0 ? 'S' : 'N'),
-      _Field.rationals(_Tag.latitude, _dms(location.latitude)),
-      _Field.ascii(_Tag.longitudeRef, location.longitude < 0 ? 'W' : 'E'),
-      _Field.rationals(_Tag.longitude, _dms(location.longitude)),
-      if (location.altitude case final a?) ...[
-        _Field.bytes(_Tag.altitudeRef, [if (a < 0) 1 else 0]),
-        _Field.rational(_Tag.altitude, _fixed(a.abs(), 100)),
-      ],
-      if (location.direction case final d?) ...[
-        _Field.ascii(_Tag.directionRef, location.magneticNorth ? 'M' : 'T'),
-        _Field.rational(_Tag.direction, _fixed(d, 100)),
-      ],
-    ],
-  ];
-
-  List<_Field> ifd0({int exifAt = 0, int gpsAt = 0}) => [
-    if (camera?.make case final v?) _Field.ascii(_Tag.make, v),
-    if (camera?.model case final v?) _Field.ascii(_Tag.model, v),
-    if (orientation != null) _Field.short(_Tag.orientation, orientation),
-    _Field.long(_Tag.exifIfd, exifAt),
-    if (gps.isNotEmpty) _Field.long(_Tag.gpsIfd, gpsAt),
-  ];
-
-  // Header, IFD0, Exif IFD, GPS IFD; each IFD followed by the values too
-  // long to sit in its entries. Pointers are 4-byte values, so the sizes
-  // do not depend on them.
-  final exifAt = _tiffHeader.length + _ifdSize(ifd0());
-  final gpsAt = exifAt + _ifdSize(exif);
-  final out = BytesBuilder(copy: false)
-    ..add(_tiffHeader)
-    ..add(_ifdBytes(ifd0(exifAt: exifAt, gpsAt: gpsAt), _tiffHeader.length))
-    ..add(_ifdBytes(exif, exifAt));
-  if (gps.isNotEmpty) out.add(_ifdBytes(gps, gpsAt));
-  return out.takeBytes();
-}
-
-int _ifdSize(List<_Field> fields) =>
-    2 +
-    12 * fields.length +
-    4 +
-    fields.fold<int>(
-      0,
-      (n, f) =>
-          f.value.length > 4 ? n + f.value.length + (f.value.length & 1) : n,
-    );
-
-/// [fields] as an IFD placed at [start] (from the TIFF header), entries
-/// sorted by tag as TIFF requires, no next IFD.
-Uint8List _ifdBytes(List<_Field> fields, int start) {
-  final sorted = [...fields]..sort((a, b) => a.tag.compareTo(b.tag));
-  final out = Uint8List(_ifdSize(sorted));
-  final view = ByteData.sublistView(out);
-  view.setUint16(0, sorted.length);
-  var next = 2 + 12 * sorted.length + 4;
-  for (final (i, f) in sorted.indexed) {
-    final entry = 2 + 12 * i;
-    view
-      ..setUint16(entry, f.tag)
-      ..setUint16(entry + 2, f.type)
-      ..setUint32(entry + 4, f.count);
-    if (f.value.length <= 4) {
-      out.setRange(entry + 8, entry + 8 + f.value.length, f.value);
-    } else {
-      view.setUint32(entry + 8, start + next);
-      out.setRange(next, next + f.value.length, f.value);
-      next += f.value.length + (f.value.length & 1);
-    }
-  }
-  return out;
-}
-
-int _u16(int v) => v.clamp(1, 0xFFFF);
-
-/// [v] (non-negative) as a fraction over [denominator].
-(int, int) _fixed(double v, int denominator) =>
-    ((math.max(v, 0) * denominator).round(), denominator);
-
-/// Exposure times are fractions of a second: keep `1/N` as such.
-(int, int) _exposureRational(double seconds) {
-  if (seconds > 0 && seconds < 1) {
-    final n = 1 / seconds;
-    if ((n - n.round()).abs() < 1e-3) return (1, n.round());
-  }
-  return _fixed(seconds, 10000);
-}
-
-/// Decimal degrees as the degrees / minutes / seconds rationals of GPS
-/// tags, seconds to 1/10000 (a few millimetres).
-List<(int, int)> _dms(double degrees) {
-  const perSecond = 10000;
-  final units = (degrees.abs() * 3600 * perSecond).round();
-  return [
-    (units ~/ (3600 * perSecond), 1),
-    ((units ~/ (60 * perSecond)) % 60, 1),
-    (units % (60 * perSecond), perSecond),
-  ];
 }
 
 // =====================================================================
@@ -1098,12 +930,12 @@ String _withOrientation(String packet, int orientation) => packet
 /// [packet] declaring [mark] (IPTC digital source type): an existing
 /// declaration — Apple Photos writes one after Clean Up — is updated,
 /// otherwise one is added. A packet of our own when there was none.
-String _withAiMark(String? packet, AiEditMark mark) {
+String _withAiMark(String? packet, AiOrigin mark) {
   final source =
       'http://cv.iptc.org/newscodes/digitalsourcetype/'
       '${switch (mark) {
-        AiEditMark.editedPhoto => 'compositeWithTrainedAlgorithmicMedia',
-        AiEditMark.generated => 'trainedAlgorithmicMedia',
+        AiOrigin.editedPhoto => 'compositeWithTrainedAlgorithmicMedia',
+        AiOrigin.generated => 'trainedAlgorithmicMedia',
       }}';
   if (packet == null) return _ownXmpPacket(source);
   for (final form in [

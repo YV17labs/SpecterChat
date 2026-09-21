@@ -1,6 +1,7 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:specterchat/domain/models/message.dart';
 import 'package:specterchat/presentation/providers/image_reuse_provider.dart';
 import 'package:specterchat/presentation/ui/widgets/image_block.dart';
 
@@ -23,10 +24,10 @@ void main() {
     // has decoded the image, which a widget test does not wait for.
     final container = await pumpApp(
       tester,
-      const SizedBox(
+      SizedBox(
         width: 300,
         height: 300,
-        child: ImageBlock(attachmentId: 'att', mimeType: 'image/png'),
+        child: ImageBlock(block: _image('att')),
       ),
       harness: harness,
     );
@@ -60,12 +61,15 @@ void main() {
   testWidgets('a missing attachment shows a placeholder, no services', (
     tester,
   ) async {
-    await pumpApp(
-      tester,
-      const ImageBlock(attachmentId: 'nope', mimeType: 'image/png'),
-    );
+    await pumpApp(tester, ImageBlock(block: _image('nope')));
     await tester.pumpAndSettle();
     expect(find.text('Image unavailable'), findsOneWidget);
     expect(find.byType(Image), findsNothing);
   });
 }
+
+ImageContentBlock _image(String attachmentId) => ImageContentBlock(
+  attachmentId: attachmentId,
+  mimeType: 'image/png',
+  byteSize: 1,
+);

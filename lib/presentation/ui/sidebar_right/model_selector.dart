@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../providers/llm_provider.dart';
+import '../../providers/model_catalog_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../widgets/settings_fields.dart';
 
@@ -11,7 +11,7 @@ class ModelSelector extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final settings = ref.watch(settingsProvider);
-    final modelsAsync = ref.watch(availableModelsProvider);
+    final modelsAsync = ref.watch(modelCatalogProvider.select((c) => c.models));
 
     return LabeledField(
       label: 'Model',
@@ -23,20 +23,31 @@ class ModelSelector extends ConsumerWidget {
                 if (models.isEmpty) {
                   return const Text('No models available');
                 }
+                final selected = settings.api.selectedModel;
                 return DropdownButtonFormField<String>(
                   isExpanded: true,
-                  initialValue: models.contains(settings.api.selectedModel)
-                      ? settings.api.selectedModel
+                  initialValue: models.any((m) => m.id == selected)
+                      ? selected
                       : null,
                   decoration: settingsInputDecoration(context, ''),
                   items: models
                       .map(
                         (m) => DropdownMenuItem(
-                          value: m,
-                          child: Text(
-                            m,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 13),
+                          value: m.id,
+                          child: Row(
+                            children: [
+                              if (m.isImage) ...[
+                                const Icon(Icons.image_outlined, size: 14),
+                                const SizedBox(width: 6),
+                              ],
+                              Expanded(
+                                child: Text(
+                                  m.id,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(fontSize: 13),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       )
@@ -75,7 +86,8 @@ class ModelSelector extends ConsumerWidget {
           IconButton(
             icon: const Icon(Icons.refresh, size: 18),
             tooltip: 'Refresh models',
-            onPressed: () => ref.invalidate(availableModelsProvider),
+            onPressed: () =>
+                ref.read(modelCatalogProvider.notifier).refresh().ignore(),
           ),
         ],
       ),

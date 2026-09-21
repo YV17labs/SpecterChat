@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../domain/models/app_settings.dart';
+import '../../domain/models/image_settings.dart';
 import '../../domain/repositories/i_settings_store.dart';
 import '../../infrastructure/persistence/shared_preferences_settings_store.dart';
 
@@ -47,6 +48,11 @@ class SettingsNotifier extends Notifier<AppSettings> {
 
   void updateGeneration(GenerationSettings generation) {
     state = state.copyWith(generation: generation);
+    _scheduleSave();
+  }
+
+  void updateImage(ImageSettings image) {
+    state = state.copyWith(image: image);
     _scheduleSave();
   }
 

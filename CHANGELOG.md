@@ -14,6 +14,72 @@ changes.
 
 ## [Unreleased]
 
+Image generation and local image editing, on top of the text chat. Needs a
+**Pictor ≥ 0.3.0** server for the image features; text-LLM servers are
+unaffected. Existing settings and chat history are read as-is.
+
+### Added
+
+- **Image generation with a Pictor server.** Pick an image model in the
+  model list (they are marked with an icon) and the settings panel swaps the
+  text-LLM sections for an **Image** section: mode (auto / generate / edit /
+  chat), aspect ratio, size, steps, seed (with a dice for a random one),
+  guidance, negative prompt, transparent background — each greyed out when
+  the backend cannot do it, each overridable per conversation with a reset.
+  The bubble shows the server's progress bar ("generating 12/40") instead of
+  the typing dots; the result is stored like any attachment and displayed
+  inline. A generated image is re-sent on the next turn, so "now make it
+  blue" edits it.
+- **Images go into messages.** Attach with the paperclip (native file
+  dialog), drop files anywhere on the chat panel, or Cmd/Ctrl+V an image
+  from the clipboard. PNG, JPEG, WebP and GIF are recognised by content, not
+  extension; anything larger than 2048 px on a side is downscaled first; up
+  to 10 images per message, shown as a thumbnail strip before sending. A
+  message may be an image with no text.
+- **An annotation editor for local edits.** Open any pending image (or hit
+  "Annotate & reuse" on an image already in the conversation) and draw the
+  region to change: pen, ellipse or rectangle in one of five colours and
+  three widths, a mask brush, an eraser, undo / redo (⌘Z / ⇧⌘Z) and a mask
+  preview. On send the annotated copy goes to the model, optionally with a
+  black-and-white mask and the untouched original; an empty composer is
+  pre-filled with "In the red area: …" naming the colours used. The
+  original is never modified — the editor reopens on it.
+- **Images in the conversation gain "Save as…" and "Copy"** on hover, next
+  to the new annotate action.
+- **The app remembers which models are image models** between launches, so
+  the Image section is right at startup, before the model list has been
+  fetched.
+
+### Changed
+
+- **Protocol 0.3.0.** The image extension object is named `generation` in
+  requests and in the model list (it was `specterforge`); a server that
+  still tags its models with the old key is recognised, but image options
+  are only honoured by Pictor ≥ 0.3.0.
+- **Fewer round-trips to the server.** The model list is fetched at
+  startup, when the base URL or API key change (once you stop typing) and
+  on refresh — no longer every time a model is picked or a slider moves.
+  Sampling and image options now travel with each request instead of
+  rebuilding the HTTP client on every change.
+- **Composer, editor and model catalogue logic moved out of the widgets**
+  into testable units (`ComposerNotifier`, `DrawingSession`,
+  `ModelCatalogNotifier`), behind domain contracts for image
+  normalisation, rendering, file dialogs and the clipboard; widgets no
+  longer touch platform plugins directly. Enforced by the architecture
+  test. Test suite grew from 254 to 406.
+
+### Fixed
+
+- **A server error in the middle of a stream is reported.** Some servers
+  send the OpenAI error envelope as a stream event rather than an HTTP
+  status; it was skipped as an unknown chunk and the turn hung until the
+  connection closed. It now ends the turn with the error banner.
+- **Multi-byte characters split across two network packets** (accents,
+  CJK, emoji) were decoded as replacement glyphs; the stream is now decoded
+  as a whole.
+- **A multi-megabyte stream line** (a base64 image) no longer gets re-split
+  on every packet, which made large images arrive slowly.
+
 ## [0.5.2] - 2026-09-11
 
 ### Fixed

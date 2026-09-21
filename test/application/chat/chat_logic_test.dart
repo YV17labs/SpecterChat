@@ -1,5 +1,8 @@
+import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:specterchat/application/chat/chat_logic.dart';
+import 'package:specterchat/application/chat/message_writes.dart';
 import 'package:specterchat/application/chat/stream_accumulator.dart';
 import 'package:specterchat/domain/models/message.dart';
 import 'package:specterchat/domain/services/i_llm_service.dart';
@@ -102,6 +105,71 @@ void main() {
       expect(msg.isStreaming, true);
       expect(msg.completionTokens, 12);
       expect(msg.durationMs, 340);
+    });
+  });
+
+  group('ChatLogic.buildUserMessage', () {
+    test('text only', () {
+      final msg = logic.buildUserMessage(
+        id: 'u',
+        conversationId: 'c',
+        text: 'hello',
+      );
+      expect(msg.id, 'u');
+      expect(msg.conversationId, 'c');
+      expect(msg.role, MessageRole.user);
+      expect(msg.content, [const ContentBlock.text(text: 'hello')]);
+      expect(msg.isStreaming, isFalse);
+    });
+
+    test('text then one image block per attachment, sizes from bytes', () {
+      final msg = logic.buildUserMessage(
+        id: 'u',
+        conversationId: 'c',
+        text: 'look',
+        images: [
+          PendingAttachment(
+            attachmentId: 'a1',
+            bytes: Uint8List(3),
+            mimeType: 'image/png',
+          ),
+          PendingAttachment(
+            attachmentId: 'a2',
+            bytes: Uint8List(5),
+            mimeType: 'image/jpeg',
+          ),
+        ],
+      );
+      expect(msg.content, [
+        const ContentBlock.text(text: 'look'),
+        const ContentBlock.image(
+          attachmentId: 'a1',
+          mimeType: 'image/png',
+          byteSize: 3,
+        ),
+        const ContentBlock.image(
+          attachmentId: 'a2',
+          mimeType: 'image/jpeg',
+          byteSize: 5,
+        ),
+      ]);
+    });
+
+    test('an image-only turn has no empty text block', () {
+      final msg = logic.buildUserMessage(
+        id: 'u',
+        conversationId: 'c',
+        text: '',
+        images: [
+          PendingAttachment(
+            attachmentId: 'a1',
+            bytes: Uint8List(1),
+            mimeType: 'image/png',
+          ),
+        ],
+      );
+      expect(msg.content.whereType<TextContentBlock>(), isEmpty);
+      expect(msg.content, hasLength(1));
     });
   });
 

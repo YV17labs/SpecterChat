@@ -76,6 +76,9 @@ class SliderField extends StatelessWidget {
   final int divisions;
   final ValueChanged<double> onChanged;
 
+  /// Decimals shown next to the label (0 for integer-valued sliders).
+  final int fractionDigits;
+
   const SliderField({
     super.key,
     required this.label,
@@ -84,19 +87,26 @@ class SliderField extends StatelessWidget {
     required this.max,
     required this.divisions,
     required this.onChanged,
+    this.fractionDigits = 2,
   });
 
   @override
   Widget build(BuildContext context) {
+    final styles = context.specterStyles;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           children: [
-            Text(label, style: context.specterStyles.smallMuted),
-            const Spacer(),
+            Expanded(
+              child: Text(
+                label,
+                overflow: TextOverflow.ellipsis,
+                style: styles.smallMuted,
+              ),
+            ),
             Text(
-              value.toStringAsFixed(2),
+              value.toStringAsFixed(fractionDigits),
               style: TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w600,

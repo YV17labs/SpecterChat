@@ -1,6 +1,7 @@
 import 'package:freezed_annotation/freezed_annotation.dart';
 
 import 'app_settings.dart';
+import 'image_settings.dart';
 
 part 'conversation_settings.freezed.dart';
 part 'conversation_settings.g.dart';
@@ -13,6 +14,9 @@ abstract class ConversationSettings with _$ConversationSettings {
   const factory ConversationSettings({
     String? systemPrompt,
     GenerationSettings? generation,
+
+    /// Image-model options; `null` inherits the global [AppSettings.image].
+    ImageSettings? image,
     int? contextLength,
 
     /// IDs of MCP servers the user explicitly enabled for this conversation.

@@ -4,13 +4,17 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/theme.dart';
 import '../../../domain/models/app_settings.dart';
 import '../../../domain/models/conversation_settings.dart';
+import '../../../domain/models/effective_settings.dart';
+import '../../../domain/models/image_settings.dart';
 import '../../providers/conversation_provider.dart';
 import '../../providers/conversation_settings_provider.dart';
 import '../../providers/effective_settings_provider.dart';
 import '../../providers/mcp_provider.dart';
+import '../../providers/model_catalog_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../widgets/settings_fields.dart';
 import 'about_section.dart';
+import 'image_settings_section.dart';
 import 'mcp/mcp_server_tile.dart';
 import 'mcp/mcp_servers_editor.dart';
 import 'model_selector.dart';
@@ -19,6 +23,12 @@ import 'model_selector.dart';
 /// generation, context length and system prompt edit the selected
 /// conversation's overrides when one is selected, the global defaults
 /// otherwise.
+///
+/// The middle of the panel depends on the selected model: a text LLM gets
+/// the sampling, context, system prompt and MCP sections; an image model
+/// (`selectedImageModelProvider`) gets the "Image" section instead — the
+/// image server ignores sampling parameters, system prompts and tools, so
+/// showing them would only mislead.
 class SettingsPanel extends ConsumerStatefulWidget {
   const SettingsPanel({super.key});
 
@@ -109,6 +119,8 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
         ? null
         : ref.watch(conversationSettingsProvider(conversationId));
     final generation = pending?.generation ?? effective.generation;
+    final image = pending?.image ?? effective.image;
+    final imageModel = ref.watch(selectedImageModelProvider);
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -147,162 +159,22 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
         ),
         const SizedBox(height: 8),
         const ModelSelector(),
-        const SizedBox(height: 8),
-        LabeledField(
-          label: 'Context Length',
-          child: _IntField(
-            controller: _contextLengthController,
-            hint: '32768',
-            onChanged: (v) {
-              if (v > 0) _updateContextLength(conversationId, v);
-            },
-          ),
-        ),
 
-        const Divider(height: 32),
-
-        const SectionHeader(title: 'Generation'),
-        const SizedBox(height: 8),
-        SliderField(
-          label: 'Temperature',
-          value: generation.temperature,
-          min: 0,
-          max: 2,
-          divisions: 40,
-          onChanged: (v) => _updateGeneration(
-            conversationId,
-            generation.copyWith(temperature: v),
+        if (imageModel != null) ...[
+          const Divider(height: 32),
+          ImageSettingsSection(
+            info: imageModel,
+            value: image,
+            onChanged: (s) => _updateImage(conversationId, s),
           ),
-        ),
-        SliderField(
-          label: 'Top-P',
-          value: generation.topP,
-          min: 0,
-          max: 1,
-          divisions: 20,
-          onChanged: (v) =>
-              _updateGeneration(conversationId, generation.copyWith(topP: v)),
-        ),
-        LabeledField(
-          label: 'Top-K',
-          child: _IntField(
-            controller: _topKController,
-            hint: '0',
-            onChanged: (v) =>
-                _updateGeneration(conversationId, generation.copyWith(topK: v)),
-          ),
-        ),
-        const SizedBox(height: 8),
-        LabeledField(
-          label: 'Max Tokens',
-          child: _IntField(
-            controller: _maxTokensController,
-            hint: '4096',
-            onChanged: (v) => _updateGeneration(
-              conversationId,
-              generation.copyWith(maxTokens: v),
-            ),
-          ),
-        ),
-        const SizedBox(height: 8),
-        SliderField(
-          label: 'Min-P',
-          value: generation.minP,
-          min: 0,
-          max: 1,
-          divisions: 20,
-          onChanged: (v) =>
-              _updateGeneration(conversationId, generation.copyWith(minP: v)),
-        ),
-        SliderField(
-          label: 'Repeat Penalty',
-          value: generation.repeatPenalty,
-          min: 1,
-          max: 2,
-          divisions: 20,
-          onChanged: (v) => _updateGeneration(
-            conversationId,
-            generation.copyWith(repeatPenalty: v),
-          ),
-        ),
-        SliderField(
-          label: 'Frequency Penalty',
-          value: generation.frequencyPenalty,
-          min: 0,
-          max: 2,
-          divisions: 40,
-          onChanged: (v) => _updateGeneration(
-            conversationId,
-            generation.copyWith(frequencyPenalty: v),
-          ),
-        ),
-        SliderField(
-          label: 'Presence Penalty',
-          value: generation.presencePenalty,
-          min: 0,
-          max: 2,
-          divisions: 40,
-          onChanged: (v) => _updateGeneration(
-            conversationId,
-            generation.copyWith(presencePenalty: v),
-          ),
-        ),
-
-        const Divider(height: 32),
-
-        const SectionHeader(title: 'System Prompt'),
-        const SizedBox(height: 8),
-        TextField(
-          controller: _systemPromptController,
-          decoration: settingsInputDecoration(
+        ] else
+          ..._textModelSections(
             context,
-            'You are a helpful assistant...',
+            settings: settings,
+            effective: effective,
+            conversationId: conversationId,
+            generation: generation,
           ),
-          style: const TextStyle(fontSize: 11, height: 1.4),
-          maxLines: 10,
-          minLines: 6,
-          onChanged: (value) => _updateSystemPrompt(conversationId, value),
-        ),
-
-        const Divider(height: 32),
-
-        SectionHeader(
-          title: 'MCP Servers',
-          trailing: IconButton(
-            icon: const Icon(Icons.edit, size: 18),
-            tooltip: 'Edit MCP Servers (JSON)',
-            onPressed: () => _editMcpServers().ignore(),
-          ),
-        ),
-        const SizedBox(height: 8),
-        if (settings.mcpServers.isEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 16),
-            child: Center(
-              child: Text(
-                'No MCP servers configured',
-                style: TextStyle(
-                  color: context.specterStyles.textFaint,
-                  fontSize: 13,
-                ),
-              ),
-            ),
-          )
-        else
-          for (final server in settings.mcpServers)
-            McpServerTile(
-              server: server,
-              enabledInConversation: conversationId == null
-                  ? null
-                  : effective.enabledMcpServerIds.contains(server.id),
-              onToggleConversation: conversationId == null
-                  ? null
-                  : (enabled) => _toggleMcpServerForConversation(
-                      conversationId,
-                      server.id,
-                      enabled,
-                    ),
-            ),
 
         const Divider(height: 32),
 
@@ -311,6 +183,174 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
         const AboutSection(),
       ],
     );
+  }
+
+  /// Sections that only make sense for a text LLM.
+  List<Widget> _textModelSections(
+    BuildContext context, {
+    required AppSettings settings,
+    required EffectiveSettings effective,
+    required String? conversationId,
+    required GenerationSettings generation,
+  }) {
+    return [
+      const SizedBox(height: 8),
+      LabeledField(
+        label: 'Context Length',
+        child: _IntField(
+          controller: _contextLengthController,
+          hint: '32768',
+          onChanged: (v) {
+            if (v > 0) _updateContextLength(conversationId, v);
+          },
+        ),
+      ),
+
+      const Divider(height: 32),
+
+      const SectionHeader(title: 'Generation'),
+      const SizedBox(height: 8),
+      SliderField(
+        label: 'Temperature',
+        value: generation.temperature,
+        min: 0,
+        max: 2,
+        divisions: 40,
+        onChanged: (v) => _updateGeneration(
+          conversationId,
+          generation.copyWith(temperature: v),
+        ),
+      ),
+      SliderField(
+        label: 'Top-P',
+        value: generation.topP,
+        min: 0,
+        max: 1,
+        divisions: 20,
+        onChanged: (v) =>
+            _updateGeneration(conversationId, generation.copyWith(topP: v)),
+      ),
+      LabeledField(
+        label: 'Top-K',
+        child: _IntField(
+          controller: _topKController,
+          hint: '0',
+          onChanged: (v) =>
+              _updateGeneration(conversationId, generation.copyWith(topK: v)),
+        ),
+      ),
+      const SizedBox(height: 8),
+      LabeledField(
+        label: 'Max Tokens',
+        child: _IntField(
+          controller: _maxTokensController,
+          hint: '4096',
+          onChanged: (v) => _updateGeneration(
+            conversationId,
+            generation.copyWith(maxTokens: v),
+          ),
+        ),
+      ),
+      const SizedBox(height: 8),
+      SliderField(
+        label: 'Min-P',
+        value: generation.minP,
+        min: 0,
+        max: 1,
+        divisions: 20,
+        onChanged: (v) =>
+            _updateGeneration(conversationId, generation.copyWith(minP: v)),
+      ),
+      SliderField(
+        label: 'Repeat Penalty',
+        value: generation.repeatPenalty,
+        min: 1,
+        max: 2,
+        divisions: 20,
+        onChanged: (v) => _updateGeneration(
+          conversationId,
+          generation.copyWith(repeatPenalty: v),
+        ),
+      ),
+      SliderField(
+        label: 'Frequency Penalty',
+        value: generation.frequencyPenalty,
+        min: 0,
+        max: 2,
+        divisions: 40,
+        onChanged: (v) => _updateGeneration(
+          conversationId,
+          generation.copyWith(frequencyPenalty: v),
+        ),
+      ),
+      SliderField(
+        label: 'Presence Penalty',
+        value: generation.presencePenalty,
+        min: 0,
+        max: 2,
+        divisions: 40,
+        onChanged: (v) => _updateGeneration(
+          conversationId,
+          generation.copyWith(presencePenalty: v),
+        ),
+      ),
+
+      const Divider(height: 32),
+
+      const SectionHeader(title: 'System Prompt'),
+      const SizedBox(height: 8),
+      TextField(
+        controller: _systemPromptController,
+        decoration: settingsInputDecoration(
+          context,
+          'You are a helpful assistant...',
+        ),
+        style: const TextStyle(fontSize: 11, height: 1.4),
+        maxLines: 10,
+        minLines: 6,
+        onChanged: (value) => _updateSystemPrompt(conversationId, value),
+      ),
+
+      const Divider(height: 32),
+
+      SectionHeader(
+        title: 'MCP Servers',
+        trailing: IconButton(
+          icon: const Icon(Icons.edit, size: 18),
+          tooltip: 'Edit MCP Servers (JSON)',
+          onPressed: () => _editMcpServers().ignore(),
+        ),
+      ),
+      const SizedBox(height: 8),
+      if (settings.mcpServers.isEmpty)
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          child: Center(
+            child: Text(
+              'No MCP servers configured',
+              style: TextStyle(
+                color: context.specterStyles.textFaint,
+                fontSize: 13,
+              ),
+            ),
+          ),
+        )
+      else
+        for (final server in settings.mcpServers)
+          McpServerTile(
+            server: server,
+            enabledInConversation: conversationId == null
+                ? null
+                : effective.enabledMcpServerIds.contains(server.id),
+            onToggleConversation: conversationId == null
+                ? null
+                : (enabled) => _toggleMcpServerForConversation(
+                    conversationId,
+                    server.id,
+                    enabled,
+                  ),
+          ),
+    ];
   }
 
   // ---------------------------------------------------------------------
@@ -331,6 +371,14 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
       _updateConversation(conversationId, (s) => s.copyWith(generation: g));
     } else {
       ref.read(settingsProvider.notifier).updateGeneration(g);
+    }
+  }
+
+  void _updateImage(String? conversationId, ImageSettings image) {
+    if (conversationId != null) {
+      _updateConversation(conversationId, (s) => s.copyWith(image: image));
+    } else {
+      ref.read(settingsProvider.notifier).updateImage(image);
     }
   }
 

@@ -1,24 +1,26 @@
+import 'dart:async';
+
+import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../application/chat/chat_session.dart';
 import '../../../domain/chat_session_state.dart';
 import '../../../domain/models/message.dart';
 import '../../providers/chat_input_provider.dart';
 import '../../providers/chat_provider.dart';
 import '../../providers/conversation_provider.dart';
 import '../widgets/message_bubble.dart';
+import 'chat_composer.dart';
 import 'chat_empty_states.dart';
 import 'chat_header.dart';
-import 'chat_input_area.dart';
 import 'message_grouping.dart';
 
 /// Centre panel: header, message list, error banner, composer.
 ///
-/// Owns only presentation state — the text controller, scroll position
-/// and the "stick to bottom" flag. Everything else is read from providers
-/// and acted on through the session handle or a controller.
+/// Owns only the list's presentation state — scroll position and the
+/// "stick to bottom" flag. The message being written is [ChatComposer]'s;
+/// this widget only wraps the whole panel in a drop zone that feeds it.
 class ChatView extends ConsumerStatefulWidget {
   const ChatView({super.key});
 
@@ -27,13 +29,13 @@ class ChatView extends ConsumerStatefulWidget {
 }
 
 class _ChatViewState extends ConsumerState<ChatView> {
-  final _inputController = TextEditingController();
   final _scrollController = ScrollController();
-  final _inputFocusNode = FocusNode();
+  final _composerKey = GlobalKey<ChatComposerState>();
   bool _stickToBottom = true;
   bool _scrollPending = false;
   bool _needsInitialScroll = false;
   String? _lastConversationId;
+  bool _dragHover = false;
 
   // Derived per message list; recomputed only when the list identity
   // changes, not on every rebuild.
@@ -50,11 +52,11 @@ class _ChatViewState extends ConsumerState<ChatView> {
 
   @override
   void dispose() {
-    _inputController.dispose();
     _scrollController.dispose();
-    _inputFocusNode.dispose();
     super.dispose();
   }
+
+  // --- Scrolling ---------------------------------------------------------
 
   bool _isAtBottom() {
     if (!_scrollController.hasClients) return true;
@@ -111,33 +113,13 @@ class _ChatViewState extends ConsumerState<ChatView> {
     });
   }
 
-  void _appendToInput(String text) {
-    final current = _inputController.text;
-    final separator = current.isEmpty || current.endsWith('\n') ? '' : '\n';
-    _inputController.text = '$current$separator$text';
-    _inputController.selection = TextSelection.collapsed(
-      offset: _inputController.text.length,
-    );
-    _inputFocusNode.requestFocus();
-  }
-
-  void _sendMessage(ChatSession session) {
-    final text = _inputController.text.trim();
-    if (text.isEmpty) return;
-    _inputController.clear();
+  void _onSent() {
     setState(() => _stickToBottom = true);
     _scrollToBottom(force: true);
-    session.sendMessage(text).ignore();
   }
 
   @override
   Widget build(BuildContext context) {
-    ref.listen<String?>(chatInputInjectionProvider, (_, next) {
-      if (next == null || next.isEmpty) return;
-      _appendToInput(next);
-      ref.read(chatInputInjectionProvider.notifier).consume();
-    });
-
     final conversationId = ref.watch(conversationControllerProvider);
     if (conversationId != _lastConversationId) {
       _lastConversationId = conversationId;
@@ -158,7 +140,10 @@ class _ChatViewState extends ConsumerState<ChatView> {
     return ValueListenableBuilder<ChatSessionState>(
       valueListenable: session.state,
       builder: (context, sessionState, _) {
-        return Column(
+        final streaming = sessionState is SessionStreaming
+            ? sessionState
+            : null;
+        final column = Column(
           children: [
             ChatHeader(session: session),
             const Divider(height: 1),
@@ -169,6 +154,8 @@ class _ChatViewState extends ConsumerState<ChatView> {
                   conversationId: conversationId,
                   hasMoreAbove: totalCount != null && totalCount > windowSize,
                   atWindowCap: windowSize >= kMaxMessageWindowSize,
+                  streamingMessageId: streaming?.streamingMessageId,
+                  progress: streaming?.progress,
                 ),
                 loading: () => const Center(child: CircularProgressIndicator()),
                 error: (e, _) =>
@@ -178,14 +165,32 @@ class _ChatViewState extends ConsumerState<ChatView> {
             if (sessionState case SessionError(:final message))
               _ErrorBanner(message: message, onDismiss: session.clearError),
             const Divider(height: 1),
-            ChatInputArea(
-              controller: _inputController,
-              focusNode: _inputFocusNode,
+            ChatComposer(
+              key: _composerKey,
+              conversationId: conversationId,
+              session: session,
               isGenerating: sessionState.isGenerating,
-              onSend: () => _sendMessage(session),
-              onStop: () => session.stop().ignore(),
+              onSent: _onSent,
             ),
           ],
+        );
+        // Whole panel is a drop zone so files can land on the list too.
+        return DropTarget(
+          enable: !sessionState.isGenerating,
+          onDragEntered: (_) => setState(() => _dragHover = true),
+          onDragExited: (_) => setState(() => _dragHover = false),
+          onDragDone: (details) {
+            setState(() => _dragHover = false);
+            unawaited(
+              _composerKey.currentState?.attachFiles([
+                for (final f in details.files)
+                  (name: f.name, read: f.readAsBytes),
+              ]),
+            );
+          },
+          child: Stack(
+            children: [column, if (_dragHover) const _DropOverlay()],
+          ),
         );
       },
     );
@@ -196,6 +201,8 @@ class _ChatViewState extends ConsumerState<ChatView> {
     required String conversationId,
     required bool hasMoreAbove,
     required bool atWindowCap,
+    String? streamingMessageId,
+    GenerationProgress? progress,
   }) {
     if (messages.isEmpty) return const WelcomeMessage();
 
@@ -240,6 +247,7 @@ class _ChatViewState extends ConsumerState<ChatView> {
                   message: head,
                   toolResults: group.sublist(1),
                   cumulativeDurationMs: _cumulativeDurations[head.id],
+                  progress: head.id == streamingMessageId ? progress : null,
                   onTellMore: (selection) => ref
                       .read(chatInputInjectionProvider.notifier)
                       .inject('Tell me more about: "$selection"'),
@@ -267,6 +275,43 @@ class _ChatViewState extends ConsumerState<ChatView> {
             ),
           ),
       ],
+    );
+  }
+}
+
+/// Translucent veil with a hint while a file is dragged over the panel.
+class _DropOverlay extends StatelessWidget {
+  const _DropOverlay();
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: Container(
+          margin: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: cs.primary.withValues(alpha: 0.08),
+            border: Border.all(color: cs.primary, width: 2),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          alignment: Alignment.center,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.add_photo_alternate_outlined, color: cs.primary),
+              const SizedBox(width: 8),
+              Text(
+                'Drop images to attach',
+                style: TextStyle(
+                  color: cs.primary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

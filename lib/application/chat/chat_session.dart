@@ -12,6 +12,7 @@ import '../../domain/services/i_llm_service.dart';
 import '../mcp/active_mcp_server.dart';
 import 'chat_logic.dart';
 import 'chat_session_deps.dart';
+import 'message_writes.dart';
 import 'stream_accumulator.dart';
 import 'streaming_persister.dart';
 import 'tool_executor.dart';
@@ -96,16 +97,24 @@ class ChatSession {
   /// Send a user message and stream the response. Resolves once the whole
   /// turn — including tool-call rounds — has finished. Ignored while a
   /// previous send is still streaming.
-  Future<void> sendMessage(String userText) async {
+  ///
+  /// [images] are attached to the user message (one image block each) and
+  /// forwarded to the model as `image_url` parts. An empty [userText] is
+  /// allowed when at least one image is given.
+  Future<void> sendMessage(
+    String userText, {
+    List<ImageBytes> images = const [],
+  }) async {
     if (_disposed) return;
     if (isGenerating) {
       _log.warning('sendMessage ignored — session already streaming');
       return;
     }
+    if (userText.trim().isEmpty && images.isEmpty) return;
     lastActivity = DateTime.now();
     final deps = _resolveDeps();
     state.value = state.value.toStreaming('');
-    _inFlight = _send(userText, deps);
+    _inFlight = _send(userText, images, deps);
     await _inFlight;
   }
 
@@ -138,9 +147,13 @@ class ChatSession {
   // Turn lifecycle
   // =====================================================================
 
-  Future<void> _send(String userText, ChatSessionDeps deps) async {
+  Future<void> _send(
+    String userText,
+    List<ImageBytes> images,
+    ChatSessionDeps deps,
+  ) async {
     try {
-      await deps.messages.saveMessage(_userMessage(userText));
+      await _saveUserMessage(deps, userText, images);
       _cancellation = CancellationToken();
       await _runPipeline(deps);
     } catch (e, st) {
@@ -158,13 +171,36 @@ class ChatSession {
     }
   }
 
-  Message _userMessage(String text) => Message(
-    id: generateId(),
-    conversationId: conversationId,
-    role: MessageRole.user,
-    content: [ContentBlock.text(text: text)],
-    createdAt: DateTime.now(),
-  );
+  /// Persist the user turn: the row and its attachment blobs in one
+  /// transaction, like every other message with images.
+  Future<void> _saveUserMessage(
+    ChatSessionDeps deps,
+    String text,
+    List<ImageBytes> images,
+  ) async {
+    final attached = [
+      for (final image in images)
+        PendingAttachment(
+          attachmentId: generateId(),
+          bytes: image.bytes,
+          mimeType: image.mimeType,
+        ),
+    ];
+    final message = _logic.buildUserMessage(
+      id: generateId(),
+      conversationId: conversationId,
+      text: text,
+      images: attached,
+    );
+    await saveMessagesWithAttachments(deps.messages, deps.attachments, [
+      MessageWrite(message, attachments: attached),
+    ]);
+    // The bytes are needed for the request we are about to build; keep
+    // them so the pipeline does not re-read what it just wrote.
+    for (final a in attached) {
+      _imageBytes[a.attachmentId] = (bytes: a.bytes, mimeType: a.mimeType);
+    }
+  }
 
   /// Pipeline entry. Rebuilds the history from the DB, then streams one
   /// LLM response. Recurses for tool-call continuations.
@@ -218,6 +254,7 @@ class ChatSession {
     final events = deps.llm.streamChatCompletion(
       history: history,
       systemPrompt: deps.mergedSystemPrompt,
+      profile: deps.profile,
       imageBytes: _imageBytes,
       tools: enabledToolsOf(deps.activeServers),
       cancellationToken: _cancellation,
@@ -234,12 +271,25 @@ class ChatSession {
           if (_accumulator.addToolCallDelta(event)) {
             await persister.flush(force: true);
           }
+        case ProgressDelta(:final progress):
+          state.value = state.value.withProgress(progress);
+        case ImageDelta(:final bytes, :final mimeType):
+          await _storeStreamedImage(
+            deps: deps,
+            messageId: messageId,
+            bytes: bytes,
+            mimeType: mimeType,
+          );
+          // Show the image as soon as it lands rather than on the next
+          // throttle tick — it is the whole point of the turn.
+          await persister.flush(force: true);
         case StreamUsage(:final promptTokens, completionTokens: final ct):
           completionTokens = ct;
           state.value = SessionStreaming(
             streamingMessageId: messageId,
             promptTokens: promptTokens,
             completionTokens: ct,
+            progress: state.value.progress,
           );
         case StreamDone():
           await _handleStreamDone(
@@ -315,6 +365,34 @@ class ChatSession {
     await _autoTitleIfNeeded(deps, _accumulator.content.toString());
   }
 
+  /// Write a streamed image's bytes to the attachments table (bound to the
+  /// placeholder row, which already exists) and reference it from the
+  /// accumulator. Bytes go first so the next upsert never points at an id
+  /// the watcher cannot resolve.
+  Future<void> _storeStreamedImage({
+    required ChatSessionDeps deps,
+    required String messageId,
+    required Uint8List bytes,
+    required String mimeType,
+  }) async {
+    final attachmentId = generateId();
+    await deps.attachments.storeBytes(
+      attachmentId: attachmentId,
+      messageId: messageId,
+      bytes: bytes,
+      mimeType: mimeType,
+    );
+    _accumulator.addImage(
+      ImageContentBlock(
+        attachmentId: attachmentId,
+        mimeType: mimeType,
+        byteSize: bytes.length,
+      ),
+    );
+    // The model may be asked to edit its own output on the next turn.
+    _imageBytes[attachmentId] = (bytes: bytes, mimeType: mimeType);
+  }
+
   Future<void> _continueWithToolResults(ChatSessionDeps deps) async {
     await _toolExecutor.executeAndSave(
       conversationId: conversationId,
@@ -333,7 +411,13 @@ class ChatSession {
   }) async {
     final hook = deps.hook;
     if (hook == null) return;
-    await deps.messages.saveMessage(_userMessage(hook.hallucinationCorrection));
+    await deps.messages.saveMessage(
+      _logic.buildUserMessage(
+        id: generateId(),
+        conversationId: conversationId,
+        text: hook.hallucinationCorrection,
+      ),
+    );
     await _runPipeline(deps, hallucinationRetry: nextRetry);
   }
 

@@ -22,6 +22,11 @@ class StreamAccumulator {
   final StringBuffer thinking = StringBuffer();
   final Map<int, ToolCallAccumulator> toolCalls = {};
 
+  /// Images that arrived on the stream, as the blocks the final message
+  /// will carry. Their bytes are already in the attachments table; only
+  /// the reference is buffered so the accumulator never holds pixels.
+  final List<ImageContentBlock> images = [];
+
   bool _dirty = false;
 
   /// Some servers leak the start of a `(`-call, a newline or an XML tag
@@ -34,7 +39,8 @@ class StreamAccumulator {
   bool get hasValidToolCalls => toolCalls.values.any((tc) => tc.isValid);
 
   /// Whether the turn carries anything worth keeping.
-  bool get isSendable => content.isNotEmpty || hasValidToolCalls;
+  bool get isSendable =>
+      content.isNotEmpty || images.isNotEmpty || hasValidToolCalls;
 
   void addContent(String text) {
     content.write(text);
@@ -43,6 +49,12 @@ class StreamAccumulator {
 
   void addThinking(String text) {
     thinking.write(text);
+    _dirty = true;
+  }
+
+  /// Record an image whose bytes the caller has already persisted.
+  void addImage(ImageContentBlock image) {
+    images.add(image);
     _dirty = true;
   }
 
@@ -81,6 +93,7 @@ class StreamAccumulator {
     content.clear();
     thinking.clear();
     toolCalls.clear();
+    images.clear();
     _dirty = false;
   }
 }

@@ -1,5 +1,7 @@
 import 'package:flutter/gestures.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:specterchat/domain/chat_session_state.dart';
 import 'package:specterchat/domain/models/message.dart';
 import 'package:specterchat/domain/services/llm_hook.dart';
 import 'package:specterchat/presentation/ui/widgets/content_blocks.dart';
@@ -137,5 +139,47 @@ void main() {
       ),
     );
     expect(find.text('Auto-correction'), findsOneWidget);
+  });
+
+  testWidgets('a streaming message with progress shows the bar, not dots', (
+    tester,
+  ) async {
+    await pumpApp(
+      tester,
+      MessageBubble(
+        message: testMessage(MessageRole.assistant, [
+          const ContentBlock.text(text: 'Generating…'),
+        ], isStreaming: true),
+        progress: const GenerationProgress(
+          stage: 'generating',
+          step: 12,
+          total: 40,
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(find.byType(GenerationProgressBar), findsOneWidget);
+    expect(find.byType(StreamingIndicator), findsNothing);
+    expect(find.text('generating 12/40'), findsOneWidget);
+    final bar = tester.widget<LinearProgressIndicator>(
+      find.byType(LinearProgressIndicator),
+    );
+    expect(bar.value, closeTo(0.3, 1e-9));
+  });
+
+  testWidgets('a streaming message without progress keeps the dots', (
+    tester,
+  ) async {
+    await pumpApp(
+      tester,
+      MessageBubble(
+        message: testMessage(MessageRole.assistant, [
+          const ContentBlock.text(text: 'typing'),
+        ], isStreaming: true),
+      ),
+    );
+    await tester.pump();
+    expect(find.byType(StreamingIndicator), findsOneWidget);
+    expect(find.byType(GenerationProgressBar), findsNothing);
   });
 }

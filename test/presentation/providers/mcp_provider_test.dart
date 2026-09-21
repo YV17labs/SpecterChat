@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:specterchat/domain/models/app_settings.dart';
 import 'package:specterchat/domain/models/effective_settings.dart';
+import 'package:specterchat/domain/models/image_settings.dart';
 import 'package:specterchat/domain/models/mcp_server_state.dart';
 import 'package:specterchat/domain/services/i_mcp_service.dart';
 import 'package:specterchat/presentation/providers/effective_settings_provider.dart';
@@ -22,6 +23,7 @@ class _ConnectingMcp extends FakeMcpService {
 EffectiveSettings _effective(List<String> enabledIds) => EffectiveSettings(
   systemPrompt: '',
   generation: const GenerationSettings(),
+  image: const ImageSettings(),
   contextLength: 32768,
   enabledMcpServerIds: enabledIds,
 );

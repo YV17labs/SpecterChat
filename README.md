@@ -5,7 +5,7 @@
 <h1 align="center">SpecterChat</h1>
 
 <p align="center">
-  A lightweight, cross-platform desktop chat client with MCP (Model Context Protocol) support.<br>
+  A lightweight, cross-platform desktop chat client with MCP (Model Context Protocol) support and image generation.<br>
   Built with Flutter.
 </p>
 
@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/screenshot.webp" width="800" alt="SpecterChat — a conversation with MCP tool calls, an inline screenshot returned by a tool, thinking blocks, and the settings sidebar">
+  <img src="assets/screenshot-mcp-tools.webp" width="800" alt="SpecterChat — a conversation with MCP tool calls, an inline screenshot returned by a tool, thinking blocks, and the settings sidebar">
 </p>
 
 ---
@@ -27,6 +27,32 @@ SpecterChat connects to any OpenAI-compatible API (Ollama, LM Studio, vLLM, llam
 
 Existing chat clients fail at one critical thing: when an MCP tool returns an image, they either don't display it or don't forward it to the model. SpecterChat solves this — images from MCP tools are rendered inline **and** sent back to the model as base64 so it can actually see them.
 
+## Generate and edit images
+
+<p align="center">
+  <img src="assets/screenshot-image-generation.webp" width="49%" alt="SpecterChat with an image model selected — the user's photo of an icy shore, the boat the model painted onto it, and the Image panel: mode, aspect ratio, size, steps, seed, guidance, negative prompt, transparent background">
+  <img src="assets/screenshot-image-annotation.webp" width="49%" alt="The annotation editor over a generated image — a red freehand circle around the boat; pen, ellipse, rectangle, mask brush and eraser tools, five colours, three stroke widths, undo/redo, and options to also attach a black-and-white mask or keep the original image">
+</p>
+
+Select an image model and the same conversation becomes an image studio.
+Ask for a picture and it streams back inline with a progress bar; attach one
+of your own (file picker, drag-and-drop or paste) and the model edits it.
+Every generated image is re-sent as the reference on the next turn, so
+*"now make it blue"* just works.
+
+To change one region, open the built-in **annotation editor** from any image
+in the conversation, circle what should change and name the colour in your
+prompt — *"in the red area, …"*. Pen, ellipse, rectangle, mask brush and
+eraser, five colours, three stroke widths, undo/redo; optionally attach a
+black-and-white mask and the untouched original alongside. The **Image**
+panel exposes mode (auto / generate / edit / chat), aspect ratio, size,
+steps, seed, guidance, negative prompt and transparent background — as a
+global default or per conversation.
+
+Image models are discovered from the server's `GET /models` (entries tagged
+`generation.kind = "image"`) and images come back in the OpenRouter
+`images[]` convention; the screenshots show Qwen-Image 2.1 served locally.
+
 ## Features
 
 - **3-panel layout** — conversation list, chat area, and settings sidebar
@@ -35,6 +61,10 @@ Existing chat clients fail at one critical thing: when an MCP tool returns an im
 - **Thinking/reasoning display** — collapsible chain-of-thought blocks
 - **MCP integration** via Streamable HTTP — connect to multiple servers, discover tools, execute them
 - **Image handling** — MCP `ImageContent` displayed inline and forwarded to the model
+- **Image generation** — select an image model, prompt for a picture, watch it stream in with a progress bar
+- **Image editing** — attach a reference (file, drag-and-drop or paste) or reuse any image in the conversation; generated images are re-sent on the next turn so follow-up edits just work
+- **Annotation editor** — circle, box or mask a region, name the colour in the prompt, optionally attach a black-and-white mask
+- **Image settings** — mode, aspect ratio, size, steps, seed, guidance, negative prompt, transparent background; global default or per conversation
 - **Tool call display** — tool name, arguments (collapsible JSON), and results
 - **Full generation controls** — temperature, top-p, top-k, max tokens, penalties
 - **Local storage** — chat history and settings persisted in SQLite
@@ -251,6 +281,7 @@ SpecterChat uses **Drift** (SQLite ORM) with a versioned migration strategy.
 3. Click the refresh button to load available models and select one
 4. Optionally add MCP servers (name + URL) and connect to them
 5. Create a new conversation and start chatting
+6. To generate or edit images, select an image model — the sidebar switches to the **Image** panel, and the attach button, drag-and-drop and paste all accept a reference picture
 
 ## Acknowledgments
 

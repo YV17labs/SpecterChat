@@ -5,7 +5,9 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:specterchat/domain/models/app_settings.dart';
+import 'package:specterchat/domain/models/image_settings.dart';
 import 'package:specterchat/domain/models/message.dart';
+import 'package:specterchat/domain/models/request_profile.dart';
 import 'package:specterchat/domain/services/cancellation_token.dart';
 import 'package:specterchat/domain/services/i_llm_service.dart';
 import 'package:specterchat/infrastructure/llm/llm_service.dart';
@@ -31,11 +33,15 @@ ResponseBody _fakeStreamResponse(List<String> sseLines) {
 class _FakeStreamInterceptor extends Interceptor {
   final List<String> sseLines;
 
+  /// Every `/chat/completions` body seen, for request-shape assertions.
+  final List<Map<String, dynamic>> bodies = [];
+
   _FakeStreamInterceptor(this.sseLines);
 
   @override
   void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
     if (options.path == '/chat/completions') {
+      bodies.add(Map<String, dynamic>.from(options.data as Map));
       handler.resolve(
         Response(
           requestOptions: options,
@@ -52,17 +58,21 @@ class _FakeStreamInterceptor extends Interceptor {
 void main() {
   late Dio dio;
   late LlmService service;
+  late _FakeStreamInterceptor interceptor;
 
-  LlmService createService(List<String> sseLines) {
+  LlmService createService(
+    List<String> sseLines, {
+    String selectedModel = 'test-model',
+  }) {
     dio = Dio(BaseOptions(baseUrl: 'http://test.local/v1'));
-    dio.interceptors.add(_FakeStreamInterceptor(sseLines));
+    interceptor = _FakeStreamInterceptor(sseLines);
+    dio.interceptors.add(interceptor);
     return LlmService(
       dio: dio,
-      apiSettings: const ApiSettings(
+      apiSettings: ApiSettings(
         baseUrl: 'http://test.local/v1',
-        selectedModel: 'test-model',
+        selectedModel: selectedModel,
       ),
-      generationSettings: const GenerationSettings(),
     );
   }
 
@@ -305,78 +315,28 @@ void main() {
     });
 
     test('includes topK and repeatPenalty when non-default', () async {
-      dio = Dio(BaseOptions(baseUrl: 'http://test.local/v1'));
-
-      Map<String, dynamic>? capturedBody;
-      dio.interceptors.add(
-        InterceptorsWrapper(
-          onRequest: (options, handler) {
-            capturedBody = options.data as Map<String, dynamic>?;
-            handler.resolve(
-              Response(
-                requestOptions: options,
-                data: _fakeStreamResponse(['data: [DONE]', '']),
-                statusCode: 200,
-              ),
-            );
-          },
-        ),
-      );
-
-      final svc = LlmService(
-        dio: dio,
-        apiSettings: const ApiSettings(
-          baseUrl: 'http://test.local/v1',
-          selectedModel: 'test',
-        ),
-        generationSettings: const GenerationSettings(
-          topK: 40,
-          repeatPenalty: 1.2,
-        ),
-      );
-
-      await svc
-          .streamChatCompletion(history: _history, systemPrompt: '')
+      await createService(['data: [DONE]', ''])
+          .streamChatCompletion(
+            history: _history,
+            systemPrompt: '',
+            profile: const TextRequestProfile(
+              generation: GenerationSettings(topK: 40, repeatPenalty: 1.2),
+            ),
+          )
           .toList();
-
-      expect(capturedBody?['top_k'], 40);
-      expect(capturedBody?['repeat_penalty'], 1.2);
+      final body = interceptor.bodies.single;
+      expect(body['top_k'], 40);
+      expect(body['repeat_penalty'], 1.2);
     });
 
     test('does not include topK when 0 or repeatPenalty when 1.0', () async {
-      dio = Dio(BaseOptions(baseUrl: 'http://test.local/v1'));
-
-      Map<String, dynamic>? capturedBody;
-      dio.interceptors.add(
-        InterceptorsWrapper(
-          onRequest: (options, handler) {
-            capturedBody = options.data as Map<String, dynamic>?;
-            handler.resolve(
-              Response(
-                requestOptions: options,
-                data: _fakeStreamResponse(['data: [DONE]', '']),
-                statusCode: 200,
-              ),
-            );
-          },
-        ),
-      );
-
-      final svc = LlmService(
-        dio: dio,
-        apiSettings: const ApiSettings(
-          baseUrl: 'http://test.local/v1',
-          selectedModel: 'test',
-        ),
-        generationSettings: const GenerationSettings(),
-      );
-
-      await svc
-          .streamChatCompletion(history: _history, systemPrompt: '')
-          .toList();
-
-      expect(capturedBody?.containsKey('top_k'), false);
-      expect(capturedBody?.containsKey('repeat_penalty'), false);
+      await createService([
+        'data: [DONE]',
+        '',
+      ]).streamChatCompletion(history: _history, systemPrompt: '').toList();
+      final body = interceptor.bodies.single;
+      expect(body.containsKey('top_k'), false);
+      expect(body.containsKey('repeat_penalty'), false);
     });
   });
 
@@ -432,7 +392,6 @@ void main() {
         final svc = LlmService(
           dio: dio,
           apiSettings: const ApiSettings(selectedModel: 'test'),
-          generationSettings: const GenerationSettings(),
         );
         final events = await svc
             .streamChatCompletion(
@@ -445,5 +404,227 @@ void main() {
         expect(events.whereType<StreamDone>(), isEmpty);
       },
     );
+  });
+
+  group('LlmService image/progress extensions', () {
+    test('yields ProgressDelta for the progress extension', () async {
+      service = createService([
+        'data: {"choices":[{"delta":{"progress":{"stage":"generating","step":12,"total":40,"percent":30,"message":"Génération 12/40"}}}]}',
+        'data: [DONE]',
+        '',
+      ]);
+      final events = await service
+          .streamChatCompletion(history: _history, systemPrompt: '')
+          .toList();
+      final p = events.whereType<ProgressDelta>().single.progress;
+      expect(p.stage, 'generating');
+      expect(p.step, 12);
+      expect(p.total, 40);
+      expect(p.percent, 30);
+      expect(p.message, 'Génération 12/40');
+    });
+
+    test('yields ImageDelta for data-URL images', () async {
+      service = createService([
+        'data: {"choices":[{"delta":{"images":[{"type":"image_url","image_url":{"url":"data:image/png;base64,AQID"},"generation":{"seed":7}}]}}]}',
+        'data: [DONE]',
+        '',
+      ]);
+      final events = await service
+          .streamChatCompletion(history: _history, systemPrompt: '')
+          .toList();
+      final img = events.whereType<ImageDelta>().single;
+      expect(img.mimeType, 'image/png');
+      expect(img.bytes, [1, 2, 3]);
+      expect(events.last, isA<StreamDone>());
+    });
+
+    test('a multi-megabyte single line survives chunked delivery', () async {
+      // 6 MB of base64 on one `data:` line, delivered in 64 KB packets.
+      final payload = base64Encode(Uint8List(6 * 1024 * 1024));
+      final line =
+          'data: {"choices":[{"delta":{"images":[{"type":"image_url","image_url":{"url":"data:image/png;base64,$payload"}}]}}]}\n'
+          'data: [DONE]\n';
+      final bytes = utf8.encode(line);
+      const packet = 64 * 1024;
+      Stream<Uint8List> packets() async* {
+        for (var i = 0; i < bytes.length; i += packet) {
+          yield Uint8List.sublistView(
+            bytes,
+            i,
+            (i + packet).clamp(0, bytes.length),
+          );
+        }
+      }
+
+      dio = Dio(BaseOptions(baseUrl: 'http://test.local/v1'));
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) => handler.resolve(
+            Response(
+              requestOptions: options,
+              data: ResponseBody(packets(), 200),
+              statusCode: 200,
+            ),
+          ),
+        ),
+      );
+      service = LlmService(
+        dio: dio,
+        apiSettings: const ApiSettings(
+          baseUrl: 'http://test.local/v1',
+          selectedModel: 'test-model',
+        ),
+      );
+
+      final events = await service
+          .streamChatCompletion(history: _history, systemPrompt: '')
+          .toList();
+      final img = events.whereType<ImageDelta>().single;
+      expect(img.bytes.length, 6 * 1024 * 1024);
+      expect(events.last, isA<StreamDone>());
+    });
+
+    test(
+      'a mid-stream error envelope ends the turn with StreamError',
+      () async {
+        service = createService([
+          'data: {"choices":[{"delta":{"content":"Génération"}}]}',
+          'data: {"error":{"message":"out of memory","type":"server_error"}}',
+          'data: [DONE]',
+          '',
+        ]);
+        final events = await service
+            .streamChatCompletion(history: _history, systemPrompt: '')
+            .toList();
+        expect(events.whereType<ContentDelta>().single.text, 'Génération');
+        final err = events.whereType<StreamError>().single;
+        expect(err.message, contains('out of memory'));
+      },
+    );
+
+    test('a UTF-8 character split across packets decodes intact', () async {
+      final line = utf8.encode(
+        'data: {"choices":[{"delta":{"content":"café"}}]}\ndata: [DONE]\n',
+      );
+      // Split inside the 2-byte "é".
+      final cut = line.indexOf(0xC3) + 1;
+      dio = Dio(BaseOptions(baseUrl: 'http://test.local/v1'));
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) => handler.resolve(
+            Response(
+              requestOptions: options,
+              data: ResponseBody(
+                Stream.fromIterable([
+                  Uint8List.fromList(line.sublist(0, cut)),
+                  Uint8List.fromList(line.sublist(cut)),
+                ]),
+                200,
+              ),
+              statusCode: 200,
+            ),
+          ),
+        ),
+      );
+      service = LlmService(
+        dio: dio,
+        apiSettings: const ApiSettings(
+          baseUrl: 'http://test.local/v1',
+          selectedModel: 'test-model',
+        ),
+      );
+      final events = await service
+          .streamChatCompletion(history: _history, systemPrompt: '')
+          .toList();
+      expect(events.whereType<ContentDelta>().single.text, 'café');
+    });
+  });
+
+  group('request body per profile', () {
+    const tool = McpToolInfo(
+      name: 't',
+      description: 'd',
+      inputSchema: {'type': 'object'},
+    );
+    final done = ['data: [DONE]', ''];
+
+    test('text profile: sampling fields, system prompt and tools', () async {
+      await createService(done, selectedModel: 'llama')
+          .streamChatCompletion(
+            history: _history,
+            systemPrompt: 'be terse',
+            profile: const TextRequestProfile(
+              generation: GenerationSettings(temperature: 0.3),
+            ),
+            tools: const [tool],
+          )
+          .toList();
+      final body = interceptor.bodies.single;
+      expect(body['temperature'], 0.3);
+      expect(body.containsKey('generation'), isFalse);
+      expect((body['messages'] as List).first, {
+        'role': 'system',
+        'content': 'be terse',
+      });
+      expect(body['tools'], isNotEmpty);
+    });
+
+    test(
+      'image profile: generation object, no sampling/system/tools',
+      () async {
+        await createService(done, selectedModel: 'qwen-image-2.1')
+            .streamChatCompletion(
+              history: _history,
+              systemPrompt: 'be terse',
+              profile: const ImageRequestProfile(
+                image: ImageSettings(steps: 5, aspectRatio: '16:9'),
+              ),
+              tools: const [tool],
+            )
+            .toList();
+        final body = interceptor.bodies.single;
+        expect(body['model'], 'qwen-image-2.1');
+        expect(body['stream'], isTrue);
+        expect(body['generation'], {'aspect_ratio': '16:9', 'steps': 5});
+        for (final key in [
+          'temperature',
+          'top_p',
+          'max_tokens',
+          'frequency_penalty',
+          'presence_penalty',
+          'tools',
+          'tool_choice',
+        ]) {
+          expect(body.containsKey(key), isFalse, reason: key);
+        }
+        final roles = (body['messages'] as List).map((m) => (m as Map)['role']);
+        expect(roles, isNot(contains('system')));
+      },
+    );
+
+    test(
+      'image profile with default settings sends no generation key',
+      () async {
+        await createService(done, selectedModel: 'qwen-image-2.1')
+            .streamChatCompletion(
+              history: _history,
+              systemPrompt: '',
+              profile: const ImageRequestProfile(),
+            )
+            .toList();
+        expect(interceptor.bodies.single.containsKey('generation'), isFalse);
+      },
+    );
+
+    test('a call without a profile is a plain text request', () async {
+      await createService(
+        done,
+        selectedModel: 'llama',
+      ).streamChatCompletion(history: _history, systemPrompt: '').toList();
+      final body = interceptor.bodies.single;
+      expect(body['temperature'], const GenerationSettings().temperature);
+      expect(body.containsKey('generation'), isFalse);
+    });
   });
 }

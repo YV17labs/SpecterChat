@@ -1,5 +1,10 @@
+import 'dart:typed_data';
+
+import '../chat_session_state.dart' show GenerationProgress;
 import '../models/app_settings.dart';
 import '../models/message.dart';
+import '../models/model_info.dart';
+import '../models/request_profile.dart';
 import 'cancellation_token.dart';
 
 /// Represents a streamed chunk from the LLM.
@@ -28,6 +33,22 @@ class ToolCallDelta extends StreamEvent {
     this.name,
     required this.argumentsDelta,
   });
+}
+
+/// Progress of a long-running server-side step (image generation). Purely
+/// transient: the session mirrors the latest one into its state for the UI
+/// and never persists it.
+class ProgressDelta extends StreamEvent {
+  final GenerationProgress progress;
+  const ProgressDelta(this.progress);
+}
+
+/// One complete image produced by the assistant turn (decoded bytes, never
+/// a URL).
+class ImageDelta extends StreamEvent {
+  final Uint8List bytes;
+  final String mimeType;
+  const ImageDelta({required this.bytes, required this.mimeType});
 }
 
 class StreamUsage extends StreamEvent {
@@ -61,11 +82,18 @@ class StreamError extends StreamEvent {
 /// implementation detail of the service, not something the chat pipeline
 /// knows about.
 abstract interface class ILlmService {
-  Future<List<String>> fetchModels();
+  /// The server's model list, sorted by id. Image-generation servers
+  /// describe themselves in [ModelInfo.image].
+  Future<List<ModelInfo>> fetchModels();
 
+  /// One assistant turn as a stream of events. [profile] decides what the
+  /// request carries besides [history]: a text profile sends [systemPrompt]
+  /// and [tools] along with its sampling parameters; an image profile
+  /// sends its image options and drops both (the server ignores them).
   Stream<StreamEvent> streamChatCompletion({
     required List<Message> history,
     required String systemPrompt,
+    RequestProfile profile = const TextRequestProfile(),
     ImageBytesMap imageBytes = const {},
     List<McpToolInfo> tools = const [],
     CancellationToken? cancellationToken,

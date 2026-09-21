@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:specterchat/application/chat/stream_accumulator.dart';
+import 'package:specterchat/domain/models/message.dart';
 import 'package:specterchat/domain/services/i_llm_service.dart';
 
 void main() {
@@ -74,6 +75,23 @@ void main() {
       expect(acc.isSendable, isFalse);
       acc.addContent('x');
       expect(acc.isSendable, isTrue);
+    });
+
+    test('isSendable with an image and reset clears images', () {
+      final acc = StreamAccumulator();
+      expect(acc.isSendable, isFalse);
+      acc.addImage(
+        const ImageContentBlock(
+          attachmentId: 'att',
+          mimeType: 'image/png',
+          byteSize: 3,
+        ),
+      );
+      expect(acc.isSendable, isTrue);
+      expect(acc.isDirty, isTrue);
+      acc.reset();
+      expect(acc.images, isEmpty);
+      expect(acc.isSendable, isFalse);
     });
 
     test('shouldPersist is true once after a change, then false', () {

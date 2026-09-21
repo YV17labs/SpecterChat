@@ -2,6 +2,40 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../../core/theme.dart';
+import '../../../domain/chat_session_state.dart' show GenerationProgress;
+
+/// Thin progress bar plus caption for a long-running server step
+/// ("Generating 12/40"). Indeterminate when the server gave no numbers.
+class GenerationProgressBar extends StatelessWidget {
+  final GenerationProgress progress;
+
+  const GenerationProgressBar({super.key, required this.progress});
+
+  @override
+  Widget build(BuildContext context) {
+    final styles = context.specterStyles;
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(2),
+            child: LinearProgressIndicator(
+              value: progress.fraction,
+              minHeight: 3,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(progress.label, style: styles.caption),
+        ],
+      ),
+    );
+  }
+}
+
 /// Three pulsing dots shown while an assistant turn is streaming.
 class StreamingIndicator extends StatelessWidget {
   const StreamingIndicator({super.key});

@@ -11,7 +11,12 @@ import 'package:flutter_test/flutter_test.dart';
 ///   presentation    → everything
 ///
 /// Plus: `domain` and `application` never import Dio, Drift, Riverpod,
-/// SharedPreferences or Flutter widgets. Generated files are skipped.
+/// SharedPreferences or Flutter widgets — nor `dart:ui`, which is the
+/// engine (`flutter/foundation` is tolerated for `ValueNotifier`). Inside
+/// presentation, `rendering/` is `dart:ui` code with no
+/// widgets, `providers/` never reaches into `ui/`, and `ui/` never touches
+/// infrastructure or the desktop plugins directly. Generated files are
+/// skipped.
 void main() {
   final lib = Directory('lib');
 
@@ -107,8 +112,12 @@ void main() {
       'package:flutter/material.dart',
       'package:flutter/widgets.dart',
       'package:flutter/cupertino.dart',
+      'package:flutter/rendering.dart',
+      'package:flutter/painting.dart',
+      'package:flutter/services.dart',
       'package:mcp_dart/',
       'package:http/',
+      'dart:ui',
     ];
     for (final layer in ['domain', 'application']) {
       forbid(layer, (i) => banned.any(i.startsWith));
@@ -119,5 +128,27 @@ void main() {
     // Widgets and providers may build infrastructure objects in providers,
     // but UI code itself must not import infrastructure.
     forbid('presentation/ui', (i) => inLayer(i, 'infrastructure'));
+  });
+
+  test('UI never talks to the desktop plugins directly', () {
+    // File dialogs and the clipboard go through `IImageIo`; the only
+    // widget-level plugin is the drop target.
+    const plugins = ['package:file_selector/', 'package:pasteboard/'];
+    forbid('presentation/ui', (i) => plugins.any(i.startsWith));
+  });
+
+  test('presentation/rendering is dart:ui only, no widgets', () {
+    forbid(
+      'presentation/rendering',
+      (i) =>
+          i.startsWith('package:flutter/') ||
+          i.startsWith('package:flutter_riverpod/') ||
+          inLayer(i, 'presentation/ui') ||
+          inLayer(i, 'presentation/providers'),
+    );
+  });
+
+  test('providers never import widgets from ui/', () {
+    forbid('presentation/providers', (i) => inLayer(i, 'presentation/ui'));
   });
 }

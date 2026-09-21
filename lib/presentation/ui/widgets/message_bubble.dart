@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/theme.dart';
+import '../../../domain/chat_session_state.dart' show GenerationProgress;
 import '../../../domain/models/message.dart';
 import '../../../domain/services/llm_hook.dart' show correctionPrefix;
 import 'content_blocks.dart';
@@ -31,6 +32,10 @@ class MessageBubble extends StatelessWidget {
   /// Null hides the button.
   final ValueChanged<String>? onFork;
 
+  /// Server-reported progress for this (streaming) message, if any. Shown
+  /// in place of the typing dots while an image is being generated.
+  final GenerationProgress? progress;
+
   const MessageBubble({
     super.key,
     required this.message,
@@ -38,6 +43,7 @@ class MessageBubble extends StatelessWidget {
     this.cumulativeDurationMs,
     this.onTellMore,
     this.onFork,
+    this.progress,
   });
 
   bool get _isUser => message.role == MessageRole.user;
@@ -128,8 +134,20 @@ class MessageBubble extends StatelessWidget {
               ),
             ),
           ),
-        for (final block in message.content) childFor(block),
-        if (message.isStreaming) const StreamingIndicator(),
+        for (final (i, block) in message.content.indexed) ...[
+          // Images sit flush against markdown text otherwise; give them air
+          // on both sides so a caption + picture reads as two elements.
+          if (i > 0 &&
+              (block is ImageContentBlock ||
+                  message.content[i - 1] is ImageContentBlock))
+            const SizedBox(height: 10),
+          childFor(block),
+        ],
+        if (message.isStreaming)
+          if (progress case final p?)
+            GenerationProgressBar(progress: p)
+          else
+            const StreamingIndicator(),
         if (!message.isStreaming &&
             message.role == MessageRole.assistant &&
             message.completionTokens > 0)

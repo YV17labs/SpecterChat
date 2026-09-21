@@ -1,5 +1,6 @@
 import '../../domain/models/message.dart';
 import '../../domain/services/llm_hook.dart';
+import 'message_writes.dart';
 import 'stream_accumulator.dart';
 
 /// What to do with a finished assistant turn.
@@ -45,6 +46,7 @@ class ChatLogic {
     required String thinking,
     required Map<int, ToolCallAccumulator> toolCalls,
     required bool isStreaming,
+    List<ImageContentBlock> images = const [],
     int completionTokens = 0,
     int durationMs = 0,
   }) {
@@ -56,6 +58,9 @@ class ChatLogic {
     if (content.isNotEmpty) {
       blocks.add(ContentBlock.text(text: content));
     }
+    // Images follow the text: the text buffer is a single block, so a
+    // caption streamed after the image still reads above it.
+    blocks.addAll(images);
     for (final tc in toolCalls.values) {
       if (tc.isValid) {
         blocks.add(
@@ -83,6 +88,31 @@ class ChatLogic {
       durationMs: durationMs,
     );
   }
+
+  /// A user turn: the text block (when there is text) followed by one
+  /// image block per entry of [images]. The caller stores the blobs under
+  /// those ids in the same transaction as the row
+  /// (`saveMessagesWithAttachments`).
+  Message buildUserMessage({
+    required String id,
+    required String conversationId,
+    required String text,
+    List<PendingAttachment> images = const [],
+  }) => Message(
+    id: id,
+    conversationId: conversationId,
+    role: MessageRole.user,
+    content: [
+      if (text.isNotEmpty) ContentBlock.text(text: text),
+      for (final a in images)
+        ContentBlock.image(
+          attachmentId: a.attachmentId,
+          mimeType: a.mimeType,
+          byteSize: a.bytes.length,
+        ),
+    ],
+    createdAt: DateTime.now(),
+  );
 
   /// Classify a finished turn from its buffers. [hook] is the model-specific
   /// hook, or `null` when the selected model has no known quirks.

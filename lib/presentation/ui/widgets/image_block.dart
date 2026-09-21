@@ -4,9 +4,11 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:logging/logging.dart';
-import 'package:pasteboard/pasteboard.dart';
 
+import '../../../domain/services/i_image_io.dart';
 import '../../providers/attachment_provider.dart';
+import '../../providers/image_providers.dart';
+import '../../providers/image_reuse_provider.dart';
 
 final _log = Logger('ImageBlock');
 
@@ -29,7 +31,13 @@ class ImageBlock extends ConsumerWidget {
     return bytesAsync.when(
       data: (bytes) {
         if (bytes == null) return const _ImageError(label: 'Image unavailable');
-        return _LoadedImageBlock(bytes: bytes);
+        return _LoadedImageBlock(
+          bytes: bytes,
+          mimeType: mimeType,
+          io: ref.watch(imageIoProvider),
+          onAnnotate: () =>
+              ref.read(imageReuseProvider.notifier).request(bytes, mimeType),
+        );
       },
       loading: () => const _ImageLoadingPlaceholder(),
       error: (e, st) {
@@ -82,7 +90,20 @@ class _ImageError extends StatelessWidget {
 
 class _LoadedImageBlock extends StatefulWidget {
   final Uint8List bytes;
-  const _LoadedImageBlock({required this.bytes});
+  final String mimeType;
+
+  /// Clipboard and "Save as…" go through here, never a plugin directly.
+  final IImageIo io;
+
+  /// Hands the image back to the composer, annotation editor open.
+  final VoidCallback? onAnnotate;
+
+  const _LoadedImageBlock({
+    required this.bytes,
+    required this.mimeType,
+    required this.io,
+    this.onAnnotate,
+  });
 
   @override
   State<_LoadedImageBlock> createState() => _LoadedImageBlockState();
@@ -136,7 +157,7 @@ class _LoadedImageBlockState extends State<_LoadedImageBlock> {
 
   Future<void> _copyToClipboard() async {
     try {
-      await Pasteboard.writeImage(widget.bytes);
+      await widget.io.writeClipboardImage(widget.bytes);
       if (!mounted) return;
       setState(() => _justCopied = true);
       _copiedResetTimer?.cancel();
@@ -149,6 +170,21 @@ class _LoadedImageBlockState extends State<_LoadedImageBlock> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Failed to copy image')));
+    }
+  }
+
+  Future<void> _saveAs() async {
+    try {
+      await widget.io.saveImage((
+        bytes: widget.bytes,
+        mimeType: widget.mimeType,
+      ));
+    } catch (e) {
+      _log.warning('Failed to save image', e);
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Failed to save image')));
     }
   }
 
@@ -206,25 +242,66 @@ class _LoadedImageBlockState extends State<_LoadedImageBlock> {
             child: AnimatedOpacity(
               opacity: (_hovering || _justCopied) ? 1.0 : 0.0,
               duration: const Duration(milliseconds: 150),
-              child: Material(
-                color: Colors.black.withValues(alpha: 0.55),
-                borderRadius: BorderRadius.circular(6),
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(6),
-                  onTap: _copyToClipboard,
-                  child: Padding(
-                    padding: const EdgeInsets.all(6),
-                    child: Icon(
-                      _justCopied ? Icons.check : Icons.copy,
-                      size: 16,
-                      color: Colors.white,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (widget.onAnnotate case final onAnnotate?) ...[
+                    _OverlayButton(
+                      icon: Icons.draw_outlined,
+                      tooltip: 'Annotate & reuse',
+                      onTap: onAnnotate,
                     ),
+                    const SizedBox(width: 6),
+                  ],
+                  _OverlayButton(
+                    icon: Icons.save_alt,
+                    tooltip: 'Save as…',
+                    onTap: () => unawaited(_saveAs()),
                   ),
-                ),
+                  const SizedBox(width: 6),
+                  _OverlayButton(
+                    icon: _justCopied ? Icons.check : Icons.copy,
+                    tooltip: 'Copy image',
+                    onTap: _copyToClipboard,
+                  ),
+                ],
               ),
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Small translucent icon button drawn over an image on hover.
+class _OverlayButton extends StatelessWidget {
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onTap;
+
+  const _OverlayButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      waitDuration: const Duration(milliseconds: 500),
+      child: Material(
+        color: Colors.black.withValues(alpha: 0.55),
+        borderRadius: BorderRadius.circular(6),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(6),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.all(6),
+            child: Icon(icon, size: 16, color: Colors.white),
+          ),
+        ),
       ),
     );
   }

@@ -5,16 +5,24 @@ import 'package:specterchat/application/chat/chat_session_deps.dart';
 import 'package:specterchat/application/llm_hooks/llm_hook_registry.dart';
 import 'package:specterchat/application/mcp/active_mcp_server.dart';
 import 'package:specterchat/core/id_gen.dart';
+import 'package:specterchat/core/image_mime.dart';
+import 'package:specterchat/domain/models/annotation.dart';
 import 'package:specterchat/domain/models/app_settings.dart';
 import 'package:specterchat/domain/models/conversation.dart';
 import 'package:specterchat/domain/models/conversation_settings.dart';
 import 'package:specterchat/domain/models/mcp_server_state.dart';
 import 'package:specterchat/domain/models/message.dart';
+import 'package:specterchat/domain/models/model_info.dart';
+import 'package:specterchat/domain/models/request_profile.dart';
 import 'package:specterchat/domain/repositories/i_attachment_repository.dart';
 import 'package:specterchat/domain/repositories/i_conversation_repository.dart';
 import 'package:specterchat/domain/repositories/i_message_repository.dart';
+import 'package:specterchat/domain/repositories/i_model_catalog_store.dart';
 import 'package:specterchat/domain/repositories/i_settings_store.dart';
 import 'package:specterchat/domain/services/cancellation_token.dart';
+import 'package:specterchat/domain/services/i_annotation_renderer.dart';
+import 'package:specterchat/domain/services/i_image_io.dart';
+import 'package:specterchat/domain/services/i_image_normalizer.dart';
 import 'package:specterchat/domain/services/i_llm_service.dart';
 import 'package:specterchat/domain/services/i_mcp_service.dart';
 
@@ -195,6 +203,95 @@ class InMemorySettingsStore implements ISettingsStore {
   }
 }
 
+class InMemoryModelCatalogStore implements IModelCatalogStore {
+  Map<String, ImageModelInfo> stored;
+  int saves = 0;
+
+  InMemoryModelCatalogStore([this.stored = const {}]);
+
+  @override
+  Future<Map<String, ImageModelInfo>> load() async => stored;
+
+  @override
+  Future<void> save(Map<String, ImageModelInfo> imageModels) async {
+    stored = imageModels;
+    saves++;
+  }
+}
+
+/// Accepts anything that sniffs as an image, untouched. The real one
+/// decodes on the engine, which stalls widget tests.
+class PassThroughImageNormalizer implements IImageNormalizer {
+  const PassThroughImageNormalizer();
+
+  @override
+  Future<ImageBytes?> normalize(Uint8List bytes) async {
+    final mime = sniffImageMime(bytes);
+    return mime == null ? null : (bytes: bytes, mimeType: mime);
+  }
+}
+
+/// Marks its outputs instead of drawing: the annotated copy is the
+/// original with `0xA5` appended, the mask is `[0xFF]`. Enough to assert
+/// what went out, in which order.
+class FakeAnnotationRenderer implements IAnnotationRenderer {
+  final List<Annotation> rendered = [];
+  Exception? failWith;
+
+  static const int annotatedMarker = 0xA5;
+  static final Uint8List maskBytes = Uint8List.fromList([0xFF]);
+
+  @override
+  Future<AnnotationRender> render(
+    Uint8List original,
+    Annotation annotation, {
+    bool includeMask = false,
+  }) async {
+    if (failWith case final error?) throw error;
+    rendered.add(annotation);
+    return (
+      annotated: Uint8List.fromList([...original, annotatedMarker]),
+      mask: includeMask ? maskBytes : null,
+    );
+  }
+}
+
+/// Scripted dialogs and clipboard.
+class FakeImageIo implements IImageIo {
+  /// What the next [pickImages] returns.
+  List<ImageFileSource> picked = const [];
+
+  /// What the clipboard holds, if anything.
+  Uint8List? clipboardImage;
+
+  final List<ImageBytes> saved = [];
+  final List<Uint8List> copied = [];
+
+  /// Script a picked file from in-memory bytes.
+  static ImageFileSource pickedFile(String name, Uint8List bytes) =>
+      (name: name, read: () async => bytes);
+
+  @override
+  Future<List<ImageFileSource>> pickImages() async => picked;
+
+  @override
+  Future<bool> saveImage(ImageBytes image) async {
+    saved.add(image);
+    return true;
+  }
+
+  @override
+  Future<Uint8List?> readClipboardImage() async => clipboardImage;
+
+  @override
+  Future<void> writeClipboardImage(Uint8List bytes) async => copied.add(bytes);
+}
+
+/// A minimal valid PNG header — enough for the MIME sniffer, not a
+/// decodable image. Pair with [PassThroughImageNormalizer].
+Uint8List fakePngBytes([int tag = 0]) =>
+    Uint8List.fromList([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, tag]);
+
 /// Scripted [ILlmService]: each call to [streamChatCompletion] plays the
 /// next script in [scripts]. A script is a list of events, or a function
 /// building the stream (to model cancellation mid-stream).
@@ -202,6 +299,7 @@ class FakeLlmService implements ILlmService {
   final List<Stream<StreamEvent> Function(CancellationToken?)> scripts;
   final List<List<Message>> receivedHistories = [];
   final List<List<McpToolInfo>> receivedTools = [];
+  final List<RequestProfile> receivedProfiles = [];
   int calls = 0;
 
   FakeLlmService(this.scripts);
@@ -218,19 +316,33 @@ class FakeLlmService implements ILlmService {
     }
   }
 
+  /// What [fetchModels] reports; tests set an image model here to drive
+  /// the settings panel into image mode.
+  List<ModelInfo> models = const [ModelInfo(id: 'fake-model')];
+
+  /// When set, [fetchModels] throws it instead.
+  Exception? fetchModelsError;
+  int fetchModelsCalls = 0;
+
   @override
-  Future<List<String>> fetchModels() async => const ['fake-model'];
+  Future<List<ModelInfo>> fetchModels() async {
+    fetchModelsCalls++;
+    if (fetchModelsError case final e?) throw e;
+    return models;
+  }
 
   @override
   Stream<StreamEvent> streamChatCompletion({
     required List<Message> history,
     required String systemPrompt,
+    RequestProfile profile = const TextRequestProfile(),
     ImageBytesMap imageBytes = const {},
     List<McpToolInfo> tools = const [],
     CancellationToken? cancellationToken,
   }) {
     receivedHistories.add(history);
     receivedTools.add(tools);
+    receivedProfiles.add(profile);
     if (calls >= scripts.length) {
       throw StateError('FakeLlmService: no script for call #$calls');
     }
@@ -327,6 +439,7 @@ ChatSessionDeps depsWith({
   List<ActiveMcpServer> activeServers = const [],
   String modelName = 'fake-model',
   String systemPrompt = '',
+  RequestProfile profile = const TextRequestProfile(),
   LlmHookRegistry hooks = const LlmHookRegistry.none(),
 }) => ChatSessionDeps(
   llm: llm,
@@ -337,5 +450,6 @@ ChatSessionDeps depsWith({
   activeServers: activeServers,
   modelName: modelName,
   effectiveSystemPrompt: systemPrompt,
+  profile: profile,
   hooks: hooks,
 );

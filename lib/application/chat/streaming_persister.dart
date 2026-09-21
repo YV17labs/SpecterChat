@@ -112,6 +112,7 @@ class StreamingPersister {
     content: _accumulator.content.toString(),
     thinking: _accumulator.thinking.toString(),
     toolCalls: _accumulator.toolCalls,
+    images: _accumulator.images,
     isStreaming: isStreaming,
     completionTokens: completionTokens,
     durationMs: durationMs,

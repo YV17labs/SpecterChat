@@ -19,7 +19,6 @@ void main() {
         baseUrl: 'http://test.local/v1',
         selectedModel: 'test-model',
       ),
-      generationSettings: const GenerationSettings(),
     );
   });
 
@@ -37,7 +36,38 @@ void main() {
       );
 
       final models = await service.fetchModels();
-      expect(models, ['model-a', 'model-b', 'model-c']);
+      expect(models.map((m) => m.id), ['model-a', 'model-b', 'model-c']);
+      expect(models.every((m) => !m.isImage), isTrue);
+    });
+
+    test('tags Pictor image models and skips junk entries', () async {
+      dioAdapter.onGet(
+        '/models',
+        (server) => server.reply(200, {
+          'data': [
+            {
+              'id': 'qwen-image-2.1',
+              'generation': {
+                'kind': 'image',
+                'backend': 'torch',
+                'capabilities': {'reference_edit': true, 'rgba': true},
+                'defaults': {'steps': 20, 'guidance': 1.5},
+              },
+            },
+            {'object': 'model'},
+            {'id': 'llama'},
+          ],
+        }),
+      );
+
+      final models = await service.fetchModels();
+      expect(models.map((m) => m.id), ['llama', 'qwen-image-2.1']);
+      final image = models.last.image!;
+      expect(image.backend, 'torch');
+      expect(image.capabilities.referenceEdit, isTrue);
+      expect(image.capabilities.rgba, isTrue);
+      expect(image.defaults.steps, 20);
+      expect(image.defaults.guidance, 1.5);
     });
 
     test('throws LlmException on network error', () async {
@@ -63,7 +93,6 @@ void main() {
           apiKey: 'sk-test',
           selectedModel: 'gpt-4',
         ),
-        generationSettings: const GenerationSettings(),
       );
       expect(svc, isA<LlmService>());
     });

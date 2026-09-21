@@ -1,3 +1,4 @@
+import '../../domain/models/request_profile.dart';
 import '../../domain/repositories/i_attachment_repository.dart';
 import '../../domain/repositories/i_conversation_repository.dart';
 import '../../domain/repositories/i_message_repository.dart';
@@ -25,6 +26,10 @@ class ChatSessionDeps {
   final String modelName;
   final String effectiveSystemPrompt;
 
+  /// Sampling parameters (text model) or image options (image model) for
+  /// this send. Part of the snapshot for the same reason as the rest.
+  final RequestProfile profile;
+
   const ChatSessionDeps({
     required this.llm,
     required this.mcpService,
@@ -34,6 +39,7 @@ class ChatSessionDeps {
     required this.activeServers,
     required this.modelName,
     required this.effectiveSystemPrompt,
+    this.profile = const TextRequestProfile(),
     this.hooks = const LlmHookRegistry.none(),
   });
 

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:logging/logging.dart';
 
+import '../../domain/models/message.dart' show ImageBytes;
 import 'chat_session.dart';
 import 'chat_session_deps.dart';
 
@@ -95,9 +96,13 @@ class ChatSessionManager {
   /// Start streaming a user message in the session for [conversationId].
   /// Creates the session if needed. Returns once the top-level send
   /// resolves (which may involve multiple tool-call rounds).
-  Future<void> sendMessage(String conversationId, String userText) {
+  Future<void> sendMessage(
+    String conversationId,
+    String userText, {
+    List<ImageBytes> images = const [],
+  }) {
     final session = getOrCreate(conversationId);
-    return session.sendMessage(userText);
+    return session.sendMessage(userText, images: images);
   }
 
   /// Dispose and remove a session from the registry. Called when the user

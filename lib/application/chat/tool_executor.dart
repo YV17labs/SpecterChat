@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:logging/logging.dart';
 
@@ -9,6 +8,7 @@ import '../../domain/repositories/i_attachment_repository.dart';
 import '../../domain/repositories/i_message_repository.dart';
 import '../../domain/services/i_mcp_service.dart';
 import '../mcp/active_mcp_server.dart';
+import 'message_writes.dart';
 import 'stream_accumulator.dart';
 
 final _log = Logger('ToolExecutor');
@@ -46,25 +46,10 @@ class ToolExecutor {
       ),
     );
 
-    // Atomic write — without it, the `messages` watcher emits between
-    // the message and attachment inserts and the UI gets stuck on
-    // "Image unavailable" for an attachmentId whose row hasn't landed.
-    await messages.runInTransaction(() async {
-      for (final p in prepared) {
-        await messages.saveMessage(p.message);
-        for (final pending in p.pendingAttachments) {
-          await attachments.storeBytes(
-            attachmentId: pending.attachmentId,
-            messageId: p.message.id,
-            bytes: pending.bytes,
-            mimeType: pending.mimeType,
-          );
-        }
-      }
-    });
+    await saveMessagesWithAttachments(messages, attachments, prepared);
   }
 
-  Future<_PreparedToolResult> _prepareSingle({
+  Future<MessageWrite> _prepareSingle({
     required ToolCallAccumulator call,
     required String conversationId,
     required IMcpService mcpService,
@@ -76,8 +61,8 @@ class ToolExecutor {
     final serverId = findServerForTool(servers, toolName);
 
     if (serverId == null) {
-      return _PreparedToolResult(
-        message: _errorMessage(
+      return MessageWrite(
+        _errorMessage(
           messageId: messageId,
           conversationId: conversationId,
           toolCallId: toolCallId,
@@ -102,8 +87,8 @@ class ToolExecutor {
       );
     } catch (e, st) {
       _log.warning('Tool execution failed: $toolName', e, st);
-      return _PreparedToolResult(
-        message: _errorMessage(
+      return MessageWrite(
+        _errorMessage(
           messageId: messageId,
           conversationId: conversationId,
           toolCallId: toolCallId,
@@ -114,7 +99,7 @@ class ToolExecutor {
     }
   }
 
-  _PreparedToolResult _buildFromResult({
+  MessageWrite _buildFromResult({
     required String messageId,
     required String conversationId,
     required String toolCallId,
@@ -123,7 +108,7 @@ class ToolExecutor {
   }) {
     final resultContent = <ContentBlock>[];
     final rawItems = <Map<String, dynamic>>[];
-    final pending = <_PendingAttachment>[];
+    final pending = <PendingAttachment>[];
 
     for (final content in result.content) {
       switch (content) {
@@ -134,7 +119,7 @@ class ToolExecutor {
           final attachmentId = generateId();
           final bytes = base64Decode(base64Data);
           pending.add(
-            _PendingAttachment(
+            PendingAttachment(
               attachmentId: attachmentId,
               bytes: bytes,
               mimeType: mimeType,
@@ -165,8 +150,8 @@ class ToolExecutor {
       'content': rawItems,
     });
 
-    return _PreparedToolResult(
-      message: Message(
+    return MessageWrite(
+      Message(
         id: messageId,
         conversationId: conversationId,
         role: MessageRole.tool,
@@ -180,7 +165,7 @@ class ToolExecutor {
         ],
         createdAt: DateTime.now(),
       ),
-      pendingAttachments: pending,
+      attachments: pending,
     );
   }
 
@@ -206,24 +191,4 @@ class ToolExecutor {
       createdAt: DateTime.now(),
     );
   }
-}
-
-class _PreparedToolResult {
-  final Message message;
-  final List<_PendingAttachment> pendingAttachments;
-  const _PreparedToolResult({
-    required this.message,
-    this.pendingAttachments = const [],
-  });
-}
-
-class _PendingAttachment {
-  final String attachmentId;
-  final Uint8List bytes;
-  final String mimeType;
-  const _PendingAttachment({
-    required this.attachmentId,
-    required this.bytes,
-    required this.mimeType,
-  });
 }

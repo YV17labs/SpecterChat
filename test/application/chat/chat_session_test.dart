@@ -6,7 +6,9 @@ import 'package:specterchat/application/llm_hooks/llm_hook_registry.dart';
 import 'package:specterchat/application/llm_hooks/qwen3.dart';
 import 'package:specterchat/domain/chat_session_state.dart';
 import 'package:specterchat/domain/models/conversation.dart';
+import 'package:specterchat/domain/models/image_settings.dart';
 import 'package:specterchat/domain/models/message.dart';
+import 'package:specterchat/domain/models/request_profile.dart';
 import 'package:specterchat/domain/services/i_llm_service.dart';
 import 'package:specterchat/domain/services/i_mcp_service.dart';
 import 'package:specterchat/domain/services/llm_hook.dart';
@@ -43,6 +45,8 @@ void main() {
     FakeLlmService llm, {
     LlmHookRegistry hooks = const LlmHookRegistry.none(),
     String modelName = 'fake-model',
+    RequestProfile profile = const TextRequestProfile(),
+    InMemoryAttachmentRepository? attachments,
   }) => ChatSession(
     conversationId: _conv,
     persistenceThrottle: const Duration(milliseconds: 5),
@@ -50,12 +54,14 @@ void main() {
       llm: llm,
       messages: messages,
       conversations: conversations,
+      attachments: attachments,
       mcpService: mcp,
       activeServers: [
         activeServer(tools: [tool('search')]),
       ],
       hooks: hooks,
       modelName: modelName,
+      profile: profile,
     ),
   );
 
@@ -103,6 +109,15 @@ void main() {
         expect(llm.receivedTools.single.map((t) => t.name), ['search']);
       },
     );
+
+    test("the deps snapshot's request profile reaches the LLM", () async {
+      const profile = ImageRequestProfile(image: ImageSettings(steps: 7));
+      final llm = FakeLlmService.events([
+        [const ContentDelta('ok'), const StreamDone()],
+      ]);
+      await session(llm, profile: profile).sendMessage('draw');
+      expect(llm.receivedProfiles.single, same(profile));
+    });
 
     test('auto-titles a fresh conversation from the first reply', () async {
       final s = session(
@@ -362,6 +377,187 @@ void main() {
       await s.sendMessage('go');
       expect(llm.calls, 1);
       expect(persisted().last.plainText, '<tool_call>x</tool_call>');
+    });
+  });
+
+  group('images', () {
+    final pngBytes = fakePngBytes();
+    late InMemoryAttachmentRepository attachments;
+
+    ChatSession imageSession(FakeLlmService llm) =>
+        session(llm, attachments: attachments);
+
+    setUp(() => attachments = InMemoryAttachmentRepository());
+
+    test('attached images become image blocks backed by attachments', () async {
+      final llm = FakeLlmService.events([
+        [const ContentDelta('nice'), const StreamDone()],
+      ]);
+      final s = imageSession(llm);
+
+      await s.sendMessage(
+        'look',
+        images: [
+          (bytes: pngBytes, mimeType: 'image/png'),
+          (bytes: pngBytes, mimeType: 'image/jpeg'),
+        ],
+      );
+
+      final user = persisted().first;
+      expect(user.role, MessageRole.user);
+      expect(user.content.first, const ContentBlock.text(text: 'look'));
+      final blocks = user.content.whereType<ImageContentBlock>().toList();
+      expect(blocks.map((b) => b.mimeType), ['image/png', 'image/jpeg']);
+      expect(blocks.map((b) => b.byteSize), [pngBytes.length, pngBytes.length]);
+      for (final b in blocks) {
+        expect(attachments.rows[b.attachmentId]?.bytes, pngBytes);
+      }
+      // The write was transactional: message + blobs together.
+      expect(messages.calls.first, 'save:user');
+    });
+
+    test(
+      'image-only send has no text block and still reaches the model',
+      () async {
+        final llm = FakeLlmService.events([
+          [const ContentDelta('ok'), const StreamDone()],
+        ]);
+        final s = imageSession(llm);
+        await s.sendMessage(
+          '',
+          images: [(bytes: pngBytes, mimeType: 'image/png')],
+        );
+
+        final user = persisted().first;
+        expect(user.content.whereType<TextContentBlock>(), isEmpty);
+        expect(user.content.whereType<ImageContentBlock>(), hasLength(1));
+        expect(llm.receivedHistories.single.single.id, user.id);
+      },
+    );
+
+    test('empty text with no images is a no-op', () async {
+      final llm = FakeLlmService.events([]);
+      final s = imageSession(llm);
+      await s.sendMessage('   ');
+      expect(persisted(), isEmpty);
+      expect(llm.calls, 0);
+    });
+
+    test('a streamed image is stored and persisted on the reply', () async {
+      final llm = FakeLlmService.events([
+        [
+          const ContentDelta('Here you go'),
+          ImageDelta(bytes: pngBytes, mimeType: 'image/png'),
+          const StreamDone(),
+        ],
+      ]);
+      final s = imageSession(llm);
+      await s.sendMessage('draw a cat');
+
+      final reply = persisted().last;
+      expect(reply.role, MessageRole.assistant);
+      expect(reply.isStreaming, isFalse);
+      expect(reply.content.first, const ContentBlock.text(text: 'Here you go'));
+      final img = reply.content.whereType<ImageContentBlock>().single;
+      expect(img.mimeType, 'image/png');
+      expect(img.byteSize, pngBytes.length);
+      expect(attachments.rows[img.attachmentId]?.bytes, pngBytes);
+    });
+
+    test('an image-only reply is kept (not discarded as empty)', () async {
+      final llm = FakeLlmService.events([
+        [
+          ImageDelta(bytes: pngBytes, mimeType: 'image/png'),
+          const StreamDone(),
+        ],
+      ]);
+      final s = imageSession(llm);
+      await s.sendMessage('draw');
+      final reply = persisted().last;
+      expect(reply.role, MessageRole.assistant);
+      expect(reply.content.whereType<ImageContentBlock>(), hasLength(1));
+      expect(messages.calls, isNot(contains('delete')));
+    });
+
+    test(
+      'progress is mirrored into the streaming state and cleared after',
+      () async {
+        final llm = FakeLlmService.events([
+          [
+            const ProgressDelta(GenerationProgress(stage: 'loading')),
+            const ProgressDelta(
+              GenerationProgress(
+                stage: 'generating',
+                step: 12,
+                total: 40,
+                message: 'Génération 12/40',
+              ),
+            ),
+            const StreamUsage(promptTokens: 10, completionTokens: 0),
+            const StreamDone(),
+          ],
+        ]);
+        final s = imageSession(llm);
+        final seen = <GenerationProgress?>[];
+        s.state.addListener(() {
+          if (s.state.value case SessionStreaming(:final progress)) {
+            seen.add(progress);
+          }
+        });
+
+        await s.sendMessage('draw');
+
+        final labels = seen.whereType<GenerationProgress>().map((p) => p.label);
+        expect(labels, containsAllInOrder(['loading', 'Génération 12/40']));
+        // Usage arriving after progress must not wipe it.
+        expect(seen.last?.step, 12);
+        expect(seen.last?.fraction, closeTo(0.3, 1e-9));
+        expect(s.state.value, isA<SessionIdle>());
+      },
+    );
+
+    test('stop after an image keeps the image', () async {
+      final stalled = Completer<void>();
+      final llm = FakeLlmService([
+        (token) async* {
+          yield ImageDelta(bytes: pngBytes, mimeType: 'image/png');
+          await stalled.future;
+          yield const StreamCancelled();
+        },
+      ]);
+      final s = imageSession(llm);
+      final send = s.sendMessage('draw');
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      final stop = s.stop();
+      stalled.complete();
+      await stop;
+      await send;
+
+      final reply = persisted().last;
+      expect(reply.role, MessageRole.assistant);
+      expect(reply.isStreaming, isFalse);
+      expect(reply.content.whereType<ImageContentBlock>(), hasLength(1));
+    });
+
+    test('the generated image is re-sent on the next turn', () async {
+      final llm = FakeLlmService.events([
+        [
+          ImageDelta(bytes: pngBytes, mimeType: 'image/png'),
+          const StreamDone(),
+        ],
+        [const ContentDelta('done'), const StreamDone()],
+      ]);
+      final s = imageSession(llm);
+      await s.sendMessage('draw');
+      await s.sendMessage('make it blue');
+
+      final history = llm.receivedHistories.last;
+      expect(history.map((m) => m.role), [
+        MessageRole.user,
+        MessageRole.assistant,
+        MessageRole.user,
+      ]);
+      expect(history[1].imageAttachmentIds(), hasLength(1));
     });
   });
 

@@ -2,6 +2,7 @@ import 'package:freezed_annotation/freezed_annotation.dart';
 
 import 'app_settings.dart';
 import 'conversation.dart';
+import 'image_settings.dart';
 
 part 'effective_settings.freezed.dart';
 
@@ -14,6 +15,7 @@ abstract class EffectiveSettings with _$EffectiveSettings {
   const factory EffectiveSettings({
     required String systemPrompt,
     required GenerationSettings generation,
+    required ImageSettings image,
     required int contextLength,
     required List<String> enabledMcpServerIds,
   }) = _EffectiveSettings;
@@ -22,6 +24,7 @@ abstract class EffectiveSettings with _$EffectiveSettings {
   factory EffectiveSettings.global(AppSettings global) => EffectiveSettings(
     systemPrompt: global.defaultSystemPrompt,
     generation: global.generation,
+    image: global.image,
     contextLength: global.api.contextLength,
     enabledMcpServerIds: const [],
   );
@@ -38,6 +41,7 @@ abstract class EffectiveSettings with _$EffectiveSettings {
           conversation.systemPrompt ??
           global.defaultSystemPrompt,
       generation: overrides?.generation ?? global.generation,
+      image: overrides?.image ?? global.image,
       contextLength: overrides?.contextLength ?? global.api.contextLength,
       enabledMcpServerIds: overrides?.enabledMcpServerIds ?? const [],
     );

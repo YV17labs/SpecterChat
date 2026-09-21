@@ -28,6 +28,7 @@ final chatSessionManagerProvider = Provider<ChatSessionManager>((ref) {
       activeServers: ref.read(activeMcpServersProvider),
       modelName: ref.read(settingsProvider).api.selectedModel,
       effectiveSystemPrompt: ref.read(effectiveSettingsProvider).systemPrompt,
+      profile: ref.read(requestProfileProvider),
       hooks: defaultLlmHookRegistry,
     ),
   );

@@ -6,8 +6,11 @@ import 'package:dio/dio.dart';
 import 'package:logging/logging.dart';
 
 import '../../core/app_info.dart';
+import '../../domain/chat_session_state.dart' show GenerationProgress;
 import '../../domain/models/app_settings.dart';
 import '../../domain/models/message.dart';
+import '../../domain/models/model_info.dart';
+import '../../domain/models/request_profile.dart';
 import '../../domain/services/cancellation_token.dart';
 import '../../domain/services/i_llm_service.dart';
 import 'openai_codec.dart';
@@ -16,32 +19,27 @@ import 'sse_think_splitter.dart';
 final _log = Logger('LlmService');
 
 /// [ILlmService] over an OpenAI-compatible `chat/completions` endpoint.
+///
+/// Holds only what identifies the connection (client, base URL, selected
+/// model). What a request carries beyond the messages comes with each call
+/// as a [RequestProfile], so changing a sampling slider never rebuilds the
+/// HTTP client and an in-flight turn keeps the profile it started with.
 class LlmService implements ILlmService {
   final Dio _dio;
   final ApiSettings _apiSettings;
-  final GenerationSettings _generationSettings;
   final OpenAiCodec _codec;
 
   LlmService({
     required Dio dio,
     required ApiSettings apiSettings,
-    required GenerationSettings generationSettings,
     OpenAiCodec codec = const OpenAiCodec(),
   }) : _dio = dio,
        _apiSettings = apiSettings,
-       _generationSettings = generationSettings,
        _codec = codec;
 
   /// Factory that creates a production [LlmService] with a configured [Dio].
-  factory LlmService.fromSettings({
-    required ApiSettings apiSettings,
-    required GenerationSettings generationSettings,
-  }) {
-    return LlmService(
-      dio: _createDio(apiSettings),
-      apiSettings: apiSettings,
-      generationSettings: generationSettings,
-    );
+  factory LlmService.fromSettings({required ApiSettings apiSettings}) {
+    return LlmService(dio: _createDio(apiSettings), apiSettings: apiSettings);
   }
 
   static Dio _createDio(ApiSettings settings) {
@@ -61,14 +59,25 @@ class LlmService implements ILlmService {
   }
 
   @override
-  Future<List<String>> fetchModels() async {
+  Future<List<ModelInfo>> fetchModels() async {
     try {
       final response = await _dio.get<Map<String, dynamic>>('/models');
       final data = response.data?['data'];
       if (data is! List) {
         throw LlmException('Unexpected /models payload');
       }
-      return data.map((m) => (m as Map)['id'] as String).toList()..sort();
+      final models = <ModelInfo>[];
+      for (final entry in data) {
+        if (entry is! Map) continue;
+        try {
+          models.add(
+            OpenAiCodec.parseModelInfo(Map<String, dynamic>.from(entry)),
+          );
+        } on FormatException catch (e) {
+          _log.fine('Skipping model entry: $e');
+        }
+      }
+      return models..sort((a, b) => a.id.compareTo(b.id));
     } on DioException catch (e) {
       _log.warning('Failed to fetch models', e);
       throw LlmException('Failed to fetch models: ${e.message}');
@@ -79,6 +88,7 @@ class LlmService implements ILlmService {
   Stream<StreamEvent> streamChatCompletion({
     required List<Message> history,
     required String systemPrompt,
+    RequestProfile profile = const TextRequestProfile(),
     ImageBytesMap imageBytes = const {},
     List<McpToolInfo> tools = const [],
     CancellationToken? cancellationToken,
@@ -88,13 +98,13 @@ class LlmService implements ILlmService {
       return;
     }
 
-    final body = _requestBody(
-      messages: _codec.buildMessages(
-        history: history,
-        systemPrompt: systemPrompt,
-        imageBytes: imageBytes,
-      ),
-      tools: _codec.toolsToApi(tools),
+    final body = _codec.requestBody(
+      model: _apiSettings.selectedModel,
+      profile: profile,
+      history: history,
+      systemPrompt: systemPrompt,
+      imageBytes: imageBytes,
+      tools: tools,
     );
 
     if (_log.isLoggable(Level.INFO)) {
@@ -131,13 +141,19 @@ class LlmService implements ILlmService {
       }
       final sseBuffer = StringBuffer();
 
-      await for (final chunk in stream) {
+      // Decode through a streaming decoder so a multi-byte character split
+      // across two chunks is not turned into replacement glyphs.
+      await for (final chunk in utf8.decoder.bind(stream)) {
         if (cancellationToken?.isCancelled ?? false) {
           yield const StreamCancelled();
           return;
         }
 
-        sseBuffer.write(utf8.decode(chunk));
+        sseBuffer.write(chunk);
+        // A single `data:` line can be several MB (a base64 image). Only
+        // re-scan the buffer when a line may have completed — otherwise
+        // every network packet would copy and split the whole buffer.
+        if (!chunk.contains('\n')) continue;
         final lines = sseBuffer.toString().split('\n');
         // Keep the last potentially incomplete line in the buffer.
         sseBuffer
@@ -155,7 +171,7 @@ class LlmService implements ILlmService {
             yield const StreamDone();
             return;
           }
-          for (final event in _parseChunk(data, splitter)) {
+          await for (final event in _parseChunk(data, splitter)) {
             yield event;
           }
         }
@@ -187,41 +203,33 @@ class LlmService implements ILlmService {
     }
   }
 
-  Map<String, dynamic> _requestBody({
-    required List<Map<String, dynamic>> messages,
-    required List<Map<String, dynamic>> tools,
-  }) {
-    final g = _generationSettings;
-    return {
-      'model': _apiSettings.selectedModel,
-      'messages': messages,
-      'stream': true,
-      'stream_options': {'include_usage': true},
-      'temperature': g.temperature,
-      'top_p': g.topP,
-      'max_tokens': g.maxTokens,
-      'frequency_penalty': g.frequencyPenalty,
-      'presence_penalty': g.presencePenalty,
-      if (g.topK > 0) 'top_k': g.topK,
-      if (g.minP > 0.0) 'min_p': g.minP,
-      if (g.repeatPenalty != 1.0) 'repeat_penalty': g.repeatPenalty,
-      if (tools.isNotEmpty) ...{'tools': tools, 'tool_choice': 'auto'},
-    };
-  }
-
   /// One `data:` line → zero or more events. Malformed lines are skipped.
-  Iterable<StreamEvent> _parseChunk(
+  ///
+  /// Async because an `images` entry may carry an http(s) URL that has to
+  /// be fetched before it can be handed over as bytes.
+  Stream<StreamEvent> _parseChunk(
     String data,
     SseThinkSplitter splitter,
-  ) sync* {
+  ) async* {
     final Map<String, dynamic> json;
     try {
       json = jsonDecode(data) as Map<String, dynamic>;
     } on FormatException {
-      _log.fine('Skipping malformed SSE JSON line: $data');
+      _log.fine('Skipping malformed SSE JSON line: ${_truncate(data)}');
       return;
     } on TypeError {
-      _log.fine('Skipping non-object SSE JSON line: $data');
+      _log.fine('Skipping non-object SSE JSON line: ${_truncate(data)}');
+      return;
+    }
+
+    // A server that fails after the stream started sends the OpenAI error
+    // envelope as an event instead of an HTTP status.
+    final error = json['error'];
+    if (error != null) {
+      final message = error is Map
+          ? error['message'] as String? ?? error.toString()
+          : error.toString();
+      yield StreamError('API error: $message');
       return;
     }
 
@@ -253,7 +261,31 @@ class LlmService implements ILlmService {
 
     final content = delta['content'] as String?;
     if (content != null && content.isNotEmpty) {
-      yield* splitter.push(content);
+      yield* Stream.fromIterable(splitter.push(content));
+    }
+
+    // Extension: long-running server step (image generation).
+    final progress = delta['progress'];
+    if (progress is Map) {
+      final stage = progress['stage'] as String?;
+      if (stage != null && stage.isNotEmpty) {
+        yield ProgressDelta(
+          GenerationProgress(
+            stage: stage,
+            step: (progress['step'] as num?)?.toInt(),
+            total: (progress['total'] as num?)?.toInt(),
+            percent: (progress['percent'] as num?)?.toInt(),
+            message: progress['message'] as String?,
+          ),
+        );
+      }
+    }
+
+    // Images produced by the assistant (OpenRouter `images` convention).
+    for (final url in OpenAiCodec.imageUrls(delta['images'])) {
+      final image = await _resolveImageUrl(url);
+      if (image == null) continue;
+      yield ImageDelta(bytes: image.bytes, mimeType: image.mimeType);
     }
 
     final toolCalls = delta['tool_calls'];
@@ -270,6 +302,45 @@ class LlmService implements ILlmService {
       }
     }
   }
+
+  /// Bytes for an image URL: inline for `data:` URLs, fetched for
+  /// http(s) ones (relative paths resolve against the API base URL, which
+  /// is how the server refers back to its own `/v1/files/…`).
+  Future<ImageBytes?> _resolveImageUrl(String url) async {
+    final inline = OpenAiCodec.decodeDataUrl(url);
+    if (inline != null) return inline;
+    if (!url.startsWith('http://') &&
+        !url.startsWith('https://') &&
+        !url.startsWith('/')) {
+      _log.fine('Ignoring image URL with unsupported scheme');
+      return null;
+    }
+    try {
+      final target = url.startsWith('/')
+          ? Uri.parse(_dio.options.baseUrl).replace(path: url).toString()
+          : url;
+      final response = await _dio.get<List<int>>(
+        target,
+        options: Options(responseType: ResponseType.bytes),
+      );
+      final bytes = response.data;
+      if (bytes == null || bytes.isEmpty) return null;
+      final mime =
+          response.headers.value('content-type')?.split(';').first.trim() ??
+          'image/png';
+      // Dio already hands back a Uint8List for `ResponseType.bytes`.
+      return (
+        bytes: bytes is Uint8List ? bytes : Uint8List.fromList(bytes),
+        mimeType: mime,
+      );
+    } on DioException catch (e) {
+      _log.warning('Failed to fetch image $url', e);
+      return null;
+    }
+  }
+
+  static String _truncate(String s) =>
+      s.length > 200 ? '${s.substring(0, 200)}…' : s;
 
   /// When responseType is stream, `response.data` is a `ResponseBody`
   /// whose `stream` must be drained to recover the server's error payload.

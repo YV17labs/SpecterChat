@@ -1,5 +1,7 @@
 import 'package:freezed_annotation/freezed_annotation.dart';
 
+import 'image_settings.dart';
+
 part 'app_settings.freezed.dart';
 part 'app_settings.g.dart';
 
@@ -171,6 +173,9 @@ abstract class AppSettings with _$AppSettings {
   const factory AppSettings({
     @Default(ApiSettings()) ApiSettings api,
     @Default(GenerationSettings()) GenerationSettings generation,
+
+    /// Global defaults for image models; a conversation may override them.
+    @Default(ImageSettings()) ImageSettings image,
     @Default('') String defaultSystemPrompt,
     @Default([]) List<McpServerConfig> mcpServers,
   }) = _AppSettings;

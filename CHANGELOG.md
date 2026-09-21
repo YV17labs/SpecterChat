@@ -14,6 +14,8 @@ changes.
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-09-20
+
 Image generation and local image editing, on top of the text chat. Needs a
 **Pictor ≥ 0.3.0** server for the image features; text-LLM servers are
 unaffected. Existing settings and chat history are read as-is.

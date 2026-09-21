@@ -14,6 +14,8 @@ changes.
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-09-21
+
 Photos keep their metadata through image edits. Everything happens in the
 app: the server plays no part and needs no update. Images attached before
 this version carry no metadata; attach the photo again to use the feature.

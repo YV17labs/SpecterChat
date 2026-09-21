@@ -133,6 +133,51 @@ class SliderField extends StatelessWidget {
   }
 }
 
+/// A label with a switch at the end of the row. When [enabled] is false the
+/// switch is inert, the label faint, and [disabledTooltip] says why.
+class SwitchRow extends StatelessWidget {
+  final String label;
+  final bool value;
+  final bool enabled;
+  final String? disabledTooltip;
+  final ValueChanged<bool> onChanged;
+
+  const SwitchRow({
+    super.key,
+    required this.label,
+    required this.value,
+    required this.onChanged,
+    this.enabled = true,
+    this.disabledTooltip,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final styles = context.specterStyles;
+    final row = Row(
+      children: [
+        Expanded(
+          child: Text(
+            label,
+            style: enabled
+                ? styles.smallMuted
+                : styles.smallMuted.copyWith(color: styles.textFaint),
+          ),
+        ),
+        Switch(
+          value: value,
+          onChanged: enabled ? onChanged : null,
+          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+      ],
+    );
+    final tooltip = disabledTooltip;
+    return enabled || tooltip == null
+        ? row
+        : Tooltip(message: tooltip, child: row);
+  }
+}
+
 /// Standard input decoration used across the settings panel.
 InputDecoration settingsInputDecoration(BuildContext context, String hint) {
   return InputDecoration(

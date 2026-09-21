@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../application/images/drawing_session.dart' show AnnotationResult;
 import '../../application/images/pending_image.dart';
 import '../../core/id_gen.dart';
+import '../../domain/models/photo_metadata.dart';
 import 'image_providers.dart';
 
 /// Outcome of [ComposerNotifier.attach]. The widget turns refusals into
@@ -61,9 +62,18 @@ class ComposerNotifier extends Notifier<List<PendingImage>> {
     return null;
   }
 
-  /// Validate, downscale and queue [bytes] under [name].
-  Future<AttachResult> attach(Uint8List bytes, {required String name}) async {
+  /// Validate, downscale and queue [bytes] under [name]. The photo's
+  /// metadata is read from [bytes] before the normaliser may re-encode it
+  /// away; an image reused from the conversation passes its own
+  /// [metadata] instead (its stored bytes carry none).
+  Future<AttachResult> attach(
+    Uint8List bytes, {
+    required String name,
+    PhotoMetadata? metadata,
+  }) async {
     if (freeSlots <= 0) return const NoRoomForImage();
+    final carried =
+        metadata ?? ref.read(photoMetadataCodecProvider).read(bytes);
     final prepared = await ref.read(imageNormalizerProvider).normalize(bytes);
     if (!ref.mounted) return const NoRoomForImage();
     if (prepared == null) return const UnsupportedImage();
@@ -77,6 +87,7 @@ class ComposerNotifier extends Notifier<List<PendingImage>> {
         bytes: prepared.bytes,
         mimeType: prepared.mimeType,
         name: name,
+        metadata: carried,
       ),
     ];
     return Attached(id);

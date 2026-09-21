@@ -56,6 +56,11 @@ class SettingsNotifier extends Notifier<AppSettings> {
     _scheduleSave();
   }
 
+  void updatePhotoMetadata(PhotoMetadataExport photoMetadata) {
+    state = state.copyWith(photoMetadata: photoMetadata);
+    _scheduleSave();
+  }
+
   void updateDefaultSystemPrompt(String prompt) {
     state = state.copyWith(defaultSystemPrompt: prompt);
     _scheduleSave();

@@ -282,10 +282,14 @@ class LlmService implements ILlmService {
     }
 
     // Images produced by the assistant (OpenRouter `images` convention).
-    for (final url in OpenAiCodec.imageUrls(delta['images'])) {
-      final image = await _resolveImageUrl(url);
+    for (final generated in OpenAiCodec.generatedImages(delta['images'])) {
+      final image = await _resolveImageUrl(generated.url);
       if (image == null) continue;
-      yield ImageDelta(bytes: image.bytes, mimeType: image.mimeType);
+      yield ImageDelta(
+        bytes: image.bytes,
+        mimeType: image.mimeType,
+        textToImage: generated.textToImage,
+      );
     }
 
     final toolCalls = delta['tool_calls'];

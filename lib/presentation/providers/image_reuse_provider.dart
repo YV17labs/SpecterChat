@@ -2,6 +2,8 @@ import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../domain/models/photo_metadata.dart';
+
 /// An image already shown in the conversation (typically a generated
 /// result) that the user wants to annotate and send again. Producers
 /// (`ImageBlock`) set it; `ChatComposer` attaches the bytes as a pending
@@ -12,7 +14,14 @@ class ImageReuseRequest {
   final Uint8List bytes;
   final String mimeType;
 
-  const ImageReuseRequest({required this.bytes, required this.mimeType});
+  /// The image's photo metadata, so an edit of an edit still inherits it.
+  final PhotoMetadata? metadata;
+
+  const ImageReuseRequest({
+    required this.bytes,
+    required this.mimeType,
+    this.metadata,
+  });
 }
 
 final imageReuseProvider = NotifierProvider<ImageReuse, ImageReuseRequest?>(
@@ -23,8 +32,12 @@ class ImageReuse extends Notifier<ImageReuseRequest?> {
   @override
   ImageReuseRequest? build() => null;
 
-  void request(Uint8List bytes, String mimeType) =>
-      state = ImageReuseRequest(bytes: bytes, mimeType: mimeType);
+  void request(Uint8List bytes, String mimeType, {PhotoMetadata? metadata}) =>
+      state = ImageReuseRequest(
+        bytes: bytes,
+        mimeType: mimeType,
+        metadata: metadata,
+      );
 
   void consume() => state = null;
 }

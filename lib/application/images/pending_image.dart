@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import '../../domain/models/photo_metadata.dart';
 import 'drawing_session.dart' show AnnotationResult;
 
 /// Upper bound on images attached to one message, counting the extra
@@ -20,6 +21,11 @@ class PendingImage {
   /// Display name (file name, or a synthetic one for pasted images).
   final String name;
 
+  /// What the file said about the photo, read before the normaliser may
+  /// have re-encoded it away — or carried over from the image being
+  /// reused.
+  final PhotoMetadata? metadata;
+
   /// The editor's result — outlines / mask strokes plus which extra images
   /// to send with the annotated copy. Never holds an empty annotation:
   /// "nothing drawn" is `null`.
@@ -30,6 +36,7 @@ class PendingImage {
     required this.bytes,
     required this.mimeType,
     required this.name,
+    this.metadata,
     this.annotation,
   });
 
@@ -47,6 +54,7 @@ class PendingImage {
     bytes: bytes,
     mimeType: mimeType,
     name: name,
+    metadata: metadata,
     annotation: result.annotation.isEmpty ? null : result,
   );
 }

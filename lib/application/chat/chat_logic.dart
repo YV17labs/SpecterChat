@@ -1,4 +1,5 @@
 import '../../domain/models/message.dart';
+import '../../domain/models/photo_metadata.dart';
 import '../../domain/services/llm_hook.dart';
 import 'message_writes.dart';
 import 'stream_accumulator.dart';
@@ -109,10 +110,31 @@ class ChatLogic {
           attachmentId: a.attachmentId,
           mimeType: a.mimeType,
           byteSize: a.bytes.length,
+          photoMetadata: a.metadata,
         ),
     ],
     createdAt: DateTime.now(),
   );
+
+  /// The metadata an image the model is producing inherits: that of the
+  /// photo it starts from. The server edits the images of the last user
+  /// turn; when that turn has none it reuses the latest image of the
+  /// conversation ("now make it blue"), which may itself have inherited
+  /// from an earlier photo — so the metadata follows a chain of edits.
+  /// Among several images the first one carrying metadata wins.
+  PhotoMetadata? inheritedPhotoMetadata(List<Message> history) {
+    final lastUser = history.lastIndexWhere((m) => m.role == MessageRole.user);
+    if (lastUser < 0) return null;
+    final attached = history[lastUser].content.whereType<ImageContentBlock>();
+    if (attached.isNotEmpty) {
+      return attached.map((b) => b.photoMetadata).nonNulls.firstOrNull;
+    }
+    for (final message in history.take(lastUser).toList().reversed) {
+      final images = message.content.whereType<ImageContentBlock>();
+      if (images.isNotEmpty) return images.last.photoMetadata;
+    }
+    return null;
+  }
 
   /// Classify a finished turn from its buffers. [hook] is the model-specific
   /// hook, or `null` when the selected model has no known quirks.

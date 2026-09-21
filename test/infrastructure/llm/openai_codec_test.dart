@@ -263,9 +263,9 @@ void main() {
     });
   });
 
-  group('imageUrls', () {
+  group('generatedImages', () {
     test('extracts the URLs of an OpenRouter images array', () {
-      final urls = OpenAiCodec.imageUrls([
+      final images = OpenAiCodec.generatedImages([
         {
           'type': 'image_url',
           'image_url': {'url': 'data:image/png;base64,AQID'},
@@ -275,12 +275,40 @@ void main() {
         {'type': 'image_url'}, // no url → dropped
         'garbage',
       ]);
-      expect(urls, ['data:image/png;base64,AQID', 'https://x/y.png']);
+      expect(images.map((i) => i.url), [
+        'data:image/png;base64,AQID',
+        'https://x/y.png',
+      ]);
+    });
+
+    test('reads whether the server generated from the prompt alone', () {
+      Map<String, Object> entry(Object? meta) => {
+        'type': 'image_url',
+        'image_url': {'url': 'https://x/y.png'},
+        'generation': ?meta,
+      };
+      final images = OpenAiCodec.generatedImages([
+        entry({'mode': 'reference_edit'}),
+        entry({'mode': 'text_to_image'}),
+        entry({'seed': 1}),
+        entry(null),
+        {
+          'image_url': {'url': 'https://x/old.png'},
+          'specterforge': {'mode': 'reference_edit'}, // pre-0.3.0 key
+        },
+      ]);
+      expect(images.map((i) => i.textToImage), [
+        false,
+        true,
+        false,
+        false,
+        false,
+      ]);
     });
 
     test('is empty for anything that is not a list', () {
-      expect(OpenAiCodec.imageUrls(null), isEmpty);
-      expect(OpenAiCodec.imageUrls('x'), isEmpty);
+      expect(OpenAiCodec.generatedImages(null), isEmpty);
+      expect(OpenAiCodec.generatedImages('x'), isEmpty);
     });
   });
 

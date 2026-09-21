@@ -5,12 +5,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:logging/logging.dart';
 
+import '../../../application/images/image_export.dart';
+import '../../../domain/models/photo_metadata.dart';
 import '../../../domain/services/i_image_io.dart';
 import '../../providers/attachment_provider.dart';
 import '../../providers/image_providers.dart';
 import '../../providers/image_reuse_provider.dart';
+import '../../providers/settings_provider.dart';
+import 'photo_metadata_text.dart';
 
 final _log = Logger('ImageBlock');
+
+/// Behind everything drawn over an image on hover.
+final _overlayBackground = Colors.black.withValues(alpha: 0.55);
 
 /// Renders an image whose bytes live in the attachments table. The
 /// widget watches [attachmentBytesProvider] so bytes are loaded only
@@ -19,10 +26,20 @@ class ImageBlock extends ConsumerWidget {
   final String attachmentId;
   final String mimeType;
 
+  /// What the photo behind this image said about itself; written into the
+  /// file on "Save as…", as the settings allow.
+  final PhotoMetadata? photoMetadata;
+
+  /// The model made this image (it may then be declared as AI-generated
+  /// when saved).
+  final bool generated;
+
   const ImageBlock({
     super.key,
     required this.attachmentId,
     required this.mimeType,
+    this.photoMetadata,
+    this.generated = false,
   });
 
   @override
@@ -34,9 +51,19 @@ class ImageBlock extends ConsumerWidget {
         return _LoadedImageBlock(
           bytes: bytes,
           mimeType: mimeType,
+          metadata: photoMetadata,
           io: ref.watch(imageIoProvider),
-          onAnnotate: () =>
-              ref.read(imageReuseProvider.notifier).request(bytes, mimeType),
+          prepareSave: () => ref
+              .read(imageExporterProvider)
+              .prepare(
+                (bytes: bytes, mimeType: mimeType),
+                metadata: photoMetadata,
+                generated: generated,
+                choices: ref.read(settingsProvider).photoMetadata,
+              ),
+          onAnnotate: () => ref
+              .read(imageReuseProvider.notifier)
+              .request(bytes, mimeType, metadata: photoMetadata),
         );
       },
       loading: () => const _ImageLoadingPlaceholder(),
@@ -91,9 +118,14 @@ class _ImageError extends StatelessWidget {
 class _LoadedImageBlock extends StatefulWidget {
   final Uint8List bytes;
   final String mimeType;
+  final PhotoMetadata? metadata;
 
   /// Clipboard and "Save as…" go through here, never a plugin directly.
   final IImageIo io;
+
+  /// The file "Save as…" writes: [bytes] with the photo metadata the user
+  /// chose to keep.
+  final ImageExport Function() prepareSave;
 
   /// Hands the image back to the composer, annotation editor open.
   final VoidCallback? onAnnotate;
@@ -102,6 +134,8 @@ class _LoadedImageBlock extends StatefulWidget {
     required this.bytes,
     required this.mimeType,
     required this.io,
+    required this.prepareSave,
+    this.metadata,
     this.onAnnotate,
   });
 
@@ -175,10 +209,13 @@ class _LoadedImageBlockState extends State<_LoadedImageBlock> {
 
   Future<void> _saveAs() async {
     try {
-      await widget.io.saveImage((
-        bytes: widget.bytes,
-        mimeType: widget.mimeType,
-      ));
+      final export = widget.prepareSave();
+      final saved = await widget.io.saveImage(export.image);
+      final message = savedMetadataMessage(export);
+      if (!saved || message == null || !mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
     } catch (e) {
       _log.warning('Failed to save image', e);
       if (!mounted) return;
@@ -236,6 +273,16 @@ class _LoadedImageBlockState extends State<_LoadedImageBlock> {
               child: imageWidget,
             ),
           ),
+          if (widget.metadata case final metadata?)
+            Positioned(
+              left: 8,
+              bottom: 8,
+              child: AnimatedOpacity(
+                opacity: _hovering ? 1.0 : 0.0,
+                duration: const Duration(milliseconds: 150),
+                child: _MetadataBadge(metadata: metadata),
+              ),
+            ),
           Positioned(
             right: 8,
             bottom: 8,
@@ -274,6 +321,53 @@ class _LoadedImageBlockState extends State<_LoadedImageBlock> {
   }
 }
 
+/// Where the photo behind the image was taken, and with what: the camera
+/// on the pill, the rest in its tooltip.
+class _MetadataBadge extends StatelessWidget {
+  final PhotoMetadata metadata;
+
+  const _MetadataBadge({required this.metadata});
+
+  @override
+  Widget build(BuildContext context) {
+    final label = switch (metadata.camera) {
+      final camera? => cameraName(camera),
+      null => null,
+    };
+    return Tooltip(
+      message: photoMetadataLines(metadata).join('\n'),
+      waitDuration: const Duration(milliseconds: 300),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+        decoration: BoxDecoration(
+          color: _overlayBackground,
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              metadata.location != null && label == null
+                  ? Icons.place_outlined
+                  : Icons.photo_camera_outlined,
+              size: 14,
+              color: Colors.white,
+              semanticLabel: 'Photo metadata',
+            ),
+            if (label != null) ...[
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: const TextStyle(fontSize: 11, color: Colors.white),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// Small translucent icon button drawn over an image on hover.
 class _OverlayButton extends StatelessWidget {
   final IconData icon;
@@ -292,7 +386,7 @@ class _OverlayButton extends StatelessWidget {
       message: tooltip,
       waitDuration: const Duration(milliseconds: 500),
       child: Material(
-        color: Colors.black.withValues(alpha: 0.55),
+        color: _overlayBackground,
         borderRadius: BorderRadius.circular(6),
         child: InkWell(
           borderRadius: BorderRadius.circular(6),

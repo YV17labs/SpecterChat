@@ -19,11 +19,15 @@ class ContentBlockWidget extends StatelessWidget {
   /// surrounding `SelectionArea` can take over selection + context menu.
   final bool selectable;
 
+  /// The block belongs to a model's reply: its images were generated.
+  final bool fromModel;
+
   const ContentBlockWidget({
     super.key,
     required this.block,
     this.isStreaming = false,
     this.selectable = true,
+    this.fromModel = false,
   });
 
   @override
@@ -34,10 +38,17 @@ class ContentBlockWidget extends StatelessWidget {
         isStreaming: isStreaming,
         selectable: selectable,
       ),
-      ImageContentBlock(:final attachmentId, :final mimeType) => ImageBlock(
-        attachmentId: attachmentId,
-        mimeType: mimeType,
-      ),
+      ImageContentBlock(
+        :final attachmentId,
+        :final mimeType,
+        :final photoMetadata,
+      ) =>
+        ImageBlock(
+          attachmentId: attachmentId,
+          mimeType: mimeType,
+          photoMetadata: photoMetadata,
+          generated: fromModel,
+        ),
       ToolCallContentBlock(:final name, :final arguments) => ToolCallBlock(
         name: name,
         arguments: arguments,

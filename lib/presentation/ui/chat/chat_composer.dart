@@ -11,7 +11,8 @@ import '../../../application/images/outgoing_images.dart';
 import '../../../application/images/pending_image.dart';
 import '../../../core/image_mime.dart';
 import '../../../domain/models/annotation.dart';
-import '../../../domain/models/message.dart' show ImageBytes;
+import '../../../domain/models/message.dart' show OutgoingImage;
+import '../../../domain/models/photo_metadata.dart';
 import '../../../domain/services/i_image_io.dart' show ImageFileSource;
 import '../../providers/chat_input_provider.dart';
 import '../../providers/composer_provider.dart';
@@ -103,7 +104,7 @@ class ChatComposerState extends ConsumerState<ChatComposer> {
   /// hands the message to the session. The composer was already cleared so
   /// the user can keep typing; on a rendering failure the draft comes back.
   Future<void> _expandAndSend(String text, List<PendingImage> images) async {
-    List<ImageBytes> outgoing;
+    List<OutgoingImage> outgoing;
     try {
       outgoing = await expandPendingImages(
         images,
@@ -126,8 +127,16 @@ class ChatComposerState extends ConsumerState<ChatComposer> {
 
   /// Queue [bytes], telling the user when the composer refused them.
   /// Returns the new pending image's id, or `null`.
-  Future<String?> _attach(Uint8List bytes, {required String name}) async {
-    final result = await _composer.attach(bytes, name: name);
+  Future<String?> _attach(
+    Uint8List bytes, {
+    required String name,
+    PhotoMetadata? metadata,
+  }) async {
+    final result = await _composer.attach(
+      bytes,
+      name: name,
+      metadata: metadata,
+    );
     if (!mounted) return null;
     switch (result) {
       case Attached(:final id):
@@ -218,7 +227,11 @@ class ChatComposerState extends ConsumerState<ChatComposer> {
   /// "Annotate & reuse" on an image in the conversation: attach a copy and
   /// open the editor on it.
   Future<void> _reuseImage(ImageReuseRequest request) async {
-    final id = await _attach(request.bytes, name: 'Reused image');
+    final id = await _attach(
+      request.bytes,
+      name: 'Reused image',
+      metadata: request.metadata,
+    );
     if (!mounted || id == null) return;
     await _editImage(id);
   }

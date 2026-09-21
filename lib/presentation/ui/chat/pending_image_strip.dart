@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../application/images/pending_image.dart';
 import '../../../core/theme.dart';
+import '../widgets/photo_metadata_text.dart';
 
 /// Horizontal row of thumbnails for the images about to be sent, each
 /// with a remove button and an edit (annotate) button. Renders nothing
@@ -71,9 +72,13 @@ class _Thumbnail extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final canEdit = enabled && onEdit != null;
-    final tooltip = switch (image.annotation) {
+    final name = switch (image.annotation) {
       null => image.name,
       final a => '${image.name} (annotated${a.includeMask ? ', + mask' : ''})',
+    };
+    final tooltip = switch (image.metadata) {
+      null => name,
+      final m => '$name\n${photoMetadataSummary(m)}',
     };
     // Pending images are up to 2048 px a side; decode them at thumbnail
     // size (2× the box, so a wide image still covers it) rather than
@@ -124,6 +129,16 @@ class _Thumbnail extends StatelessWidget {
                 icon: Icons.draw_outlined,
                 color: cs.primary,
                 semanticLabel: 'Annotated',
+              ),
+            ),
+          if (image.metadata != null)
+            Positioned(
+              bottom: 4,
+              left: 4,
+              child: _Badge(
+                icon: Icons.photo_camera_outlined,
+                color: cs.onSurface,
+                semanticLabel: 'Photo metadata',
               ),
             ),
           if (onEdit != null)

@@ -14,6 +14,58 @@ changes.
 
 ## [Unreleased]
 
+Photos keep their metadata through image edits. Everything happens in the
+app: the server plays no part and needs no update. Images attached before
+this version carry no metadata; attach the photo again to use the feature.
+
+### Added
+
+- **Edited photos keep their metadata when saved.** When you attach a
+  photo, everything its file carries is kept with it, verbatim: camera and
+  lens, exposure, date taken, GPS position, the rest of the EXIF (maker
+  notes and unknown tags included), XMP in any namespace, IPTC, comments
+  and PNG text. Every image the model makes from that photo inherits it,
+  through any number of edits ("make it blue", then "add a hat"), and
+  "Save as…" writes it into the saved file without re-encoding the pixels.
+  What describes the file rather than the photo stays the saved file's
+  own: orientation, pixel size and colour profile. The old embedded
+  thumbnail, a small copy of the original picture, is dropped. An image
+  generated from the prompt alone inherits nothing.
+- **A "Photo Metadata" section in the settings panel**, with two global
+  switches, both on by default:
+  - **Keep the original metadata.** Off, saved images carry none.
+  - **Mark generated images as AI.** Writes the IPTC "digital source type"
+    that photo apps read to flag AI images. When the photo already declares
+    one (Apple Photos does after Clean Up), it is updated rather than
+    duplicated.
+- **You can see what a photo carries.**
+  - Thumbnails in the composer get a camera badge.
+  - On hover, images in the conversation show the camera model; its tooltip
+    adds lens, exposure, date and place.
+  - After "Save as…", a message says whether the original metadata and the
+    AI mark went into the file.
+
+### Changed
+
+- **"Annotate & reuse" carries the image's metadata** to the new draft, so
+  an edit of an edit still has the original photo's metadata.
+- **Metadata handling is a domain contract** (`IPhotoMetadataCodec`) with a
+  pure-Dart implementation: no new dependency, same behaviour on macOS,
+  Windows and Linux. It is stored as JSON in the message row, so there is
+  no schema change and the chat history is kept. Test suite grew from 406
+  to 446.
+
+### Known limitations
+
+- Metadata is written into PNG and JPEG files. WebP and GIF are saved as
+  they are.
+- "Copy image" carries no metadata: the macOS clipboard keeps only the
+  pixels. Pasting a photo into the composer loses its metadata for the same
+  reason; attach it with the paperclip or by drag-and-drop instead.
+- Photos no larger than 2048 px on a side are still sent to the server
+  untouched, their EXIF (GPS included) with them. Removing it on send is
+  not done yet.
+
 ## [0.7.2] - 2026-09-20
 
 Image generation and local image editing, on top of the text chat. Needs a

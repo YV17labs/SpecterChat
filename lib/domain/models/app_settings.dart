@@ -168,6 +168,26 @@ abstract class McpResourceTemplate with _$McpResourceTemplate {
       _$McpResourceTemplateFromJson(json);
 }
 
+/// What "Save as…" writes into an image made from a photo. The user's
+/// choice, global. Keys of earlier versions (`camera`, `captureDate`,
+/// `location`, and `markAiEdited`, whose stored `false` was only the old
+/// default) are ignored on load.
+@freezed
+abstract class PhotoMetadataExport with _$PhotoMetadataExport {
+  const factory PhotoMetadataExport({
+    /// Give the saved image all the metadata of the original photo
+    /// (`PhotoMetadata`), whatever it is.
+    @Default(true) bool keepOriginal,
+
+    /// Declare generated images as made by AI (IPTC digital source type).
+    /// On unless the user turns it off.
+    @Default(true) bool markGeneratedAsAi,
+  }) = _PhotoMetadataExport;
+
+  factory PhotoMetadataExport.fromJson(Map<String, dynamic> json) =>
+      _$PhotoMetadataExportFromJson(json);
+}
+
 @freezed
 abstract class AppSettings with _$AppSettings {
   const factory AppSettings({
@@ -176,6 +196,7 @@ abstract class AppSettings with _$AppSettings {
 
     /// Global defaults for image models; a conversation may override them.
     @Default(ImageSettings()) ImageSettings image,
+    @Default(PhotoMetadataExport()) PhotoMetadataExport photoMetadata,
     @Default('') String defaultSystemPrompt,
     @Default([]) List<McpServerConfig> mcpServers,
   }) = _AppSettings;

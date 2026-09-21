@@ -8,6 +8,7 @@ import 'package:specterchat/domain/chat_session_state.dart';
 import 'package:specterchat/domain/models/conversation.dart';
 import 'package:specterchat/domain/models/image_settings.dart';
 import 'package:specterchat/domain/models/message.dart';
+import 'package:specterchat/domain/models/photo_metadata.dart';
 import 'package:specterchat/domain/models/request_profile.dart';
 import 'package:specterchat/domain/services/i_llm_service.dart';
 import 'package:specterchat/domain/services/i_mcp_service.dart';
@@ -398,8 +399,8 @@ void main() {
       await s.sendMessage(
         'look',
         images: [
-          (bytes: pngBytes, mimeType: 'image/png'),
-          (bytes: pngBytes, mimeType: 'image/jpeg'),
+          OutgoingImage(bytes: pngBytes, mimeType: 'image/png'),
+          OutgoingImage(bytes: pngBytes, mimeType: 'image/jpeg'),
         ],
       );
 
@@ -425,7 +426,7 @@ void main() {
         final s = imageSession(llm);
         await s.sendMessage(
           '',
-          images: [(bytes: pngBytes, mimeType: 'image/png')],
+          images: [OutgoingImage(bytes: pngBytes, mimeType: 'image/png')],
         );
 
         final user = persisted().first;
@@ -558,6 +559,139 @@ void main() {
         MessageRole.user,
       ]);
       expect(history[1].imageAttachmentIds(), hasLength(1));
+    });
+  });
+
+  group('photo metadata', () {
+    final pngBytes = fakePngBytes();
+    late InMemoryAttachmentRepository attachments;
+
+    ChatSession imageSession(FakeLlmService llm) =>
+        session(llm, attachments: attachments);
+
+    setUp(() => attachments = InMemoryAttachmentRepository());
+
+    const photo = PhotoMetadata(
+      camera: CameraInfo(make: 'Apple', model: 'iPhone 17'),
+      location: GeoLocation(latitude: 42.56858, longitude: 8.75145),
+    );
+
+    ImageContentBlock lastImage() =>
+        persisted().last.content.whereType<ImageContentBlock>().single;
+
+    test('an attached photo keeps its metadata on its image block', () async {
+      final llm = FakeLlmService.events([
+        [const ContentDelta('nice'), const StreamDone()],
+      ]);
+      await imageSession(llm).sendMessage(
+        'look',
+        images: [
+          OutgoingImage(
+            bytes: pngBytes,
+            mimeType: 'image/png',
+            metadata: photo,
+          ),
+          OutgoingImage(bytes: pngBytes, mimeType: 'image/png'),
+        ],
+      );
+
+      final blocks = persisted().first.content.whereType<ImageContentBlock>();
+      expect(blocks.map((b) => b.photoMetadata), [photo, null]);
+    });
+
+    test('an edit of the photo inherits its metadata', () async {
+      final llm = FakeLlmService.events([
+        [
+          ImageDelta(bytes: pngBytes, mimeType: 'image/png'),
+          const StreamDone(),
+        ],
+      ]);
+      await imageSession(llm).sendMessage(
+        'make the sky orange',
+        images: [
+          OutgoingImage(
+            bytes: pngBytes,
+            mimeType: 'image/png',
+            metadata: photo,
+          ),
+        ],
+      );
+
+      expect(lastImage().photoMetadata, photo);
+    });
+
+    test('an image generated from the prompt alone inherits nothing', () async {
+      final llm = FakeLlmService.events([
+        [
+          ImageDelta(bytes: pngBytes, mimeType: 'image/png', textToImage: true),
+          const StreamDone(),
+        ],
+      ]);
+      await imageSession(llm).sendMessage(
+        'a cat instead',
+        images: [
+          OutgoingImage(
+            bytes: pngBytes,
+            mimeType: 'image/png',
+            metadata: photo,
+          ),
+        ],
+      );
+
+      expect(lastImage().photoMetadata, isNull);
+    });
+
+    test('the metadata follows a chain of edits', () async {
+      final edit = [
+        ImageDelta(bytes: pngBytes, mimeType: 'image/png'),
+        const StreamDone(),
+      ];
+      final llm = FakeLlmService.events([edit, edit, edit]);
+      final s = imageSession(llm);
+      await s.sendMessage(
+        'make it blue',
+        images: [
+          OutgoingImage(
+            bytes: pngBytes,
+            mimeType: 'image/png',
+            metadata: photo,
+          ),
+        ],
+      );
+      // No image attached: the server edits its latest output, and so the
+      // new image inherits from it — twice.
+      await s.sendMessage('add a hat');
+      await s.sendMessage('now at night');
+
+      final generated = persisted()
+          .where((m) => m.role == MessageRole.assistant)
+          .map((m) => m.content.whereType<ImageContentBlock>().single);
+      expect(generated.map((b) => b.photoMetadata), [photo, photo, photo]);
+    });
+
+    test('a fresh attachment without metadata breaks the chain', () async {
+      final edit = [
+        ImageDelta(bytes: pngBytes, mimeType: 'image/png'),
+        const StreamDone(),
+      ];
+      final llm = FakeLlmService.events([edit, edit]);
+      final s = imageSession(llm);
+      await s.sendMessage(
+        'make it blue',
+        images: [
+          OutgoingImage(
+            bytes: pngBytes,
+            mimeType: 'image/png',
+            metadata: photo,
+          ),
+        ],
+      );
+      await s.sendMessage(
+        'use this one instead',
+        images: [OutgoingImage(bytes: pngBytes, mimeType: 'image/png')],
+      );
+
+      expect(lastImage().photoMetadata, isNull);
     });
   });
 

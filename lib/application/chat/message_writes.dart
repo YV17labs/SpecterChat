@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import '../../domain/models/message.dart';
+import '../../domain/models/photo_metadata.dart';
 import '../../domain/repositories/i_attachment_repository.dart';
 import '../../domain/repositories/i_message_repository.dart';
 
@@ -10,10 +11,14 @@ class PendingAttachment {
   final Uint8List bytes;
   final String mimeType;
 
+  /// Stored on the image block that references the blob.
+  final PhotoMetadata? metadata;
+
   const PendingAttachment({
     required this.attachmentId,
     required this.bytes,
     required this.mimeType,
+    this.metadata,
   });
 }
 

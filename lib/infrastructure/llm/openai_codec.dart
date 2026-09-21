@@ -353,17 +353,25 @@ class OpenAiCodec {
     }
   }
 
-  /// The image URLs of a chat completion delta/message `images` array
-  /// (OpenRouter convention: `[{type: image_url, image_url: {url}}]`).
-  /// Entries without a URL are dropped.
-  static List<String> imageUrls(Object? images) {
+  /// The images of a chat completion delta/message `images` array
+  /// (OpenRouter convention: `[{type: image_url, image_url: {url}}]`), with
+  /// whether the server says it generated from the prompt alone
+  /// (`generation.mode: text_to_image`). Entries without a URL are dropped.
+  static List<({String url, bool textToImage})> generatedImages(
+    Object? images,
+  ) {
     if (images is! List) return const [];
-    final out = <String>[];
+    final out = <({String url, bool textToImage})>[];
     for (final entry in images) {
       if (entry is! Map) continue;
       final imageUrl = entry['image_url'];
       final url = imageUrl is Map ? imageUrl['url'] : entry['url'];
-      if (url is String && url.isNotEmpty) out.add(url);
+      if (url is! String || url.isEmpty) continue;
+      final meta = entry['generation'] ?? entry['specterforge'];
+      out.add((
+        url: url,
+        textToImage: meta is Map && meta['mode'] == 'text_to_image',
+      ));
     }
     return out;
   }

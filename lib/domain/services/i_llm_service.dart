@@ -48,7 +48,16 @@ class ProgressDelta extends StreamEvent {
 class ImageDelta extends StreamEvent {
   final Uint8List bytes;
   final String mimeType;
-  const ImageDelta({required this.bytes, required this.mimeType});
+
+  /// The server says it drew this from the prompt alone, not from the
+  /// images it was sent: it inherits no photo's metadata.
+  final bool textToImage;
+
+  const ImageDelta({
+    required this.bytes,
+    required this.mimeType,
+    this.textToImage = false,
+  });
 }
 
 class StreamUsage extends StreamEvent {

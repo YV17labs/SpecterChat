@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:logging/logging.dart';
 
-import '../../domain/models/message.dart' show ImageBytes;
+import '../../domain/models/message.dart' show OutgoingImage;
 import 'chat_session.dart';
 import 'chat_session_deps.dart';
 
@@ -99,7 +99,7 @@ class ChatSessionManager {
   Future<void> sendMessage(
     String conversationId,
     String userText, {
-    List<ImageBytes> images = const [],
+    List<OutgoingImage> images = const [],
   }) {
     final session = getOrCreate(conversationId);
     return session.sendMessage(userText, images: images);

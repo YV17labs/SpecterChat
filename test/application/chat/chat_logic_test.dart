@@ -5,6 +5,7 @@ import 'package:specterchat/application/chat/chat_logic.dart';
 import 'package:specterchat/application/chat/message_writes.dart';
 import 'package:specterchat/application/chat/stream_accumulator.dart';
 import 'package:specterchat/domain/models/message.dart';
+import 'package:specterchat/domain/models/photo_metadata.dart';
 import 'package:specterchat/domain/services/i_llm_service.dart';
 import 'package:specterchat/domain/services/llm_hook.dart';
 
@@ -271,6 +272,51 @@ void main() {
         ]),
       ]);
       expect(ids, {'a', 'b'});
+    });
+  });
+
+  group('ChatLogic.inheritedPhotoMetadata', () {
+    const photo = PhotoMetadata(camera: CameraInfo(model: 'iPhone 17'));
+    const other = PhotoMetadata(camera: CameraInfo(model: 'EOS R5'));
+    ImageContentBlock image(String id, [PhotoMetadata? m]) => ImageContentBlock(
+      attachmentId: id,
+      mimeType: 'image/png',
+      byteSize: 1,
+      photoMetadata: m,
+    );
+    Message turn(MessageRole role, List<ContentBlock> content) => Message(
+      id: 'm${content.length}',
+      conversationId: 'c',
+      role: role,
+      content: content,
+      createdAt: DateTime(2026),
+    );
+
+    test('the first image of the last user turn that carries some', () {
+      final history = [
+        turn(MessageRole.user, [image('old', other)]),
+        turn(MessageRole.user, [image('a'), image('b', photo)]),
+      ];
+      expect(logic.inheritedPhotoMetadata(history), photo);
+    });
+
+    test("without attachments, the conversation's latest image", () {
+      final history = [
+        turn(MessageRole.user, [image('a', other)]),
+        turn(MessageRole.assistant, [image('b', photo)]),
+        turn(MessageRole.user, [const ContentBlock.text(text: 'again')]),
+      ];
+      expect(logic.inheritedPhotoMetadata(history), photo);
+    });
+
+    test('nothing to inherit from', () {
+      expect(logic.inheritedPhotoMetadata(const []), isNull);
+      expect(
+        logic.inheritedPhotoMetadata([
+          turn(MessageRole.user, [const ContentBlock.text(text: 'a cat')]),
+        ]),
+        isNull,
+      );
     });
   });
 

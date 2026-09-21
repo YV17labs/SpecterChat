@@ -3,6 +3,8 @@ import 'dart:typed_data';
 
 import 'package:freezed_annotation/freezed_annotation.dart';
 
+import 'photo_metadata.dart';
+
 part 'message.freezed.dart';
 part 'message.g.dart';
 
@@ -10,6 +12,21 @@ part 'message.g.dart';
 /// passed around in bulk. The record shape keeps callers from having to
 /// import any class just to hand bytes to the API serializer.
 typedef ImageBytes = ({Uint8List bytes, String mimeType});
+
+/// An image going out with a user message. [metadata], what the photo it
+/// comes from said about itself, is stored on its image block for "Save
+/// as…"; it is not part of the request.
+class OutgoingImage {
+  final Uint8List bytes;
+  final String mimeType;
+  final PhotoMetadata? metadata;
+
+  const OutgoingImage({
+    required this.bytes,
+    required this.mimeType,
+    this.metadata,
+  });
+}
 
 /// Map of attachment id → decoded bytes, preloaded by the chat pipeline
 /// before building an API request. The empty map is a valid input —
@@ -26,10 +43,16 @@ sealed class ContentBlock with _$ContentBlock {
   /// Image stored as a blob attachment. The content block holds only the
   /// attachment id + metadata — actual bytes are loaded on demand via
   /// `IAttachmentRepository`. This keeps `List<Message>` small in RAM.
+  ///
+  /// [photoMetadata] is what the photo behind this image said about itself:
+  /// read from the file the user attached, or inherited by an image the
+  /// model made from it. Kept here, not in the bytes, and written into the
+  /// file only when the user saves it.
   const factory ContentBlock.image({
     required String attachmentId,
     required String mimeType,
     required int byteSize,
+    PhotoMetadata? photoMetadata,
   }) = ImageContentBlock;
 
   const factory ContentBlock.toolCall({

@@ -5,6 +5,7 @@ import 'package:specterchat/application/images/drawing_session.dart';
 import 'package:specterchat/application/images/outgoing_images.dart';
 import 'package:specterchat/application/images/pending_image.dart';
 import 'package:specterchat/domain/models/annotation.dart';
+import 'package:specterchat/domain/models/photo_metadata.dart';
 
 import '../../support/fakes.dart';
 
@@ -83,6 +84,27 @@ void main() {
     ], renderer: renderer);
     expect(out.single.bytes, same(original));
     expect(renderer.rendered, isEmpty);
+  });
+
+  test("the copies carry the photo's metadata, the mask does not", () async {
+    const metadata = PhotoMetadata(camera: CameraInfo(model: 'iPhone 17'));
+    final photo = PendingImage(
+      id: 'p',
+      bytes: original,
+      mimeType: 'image/jpeg',
+      name: 'p',
+      metadata: metadata,
+    );
+    final out = await expandPendingImages([
+      photo.withAnnotation(
+        const AnnotationResult(
+          annotation: annotation,
+          includeMask: true,
+          keepOriginal: true,
+        ),
+      ),
+    ], renderer: FakeAnnotationRenderer());
+    expect(out.map((i) => i.metadata), [metadata, null, metadata]);
   });
 
   test('a renderer failure propagates so the caller can restore the draft', () {

@@ -257,7 +257,7 @@ class _ImageSettingsSectionState extends State<ImageSettingsSection> {
         ),
         const SizedBox(height: 12),
 
-        _SwitchRow(
+        SwitchRow(
           label: 'Transparent background',
           value: caps.rgba && (v.transparent ?? false),
           enabled: caps.rgba,
@@ -272,45 +272,5 @@ class _ImageSettingsSectionState extends State<ImageSettingsSection> {
     final mp = (size * size) / 1e6;
     final base = '$size px (≈${mp.toStringAsFixed(1)} MP)';
     return isDefault ? '$base · default' : base;
-  }
-}
-
-class _SwitchRow extends StatelessWidget {
-  final String label;
-  final bool value;
-  final bool enabled;
-  final String disabledTooltip;
-  final ValueChanged<bool> onChanged;
-
-  const _SwitchRow({
-    required this.label,
-    required this.value,
-    required this.enabled,
-    required this.onChanged,
-    required this.disabledTooltip,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final row = Row(
-      children: [
-        Expanded(
-          child: Text(
-            label,
-            style: enabled
-                ? context.specterStyles.smallMuted
-                : context.specterStyles.smallMuted.copyWith(
-                    color: context.specterStyles.textFaint,
-                  ),
-          ),
-        ),
-        Switch(
-          value: value,
-          onChanged: enabled ? onChanged : null,
-          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        ),
-      ],
-    );
-    return enabled ? row : Tooltip(message: disabledTooltip, child: row);
   }
 }

@@ -33,14 +33,16 @@ lib/
                          persisted), conversation, conversation_settings,
                          effective_settings, message, image_settings,
                          model_info, annotation, request_profile (what a
-                         request carries: text sampling vs image options)
+                         request carries: text sampling vs image options),
+                         photo_metadata (a photo's metadata blocks,
+                         verbatim)
     repositories/      — i_conversation_repository, i_message_repository,
                          i_attachment_repository, i_settings_store,
                          i_model_catalog_store
     services/          — i_llm_service (StreamEvent), i_mcp_service,
                          llm_hook, cancellation_token, i_image_normalizer,
                          i_annotation_renderer, i_image_io (dialogs +
-                         clipboard)
+                         clipboard), i_photo_metadata_codec
   application/         — Use cases. Depends on core + domain only.
     chat/              — ChatSession (streaming worker), ChatSessionManager
                          (LRU registry), ChatSessionDeps, ChatLogic (pure),
@@ -54,7 +56,8 @@ lib/
                          DrawingSession (editor state machine), Annotation
                          History/Geometry, expandPendingImages (outgoing
                          bytes via IAnnotationRenderer), annotation prompt
-                         template
+                         template, ImageExporter ("Save as…" with the
+                         photo metadata the user keeps)
   infrastructure/      — Implementations of domain contracts.
     llm/               — LlmService (Dio), OpenAiCodec (wire format incl.
                          the per-profile request body), SseThinkSplitter
@@ -64,7 +67,8 @@ lib/
                          AttachmentRepository, SharedPreferencesSettingsStore,
                          SharedPreferencesModelCatalogStore
     images/            — UiImageNormalizer (dart:ui decode/downscale),
-                         DesktopImageIo (file_selector + pasteboard)
+                         DesktopImageIo (file_selector + pasteboard),
+                         ExifPhotoMetadataCodec (pure-Dart EXIF read/write)
   presentation/        — Riverpod + Flutter.
     providers/         — One file per concern. Controllers live here:
                          ConversationController (selection + actions),
@@ -332,6 +336,45 @@ pieces, inward to outward:
   pencil) and from any image in the conversation ("Annotate & reuse" hover
   action → `imageReuseProvider` → `ChatComposer`). Applying into an empty
   composer inserts `annotationPromptTemplate` ("In the red area: …").
+
+**Photo metadata.** Everything a photo's file says about it is kept, not a
+list of known fields — the user's requirement is that no metadata is ever
+lost, including kinds that do not exist yet. `IPhotoMetadataCodec`
+(`ExifPhotoMetadataCodec`, pure Dart) reads, in `ComposerNotifier.attach`
+and *before* the normaliser may re-encode it away, the blocks verbatim:
+the EXIF TIFF (maker notes and unknown tags included; only the IFD1
+thumbnail is dropped), the XMP packet (padding trimmed), the Photoshop
+resources holding IPTC (thumbnail resources dropped), PNG text chunks and
+JPEG comments — from JPEG, PNG and WebP. They sit in `PhotoMetadata`
+(`exif` / `iptc` base64, `xmp`, `texts`, ~5 KB for an iPhone photo) next to
+`camera` / `captured` / `location`, parsed for display only. The object
+travels `PendingImage` → `OutgoingImage` → `PendingAttachment` →
+`ImageContentBlock.photoMetadata`, JSON in the message row: no schema bump.
+An annotation's mask carries none.
+- A generated image inherits through `ChatLogic.inheritedPhotoMetadata`:
+  the first image with metadata in the last user turn, else the
+  conversation's latest image (the server reuses it for "make it blue"), so
+  it follows a chain of edits. `ImageDelta.textToImage`
+  (`generation.mode: text_to_image`) inherits nothing. "Annotate & reuse"
+  passes the block's metadata along (`ImageReuseRequest.metadata`).
+- Nothing is written into stored bytes. "Save as…" goes through
+  `ImageExporter` and two global switches, `AppSettings.photoMetadata`
+  (`PhotoMetadataExport`, right panel "Photo Metadata"): keep the original
+  metadata and mark generated images as AI, both on by default (the latter
+  is `markGeneratedAsAi`; the first version's `markAiEdited: false` is
+  ignored on load so the new default applies). The codec splices
+  the blocks into a copy — JPEG APP1 / APP13 / COM, PNG `eXIf` / `iTXt` /
+  `tEXt "Raw profile type 8bim"` — pixels untouched, every older EXIF /
+  XMP / IPTC / text block of the file replaced. What describes the file
+  rather than the photo stays the file's: orientation and pixel size are
+  patched in place into the copied EXIF (and XMP `tiff:Orientation`), the
+  colour profile and any other segment or chunk (MPF, Apple `AROT`…) are
+  the file's own and never brought from the photo. The AI mark sets
+  `Iptc4xmpExt:DigitalSourceType` in the XMP, updating an existing
+  declaration. Blocks attached by the first version (display fields only)
+  are saved with an EXIF rebuilt from those fields.
+- Small images reach the server untouched, EXIF included: stripping
+  metadata on send is not done yet.
 
 ## Image models
 

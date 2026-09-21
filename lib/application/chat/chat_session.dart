@@ -7,6 +7,7 @@ import '../../core/id_gen.dart';
 import '../../domain/chat_session_state.dart';
 import '../../domain/models/conversation.dart';
 import '../../domain/models/message.dart';
+import '../../domain/models/photo_metadata.dart';
 import '../../domain/services/cancellation_token.dart';
 import '../../domain/services/i_llm_service.dart';
 import '../mcp/active_mcp_server.dart';
@@ -98,12 +99,12 @@ class ChatSession {
   /// turn — including tool-call rounds — has finished. Ignored while a
   /// previous send is still streaming.
   ///
-  /// [images] are attached to the user message (one image block each) and
-  /// forwarded to the model as `image_url` parts. An empty [userText] is
-  /// allowed when at least one image is given.
+  /// [images] are attached to the user message (one image block each, with
+  /// its photo metadata) and forwarded to the model as `image_url` parts.
+  /// An empty [userText] is allowed when at least one image is given.
   Future<void> sendMessage(
     String userText, {
-    List<ImageBytes> images = const [],
+    List<OutgoingImage> images = const [],
   }) async {
     if (_disposed) return;
     if (isGenerating) {
@@ -149,7 +150,7 @@ class ChatSession {
 
   Future<void> _send(
     String userText,
-    List<ImageBytes> images,
+    List<OutgoingImage> images,
     ChatSessionDeps deps,
   ) async {
     try {
@@ -176,7 +177,7 @@ class ChatSession {
   Future<void> _saveUserMessage(
     ChatSessionDeps deps,
     String text,
-    List<ImageBytes> images,
+    List<OutgoingImage> images,
   ) async {
     final attached = [
       for (final image in images)
@@ -184,6 +185,7 @@ class ChatSession {
           attachmentId: generateId(),
           bytes: image.bytes,
           mimeType: image.mimeType,
+          metadata: image.metadata,
         ),
     ];
     final message = _logic.buildUserMessage(
@@ -242,6 +244,8 @@ class ChatSession {
     );
     _stopwatch = Stopwatch()..start();
     var completionTokens = 0;
+    // What an image produced by this turn inherits from the photo it edits.
+    final inherited = _logic.inheritedPhotoMetadata(history);
 
     // Publish the streaming id so the UI can flag the live message.
     state.value = state.value.toStreaming(messageId);
@@ -273,12 +277,13 @@ class ChatSession {
           }
         case ProgressDelta(:final progress):
           state.value = state.value.withProgress(progress);
-        case ImageDelta(:final bytes, :final mimeType):
+        case ImageDelta(:final bytes, :final mimeType, :final textToImage):
           await _storeStreamedImage(
             deps: deps,
             messageId: messageId,
             bytes: bytes,
             mimeType: mimeType,
+            metadata: textToImage ? null : inherited,
           );
           // Show the image as soon as it lands rather than on the next
           // throttle tick — it is the whole point of the turn.
@@ -374,6 +379,7 @@ class ChatSession {
     required String messageId,
     required Uint8List bytes,
     required String mimeType,
+    required PhotoMetadata? metadata,
   }) async {
     final attachmentId = generateId();
     await deps.attachments.storeBytes(
@@ -387,6 +393,7 @@ class ChatSession {
         attachmentId: attachmentId,
         mimeType: mimeType,
         byteSize: bytes.length,
+        photoMetadata: metadata,
       ),
     );
     // The model may be asked to edit its own output on the next turn.

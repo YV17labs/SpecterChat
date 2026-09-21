@@ -13,6 +13,7 @@ import 'package:specterchat/domain/models/conversation_settings.dart';
 import 'package:specterchat/domain/models/mcp_server_state.dart';
 import 'package:specterchat/domain/models/message.dart';
 import 'package:specterchat/domain/models/model_info.dart';
+import 'package:specterchat/domain/models/photo_metadata.dart';
 import 'package:specterchat/domain/models/request_profile.dart';
 import 'package:specterchat/domain/repositories/i_attachment_repository.dart';
 import 'package:specterchat/domain/repositories/i_conversation_repository.dart';
@@ -25,6 +26,7 @@ import 'package:specterchat/domain/services/i_image_io.dart';
 import 'package:specterchat/domain/services/i_image_normalizer.dart';
 import 'package:specterchat/domain/services/i_llm_service.dart';
 import 'package:specterchat/domain/services/i_mcp_service.dart';
+import 'package:specterchat/infrastructure/images/exif_photo_metadata_codec.dart';
 
 /// In-memory [IConversationRepository].
 class InMemoryConversationRepository implements IConversationRepository {
@@ -285,6 +287,33 @@ class FakeImageIo implements IImageIo {
 
   @override
   Future<void> writeClipboardImage(Uint8List bytes) async => copied.add(bytes);
+}
+
+/// What the iPhone photo of the fixtures says about itself.
+const kPhotoMetadata = PhotoMetadata(
+  camera: CameraInfo(
+    make: 'Apple',
+    model: 'iPhone 17',
+    focalLength: 5.96,
+    fNumber: 1.6,
+    exposureTime: 1 / 4329,
+    iso: 40,
+  ),
+  captured: CaptureTime(local: '2026:07:05 19:41:50', offset: '+02:00'),
+  location: GeoLocation(latitude: 42.56858, longitude: 8.75145),
+);
+
+/// A JPEG carrying [kPhotoMetadata] as EXIF: well-formed for the MIME
+/// sniffer and the metadata codec, no decodable pixels. Pair with
+/// [PassThroughImageNormalizer].
+Uint8List fakeJpegPhoto() {
+  final bare = Uint8List.fromList([
+    0xFF, 0xD8, // SOI
+    0xFF, 0xDB, 0x00, 0x03, 0x01, // DQT
+    0xFF, 0xDA, 0x00, 0x02, 0x00, // SOS + one byte of scan
+    0xFF, 0xD9, // EOI
+  ]);
+  return const ExifPhotoMetadataCodec().write(bare, kPhotoMetadata)!;
 }
 
 /// A minimal valid PNG header — enough for the MIME sniffer, not a

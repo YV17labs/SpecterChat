@@ -18,11 +18,12 @@ import 'image_settings_section.dart';
 import 'mcp/mcp_server_tile.dart';
 import 'mcp/mcp_servers_editor.dart';
 import 'model_selector.dart';
+import 'photo_metadata_section.dart';
 
-/// Right sidebar. API connection and MCP server configuration are global;
-/// generation, context length and system prompt edit the selected
-/// conversation's overrides when one is selected, the global defaults
-/// otherwise.
+/// Right sidebar. API connection, MCP server configuration and photo
+/// metadata are global; generation, context length and system prompt edit
+/// the selected conversation's overrides when one is selected, the global
+/// defaults otherwise.
 ///
 /// The middle of the panel depends on the selected model: a text LLM gets
 /// the sampling, context, system prompt and MCP sections; an image model
@@ -175,6 +176,13 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
             conversationId: conversationId,
             generation: generation,
           ),
+
+        const Divider(height: 32),
+
+        PhotoMetadataSection(
+          value: settings.photoMetadata,
+          onChanged: ref.read(settingsProvider.notifier).updatePhotoMetadata,
+        ),
 
         const Divider(height: 32),
 

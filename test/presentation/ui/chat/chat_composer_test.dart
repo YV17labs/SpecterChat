@@ -247,16 +247,55 @@ void main() {
     // The editor decodes the image on the engine (real async), so the
     // request runs under `runAsync` with a real delay before pumping.
     await tester.runAsync(() async {
-      container.read(imageReuseProvider.notifier).request(png!, 'image/png');
+      container
+          .read(imageReuseProvider.notifier)
+          .request(png!, 'image/png', metadata: kPhotoMetadata);
       await Future<void>.delayed(const Duration(milliseconds: 200));
     });
     await tester.pump();
-    expect(container.read(composerProvider(id)).single.name, 'Reused image');
+    final reused = container.read(composerProvider(id)).single;
+    expect(reused.name, 'Reused image');
+    // Its stored bytes carry no EXIF: the block's metadata travels along.
+    expect(reused.metadata, kPhotoMetadata);
     expect(find.byType(AnnotationEditor), findsOneWidget);
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
     expect(find.byType(AnnotationEditor), findsNothing);
     expect(harness.messages.rows, isEmpty);
+  });
+
+  testWidgets("a photo's metadata is read on attach and kept on send", (
+    tester,
+  ) async {
+    final (harness, container, id) = await _pump(
+      tester,
+      turns: [
+        [const ContentDelta('nice'), const StreamDone()],
+      ],
+    );
+    harness.imageIo.picked = [
+      FakeImageIo.pickedFile('IMG_0042.jpg', fakeJpegPhoto()),
+      FakeImageIo.pickedFile('screenshot.png', fakePngBytes()),
+    ];
+    await tester.tap(find.byTooltip('Attach image'));
+    await tester.pumpAndSettle();
+
+    final pending = container.read(composerProvider(id));
+    final read = pending.first.metadata!;
+    expect(read.camera, kPhotoMetadata.camera);
+    expect(read.exif, isNotNull, reason: 'the EXIF block itself is kept');
+    expect(pending.last.metadata, isNull);
+    expect(find.bySemanticsLabel('Photo metadata'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField), 'warmer light');
+    await tester.tap(find.byTooltip('Send (Enter)'));
+    await tester.pumpAndSettle();
+    final blocks = harness.messages
+        .messagesFor(id)
+        .first
+        .content
+        .whereType<ImageContentBlock>();
+    expect(blocks.map((b) => b.photoMetadata), [read, null]);
   });
 
   testWidgets('removing a thumbnail drops it from the draft', (tester) async {

@@ -51,7 +51,10 @@ global default or per conversation.
 
 Image models are discovered from the server's `GET /models` (entries tagged
 `generation.kind = "image"`) and images come back in the OpenRouter
-`images[]` convention; the screenshots show Qwen-Image 2.1 served locally.
+`images[]` convention. The reference server is
+[Pictor](https://github.com/YV17labs/Pictor), an OpenAI-compatible gateway
+for local image models (Apple Silicon and NVIDIA); the screenshots show
+Qwen-Image 2.1 served by it.
 
 ## Features
 
@@ -281,7 +284,7 @@ SpecterChat uses **Drift** (SQLite ORM) with a versioned migration strategy.
 3. Click the refresh button to load available models and select one
 4. Optionally add MCP servers (name + URL) and connect to them
 5. Create a new conversation and start chatting
-6. To generate or edit images, select an image model — the sidebar switches to the **Image** panel, and the attach button, drag-and-drop and paste all accept a reference picture
+6. To generate or edit images, point the Base URL at an image server such as [Pictor](https://github.com/YV17labs/Pictor) and select an image model — the sidebar switches to the **Image** panel, and the attach button, drag-and-drop and paste all accept a reference picture
 
 ## Acknowledgments
 

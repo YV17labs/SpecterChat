@@ -148,6 +148,60 @@ extension MessageContentX on Message {
   /// Concatenated text blocks, or the empty string.
   String get plainText =>
       content.whereType<TextContentBlock>().map((b) => b.text).join();
+
+  /// Whether a picture is shown anywhere in this message, a tool result's
+  /// own content included.
+  bool get hasImages => content.any(
+    (block) => switch (block) {
+      ImageContentBlock() => true,
+      ToolResultContentBlock(:final resultContent) => resultContent.any(
+        (inner) => inner is ImageContentBlock,
+      ),
+      _ => false,
+    },
+  );
+
+  /// What this message weighs: its images as they are stored plus its
+  /// text as UTF-8. The token counts say nothing about the size of a
+  /// picture, and a picture is most of what a message weighs.
+  int get contentBytes => contentBytesOf(content);
+}
+
+/// What [blocks] weigh, the content of a tool result included.
+int contentBytesOf(Iterable<ContentBlock> blocks) {
+  var bytes = 0;
+  for (final block in blocks) {
+    bytes += switch (block) {
+      TextContentBlock(:final text) => _utf8Length(text),
+      ThinkingContentBlock(:final text) => _utf8Length(text),
+      ToolCallContentBlock(:final name, :final arguments) =>
+        _utf8Length(name) + _utf8Length(arguments),
+      ImageContentBlock(:final byteSize) => byteSize,
+      // The raw response is the same content again, in the server's own
+      // shape, and its images are references — counting it would count
+      // them twice.
+      ToolResultContentBlock(:final resultContent) => contentBytesOf(
+        resultContent,
+      ),
+    };
+  }
+  return bytes;
+}
+
+/// The bytes [text] takes as UTF-8, counted rather than encoded: this runs
+/// while a reply streams.
+int _utf8Length(String text) {
+  var bytes = 0;
+  for (final rune in text.runes) {
+    bytes += rune < 0x80
+        ? 1
+        : rune < 0x800
+        ? 2
+        : rune < 0x10000
+        ? 3
+        : 4;
+  }
+  return bytes;
 }
 
 /// Everything that follows from a message's [Message.stats] — what it

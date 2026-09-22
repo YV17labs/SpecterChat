@@ -509,11 +509,26 @@ numbers survive restarts and later settings changes.
 - The stats line under a reply is a row of icons, not words
   (`_Stat` in `message_bubble.dart`): ↑ what the request carried
   (`Message.promptTokens`, the whole context — `null` without a `usage`
-  report, and the arrow is then left out), ↓ what came back, the
-  duration, the speed, then Σ tokens and Σ time for the run, the outcome
-  when it is not `completed`, and the clock. The tooltip spells every one
-  of them out in words — it is the legend for the icons — and ends with
-  what the run weighs when there is more than this turn in it.
+  report, and the arrow is then left out), ↓ what came back, ⚖ what the
+  message weighs, the duration, the speed, then Σ tokens and Σ time for
+  the run, the outcome when it is not `completed`, and the clock. Every
+  figure carries its unit (`tok`, `KB`, `s`); the tooltip spells every
+  one of them out in words — it is the legend for the icons — and ends
+  with what the run weighs when there is more than this turn in it.
+- **A weight is shown where a picture makes it mean something**, and
+  nowhere else: what a text message weighs is what its tokens already
+  say. `Message.contentBytes` (`MessageContentX`, with `hasImages`) is
+  the images as stored plus the text as UTF-8 — counted, never encoded,
+  because it runs while a reply streams. It appears in a reply's stats
+  line, under a user message that carries an image, and in the header of
+  a tool result that returned one (`ExpandableBlock.trailing`): a
+  screenshot is most of what a conversation weighs and nothing else said
+  so.
+- `measure_text.dart` (`presentation/ui/widgets`) is the one place a
+  measure is written short: `formatTokens` (`25.2K`, the context gauge
+  uses it too), `formatBytes` (`823 KB`, base 1000 like the Finder — a
+  weight is bytes; bits measure a rate, which this is not) and
+  `formatSeconds`.
 - That line ends with **when it was generated**
   (`Message.generatedAt`: `GenerationStats.startedAt`, else the row's
   `createdAt`), in the computer's time zone and the system's language:
@@ -536,9 +551,7 @@ numbers survive restarts and later settings changes.
   (`cumulativeRunTotals`, the same fold stopped at each turn) are one
   arithmetic, not two copies of it. Σ ↑ counts the context every turn
   resent — what the run cost, not what its last request carried.
-  `formatTokens` (`presentation/ui/widgets/token_text.dart`) is the one
-  place a token count is written short (`25.2K`), on the line and on the
-  header's context gauge alike; the exact figure stays in the tooltip.
+  The exact figures stay in the tooltip.
 
 Export: "Export (JSON)" in a conversation's menu (left sidebar) →
 `ConversationController.export` → `ConversationExporter` → `IFileSaver`

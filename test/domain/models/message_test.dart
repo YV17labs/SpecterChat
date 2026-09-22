@@ -255,4 +255,56 @@ void main() {
       expect(hasParseableToolCallArgs('{"q":'), isFalse);
     });
   });
+
+  group('what a message weighs', () {
+    Message of(List<ContentBlock> content) => Message(
+      id: 'm',
+      conversationId: 'c',
+      role: MessageRole.user,
+      content: content,
+      createdAt: DateTime(2024),
+    );
+
+    test('adds the images as stored to the text as UTF-8', () {
+      final message = of(const [
+        ContentBlock.text(text: 'abc'),
+        ContentBlock.image(
+          attachmentId: 'a',
+          mimeType: 'image/png',
+          byteSize: 1400000,
+        ),
+      ]);
+      expect(message.contentBytes, 1400003);
+      expect(message.hasImages, isTrue);
+    });
+
+    test('counts a character by what it takes, not by what it looks', () {
+      // 'é' is two bytes, '🖼' four — a text message is not its length.
+      expect(of(const [ContentBlock.text(text: 'é🖼')]).contentBytes, 6);
+    });
+
+    test('a tool result weighs its own content, not its raw response', () {
+      final message = of(const [
+        ContentBlock.toolResult(
+          toolCallId: 'tc-1',
+          toolName: 'screen_shot',
+          resultContent: [
+            ContentBlock.text(text: 'ok'),
+            ContentBlock.image(
+              attachmentId: 'a',
+              mimeType: 'image/png',
+              byteSize: 820000,
+            ),
+          ],
+          rawResponse: '{"content":[{"type":"image","data":"attachment:a"}]}',
+        ),
+      ]);
+      expect(message.contentBytes, 820002);
+      expect(message.hasImages, isTrue);
+    });
+
+    test('a text-only message has no picture to weigh', () {
+      expect(of(const [ContentBlock.text(text: 'hello')]).hasImages, isFalse);
+    });
+  });
 }

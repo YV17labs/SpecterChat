@@ -9,6 +9,10 @@ class ExpandableBlock extends StatefulWidget {
   final String title;
   final TextStyle? titleStyle;
   final String? preview;
+
+  /// Shown at the end of the header, before the chevron — what the block
+  /// holds, said in a word (a tool result's weight).
+  final Widget? trailing;
   final bool initiallyExpanded;
   final Widget child;
   final EdgeInsetsGeometry margin;
@@ -21,6 +25,7 @@ class ExpandableBlock extends StatefulWidget {
     required this.title,
     this.titleStyle,
     this.preview,
+    this.trailing,
     this.initiallyExpanded = false,
     required this.child,
     this.margin = const EdgeInsets.symmetric(vertical: 4),
@@ -127,6 +132,10 @@ class _ExpandableBlockState extends State<ExpandableBlock> {
                       ],
                     ),
                   ),
+                  if (widget.trailing case final trailing?) ...[
+                    const SizedBox(width: 8),
+                    trailing,
+                  ],
                   AnimatedRotation(
                     turns: _expanded ? 0.5 : 0.0,
                     duration: _animDuration,

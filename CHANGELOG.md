@@ -57,6 +57,11 @@ model, that knows nothing of SpecterChat.
   request carried (↑ — the whole conversation, not just your last message),
   the tokens that came back (↓), and, when several turns answered you, the
   totals since your message (Σ) on the tokens as on the time.
+- **What a picture weighs is now shown**, in kilobytes: under the message
+  you sent it with, in the line under a reply that returned one, and in
+  the header of a tool result that took a screenshot. Token counts say
+  nothing about the size of an image, and an image is most of what a
+  conversation weighs.
 - **Hovering the line under a reply** spells every figure out in words and
   shows the detail: model, server, tokens sent and received, time to the
   first token, reasoning time, output speed, the reason the model stopped,
@@ -70,8 +75,9 @@ model, that knows nothing of SpecterChat.
 - **A stopped or failed reply keeps its duration** and says so, instead of
   showing nothing.
 - **The line under a reply reads as small icons rather than words** —
-  sent, received, duration, speed, totals, time of day — so a longer line
-  stays legible under the message.
+  sent, received, weight, duration, speed, totals, time of day — so a
+  longer line stays legible under the message. Every figure carries its
+  unit.
 - **Upgrading the database keeps your conversations.** Until now, every
   schema change wiped the history; from this version on, each change is an
   incremental step, and every version ever released is on the same starting

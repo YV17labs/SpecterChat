@@ -79,7 +79,7 @@ void main() {
       // Tokens received, then the run's Σ time — this turn took 1.0s of
       // the 3.0s the whole run has taken so far.
       expect(find.byIcon(Icons.arrow_downward), findsOneWidget);
-      expect(find.text('42'), findsOneWidget);
+      expect(find.text('42 tok'), findsOneWidget);
       expect(find.text('1.0s'), findsOneWidget);
       expect(find.byIcon(Icons.functions), findsOneWidget);
       expect(find.text('3.0s'), findsOneWidget);
@@ -135,6 +135,40 @@ void main() {
     expect(find.byType(StreamingIndicator), findsOneWidget);
     expect(find.byIcon(Icons.arrow_downward), findsNothing);
     expect(find.byIcon(Icons.schedule), findsNothing);
+  });
+
+  testWidgets('a picture the user sent says what it weighs', (tester) async {
+    await pumpApp(
+      tester,
+      MessageBubble(
+        message: testMessage(MessageRole.user, const [
+          ContentBlock.text(text: 'look'),
+          ContentBlock.image(
+            attachmentId: 'a',
+            mimeType: 'image/png',
+            byteSize: 820000,
+          ),
+        ]),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.scale), findsOneWidget);
+    expect(find.text('820 KB'), findsOneWidget);
+  });
+
+  testWidgets('a message the user typed carries no weight line', (
+    tester,
+  ) async {
+    await pumpApp(
+      tester,
+      MessageBubble(
+        message: testMessage(MessageRole.user, const [
+          ContentBlock.text(text: 'just words'),
+        ]),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.scale), findsNothing);
   });
 
   testWidgets('auto-correction messages are labelled', (tester) async {
@@ -209,9 +243,9 @@ void main() {
       // generated, in the machine's zone.
       final at = shortLocalTimestamp(stats.startedAt, locale: 'en');
       expect(find.byIcon(Icons.arrow_upward), findsOneWidget);
-      expect(find.text('25.2K'), findsOneWidget);
+      expect(find.text('25.2K tok'), findsOneWidget);
       expect(find.byIcon(Icons.arrow_downward), findsOneWidget);
-      expect(find.text('354'), findsOneWidget);
+      expect(find.text('354 tok'), findsOneWidget);
       expect(find.text('15.7s'), findsOneWidget);
       expect(find.text('25.3 tok/s'), findsOneWidget);
       expect(find.text(at), findsOneWidget);
@@ -247,7 +281,7 @@ void main() {
 
       // Σ on the tokens and Σ on the time, read together.
       expect(find.byIcon(Icons.functions), findsNWidgets(2));
-      expect(find.text('51.1K'), findsOneWidget);
+      expect(find.text('51.1K tok'), findsOneWidget);
       expect(find.text('31.4s'), findsOneWidget);
       final tooltip = tester.widget<Tooltip>(find.byType(Tooltip).last);
       expect(
@@ -257,6 +291,38 @@ void main() {
           '51076 tokens in 31.4s',
         ),
       );
+    });
+
+    testWidgets('a reply holding a picture says what it weighs', (
+      tester,
+    ) async {
+      await pumpApp(
+        tester,
+        MessageBubble(
+          message: testMessage(MessageRole.assistant, const [
+            ContentBlock.text(text: 'Here it is'),
+            ContentBlock.image(
+              attachmentId: 'a',
+              mimeType: 'image/png',
+              byteSize: 1400000,
+            ),
+          ], stats: stats),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byIcon(Icons.scale), findsOneWidget);
+      expect(find.text('1.4 MB'), findsOneWidget);
+      final tooltip = tester.widget<Tooltip>(find.byType(Tooltip).last);
+      expect(tooltip.message, contains('Weight: 1.4 MB, pictures included'));
+    });
+
+    testWidgets('a reply that is only text weighs nothing worth saying', (
+      tester,
+    ) async {
+      await pumpApp(tester, MessageBubble(message: reply(stats)));
+      await tester.pumpAndSettle();
+      expect(find.byIcon(Icons.scale), findsNothing);
     });
 
     testWidgets('a stopped reply without usage still shows its time', (
@@ -271,7 +337,7 @@ void main() {
       await tester.pumpAndSettle();
       final at = shortLocalTimestamp(stopped.startedAt, locale: 'en');
       // What it was sent is still known, what came back is not.
-      expect(find.text('25.2K'), findsOneWidget);
+      expect(find.text('25.2K tok'), findsOneWidget);
       expect(find.byIcon(Icons.arrow_downward), findsNothing);
       expect(find.text('3.2s'), findsOneWidget);
       expect(find.text('stopped'), findsOneWidget);

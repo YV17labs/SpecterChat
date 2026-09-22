@@ -8,9 +8,9 @@ import '../../../domain/models/message_stats.dart';
 import '../../../domain/services/llm_hook.dart' show correctionPrefix;
 import 'content_blocks.dart';
 import 'local_time_text.dart';
+import 'measure_text.dart';
 import 'message_hover_actions.dart';
 import 'streaming_indicator.dart';
-import 'token_text.dart';
 
 // Auto-correction bubble colors (amber at various alphas).
 const _correctionBg = Color(0x26FFC107);
@@ -155,7 +155,11 @@ class MessageBubble extends StatelessWidget {
         if (!message.isStreaming &&
             message.role == MessageRole.assistant &&
             (message.completionTokens > 0 || message.stats != null))
-          _MessageStats(message: message, runTotals: runTotals),
+          _MessageStats(message: message, runTotals: runTotals)
+        // A user message has no measures of its own; what it weighs is
+        // worth saying when it carries a picture, and only then.
+        else if (isUser && message.hasImages)
+          _SentWeight(message: message),
       ],
     );
     if (wrappedInSelectionArea) {
@@ -322,8 +326,6 @@ class _MessageStats extends StatelessWidget {
 
   const _MessageStats({required this.message, this.runTotals});
 
-  static String _seconds(int ms) => '${(ms / 1000).toStringAsFixed(1)}s';
-
   @override
   Widget build(BuildContext context) {
     final stats = message.generationStats;
@@ -342,15 +344,17 @@ class _MessageStats extends StatelessWidget {
     // A run with one turn in it has nothing more to total than the turn.
     final runStats = <Widget>[
       if (run != null && run.tokens > prompt + tokens)
-        _Stat(Icons.functions, formatTokens(run.tokens), style),
+        _Stat(Icons.functions, '${formatTokens(run.tokens)} tok', style),
       if (run != null && run.durationMs > durationMs)
-        _Stat(Icons.functions, _seconds(run.durationMs), style),
+        _Stat(Icons.functions, formatSeconds(run.durationMs), style),
     ];
 
     return Tooltip(
       message: [
         fullLocalTimestamp(message.generatedAt, locale: locale),
         if (stats != null) _details(stats),
+        if (message.hasImages)
+          'Weight: ${formatBytes(message.contentBytes)}, pictures included',
         if (run != null && runStats.isNotEmpty) _runDetails(run),
       ].join('\n'),
       waitDuration: const Duration(milliseconds: 400),
@@ -362,11 +366,15 @@ class _MessageStats extends StatelessWidget {
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
             if (prompt > 0)
-              _Stat(Icons.arrow_upward, formatTokens(prompt), style),
+              _Stat(Icons.arrow_upward, '${formatTokens(prompt)} tok', style),
             if (tokens > 0)
-              _Stat(Icons.arrow_downward, formatTokens(tokens), style),
+              _Stat(Icons.arrow_downward, '${formatTokens(tokens)} tok', style),
+            // Only when there is a picture: the weight of a text reply is
+            // what its tokens already say.
+            if (message.hasImages)
+              _Stat(Icons.scale, formatBytes(message.contentBytes), style),
             if (durationMs > 0)
-              _Stat(Icons.timer_outlined, _seconds(durationMs), style),
+              _Stat(Icons.timer_outlined, formatSeconds(durationMs), style),
             if (rate != null)
               _Stat(Icons.bolt, '${rate.toStringAsFixed(1)} tok/s', style),
             ...runStats,
@@ -404,15 +412,15 @@ class _MessageStats extends StatelessWidget {
       [s.model, if (s.endpoint.isNotEmpty) s.endpoint].join(' · '),
       [
         if (s.promptTokens case final p?) 'Sent: $p tokens',
-        if (first != null) 'first token after ${_seconds(first)}',
+        if (first != null) 'first token after ${formatSeconds(first)}',
       ].join(' · '),
-      if (reasoning != null) 'Reasoning: ${_seconds(reasoning)}',
+      if (reasoning != null) 'Reasoning: ${formatSeconds(reasoning)}',
       [
         switch (s.completionTokens) {
           final tokens? => 'Received: $tokens tokens',
           null => 'Received: ${s.fragments} fragments',
         },
-        if (generation != null) 'in ${_seconds(generation)}',
+        if (generation != null) 'in ${formatSeconds(generation)}',
         if (rate != null) '${rate.toStringAsFixed(1)} tok/s',
       ].join(' · '),
       if (s.finishReason case final reason?) 'Finish: $reason',
@@ -425,7 +433,35 @@ class _MessageStats extends StatelessWidget {
   static String _runDetails(RunTotals run) =>
       'Since your message: ${run.promptTokens} sent · '
       '${run.completionTokens} received · '
-      '${run.tokens} tokens in ${_seconds(run.durationMs)}';
+      '${run.tokens} tokens in ${formatSeconds(run.durationMs)}';
+}
+
+/// What a message the user sent weighs, under its bubble: the same
+/// figure, the same icon as on a reply, so the two read alike — one is
+/// what went out, the other what came back.
+class _SentWeight extends StatelessWidget {
+  final Message message;
+
+  const _SentWeight({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    final style = context.specterStyles.caption.copyWith(
+      color: Theme.of(
+        context,
+      ).colorScheme.onPrimaryContainer.withValues(alpha: 0.5),
+    );
+    return Tooltip(
+      message:
+          'Sent: ${formatBytes(message.contentBytes)}, '
+          'pictures included',
+      waitDuration: const Duration(milliseconds: 400),
+      child: Padding(
+        padding: const EdgeInsets.only(top: 6),
+        child: _Stat(Icons.scale, formatBytes(message.contentBytes), style),
+      ),
+    );
+  }
 }
 
 /// One figure of the stats line: its icon and its value, as tight as the

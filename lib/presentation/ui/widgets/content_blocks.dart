@@ -7,6 +7,7 @@ import '../../../core/theme.dart';
 import '../../../domain/models/message.dart';
 import 'expandable_block.dart';
 import 'image_block.dart';
+import 'measure_text.dart';
 import 'settings_fields.dart';
 import 'word_fade_text.dart';
 
@@ -106,6 +107,7 @@ class ToolCallBlock extends StatelessWidget {
           iconColor: Theme.of(context).colorScheme.tertiary,
           title: 'Tool: $name',
           preview: formattedArgs.replaceAll('\n', ' '),
+          trailing: result == null ? null : _ResultWeight(result: result),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
             child: Column(
@@ -152,6 +154,7 @@ class ToolResultBlock extends StatelessWidget {
       iconColor: Theme.of(context).colorScheme.primary,
       title: 'Result: ${result.toolName}',
       preview: _resultPreview(result.resultContent),
+      trailing: _ResultWeight(result: result),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -252,6 +255,29 @@ class _JsonMemoState extends State<_JsonMemo> {
 }
 
 /// First text block as a single-line preview, or `[image]` for image-only.
+/// What a tool result weighs, in the header of its block — a screenshot
+/// is most of what a conversation weighs, and nothing else says so.
+/// Shown only when the result holds a picture: the weight of text is what
+/// its preview already shows.
+class _ResultWeight extends StatelessWidget {
+  final ToolResultContentBlock result;
+
+  const _ResultWeight({required this.result});
+
+  @override
+  Widget build(BuildContext context) {
+    if (!result.resultContent.any((block) => block is ImageContentBlock)) {
+      return const SizedBox.shrink();
+    }
+    final bytes = contentBytesOf(result.resultContent);
+    return Tooltip(
+      message: 'What this result weighs, pictures included',
+      waitDuration: const Duration(milliseconds: 400),
+      child: Text(formatBytes(bytes), style: context.specterStyles.smallMuted),
+    );
+  }
+}
+
 String? _resultPreview(List<ContentBlock> blocks) {
   final firstText = blocks.whereType<TextContentBlock>().firstOrNull;
   final hasImage = blocks.any((b) => b is ImageContentBlock);

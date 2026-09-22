@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../application/images/pending_image.dart';
 import '../../../core/theme.dart';
+import '../widgets/local_time_text.dart';
 import '../widgets/photo_metadata_text.dart';
 
 /// Horizontal row of thumbnails for the images about to be sent, each

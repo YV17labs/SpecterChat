@@ -13,6 +13,7 @@ import '../../providers/attachment_provider.dart';
 import '../../providers/image_providers.dart';
 import '../../providers/image_reuse_provider.dart';
 import '../../providers/settings_provider.dart';
+import 'local_time_text.dart';
 import 'photo_metadata_text.dart';
 
 final _log = Logger('ImageBlock');

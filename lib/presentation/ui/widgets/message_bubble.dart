@@ -6,6 +6,7 @@ import '../../../domain/models/message.dart';
 import '../../../domain/models/message_stats.dart';
 import '../../../domain/services/llm_hook.dart' show correctionPrefix;
 import 'content_blocks.dart';
+import 'local_time_text.dart';
 import 'message_hover_actions.dart';
 import 'streaming_indicator.dart';
 
@@ -299,8 +300,12 @@ class _Avatar extends StatelessWidget {
   }
 }
 
-/// "354 tokens · 15.7s · 22.6 tok/s · Σ 20.7s" under a reply; hovering
-/// shows what the turn recorded (model, prompt, first token, reasoning).
+/// "354 tokens · 15.7s · 22.6 tok/s · Σ 20.7s · 14:32" under a reply;
+/// hovering shows what the turn recorded (model, prompt, first token,
+/// reasoning) and the whole date it was generated on.
+///
+/// The time is the computer's: what is stored is UTC, so a conversation
+/// read later, or elsewhere, still reads in the reader's time zone.
 ///
 /// The speed is the decoding speed when the turn was measured (tokens over
 /// the time after the first one), tokens over the whole duration for
@@ -335,23 +340,26 @@ class _MessageStats extends StatelessWidget {
       GenerationOutcome.completed || null => null,
     };
     if (ending != null) parts.add(ending);
+    final locale = systemLocaleOf(context);
+    parts.add(shortLocalTimestamp(message.generatedAt, locale: locale));
 
-    final line = Padding(
-      padding: const EdgeInsets.only(top: 6),
-      child: Text(
-        parts.join('  ·  '),
-        style: context.specterStyles.caption.copyWith(
-          color: Theme.of(
-            context,
-          ).colorScheme.onSurface.withValues(alpha: 0.35),
+    return Tooltip(
+      message: [
+        fullLocalTimestamp(message.generatedAt, locale: locale),
+        if (stats != null) _details(stats),
+      ].join('\n'),
+      waitDuration: const Duration(milliseconds: 400),
+      child: Padding(
+        padding: const EdgeInsets.only(top: 6),
+        child: Text(
+          parts.join('  ·  '),
+          style: context.specterStyles.caption.copyWith(
+            color: Theme.of(
+              context,
+            ).colorScheme.onSurface.withValues(alpha: 0.35),
+          ),
         ),
       ),
-    );
-    if (stats == null) return line;
-    return Tooltip(
-      message: _details(stats),
-      waitDuration: const Duration(milliseconds: 400),
-      child: line,
     );
   }
 

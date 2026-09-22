@@ -1,18 +1,11 @@
-import 'package:flutter/widgets.dart';
-import 'package:intl/intl.dart';
-
 import '../../../application/images/image_export.dart';
 import '../../../domain/models/photo_metadata.dart';
+import 'local_time_text.dart';
 
 /// Human-readable renderings of a [PhotoSummary] for tooltips, and the
 /// "Save as…" confirmation. The UI is in English; dates are in the
-/// system's language, given as `locale` (see [systemLocaleOf]), with the
-/// formats `main` loads (`initializeDateFormatting`).
-
-/// The system's language, for dates: `fr-FR`. Not `Localizations.localeOf`,
-/// which is always English — the app declares no other locale.
-String systemLocaleOf(BuildContext context) =>
-    View.of(context).platformDispatcher.locale.toLanguageTag();
+/// system's language, given as `locale` (see [systemLocaleOf]), and
+/// written by [localDate] like every other date in the app.
 
 /// One line per part of [m]: camera, exposure, date taken, place — or a
 /// generic line when the photo's metadata says none of those.
@@ -29,7 +22,7 @@ List<String> photoMetadataLines(PhotoSummary m, {required String locale}) {
 String photoMetadataSummary(PhotoSummary m, {required String locale}) {
   final parts = [
     if (m.camera case final c?) ?cameraName(c),
-    if (m.captured case final t?) _date(t.local, locale),
+    if (m.captured case final t?) localDate(t.local, locale: locale),
     if (m.location != null) 'location',
   ];
   return parts.isEmpty ? 'photo metadata' : parts.join(' · ');
@@ -64,9 +57,9 @@ String? _exposureLine(CameraInfo c) {
 /// `5 juil. 2026, 19:41 (UTC+02:00)`: the wall-clock time where the photo
 /// was taken, in the locale's words and hour cycle.
 String _captureLine(CaptureTime t, String locale) {
-  final time = DateFormat.jm(_intlLocale(locale)).format(t.local);
+  final time = localClock(t.local, locale: locale);
   final offset = t.offset == null ? '' : ' (UTC${t.offset})';
-  return '${_date(t.local, locale)}, $time$offset';
+  return '${localDate(t.local, locale: locale)}, $time$offset';
 }
 
 String _locationLine(GeoLocation l) {
@@ -74,18 +67,6 @@ String _locationLine(GeoLocation l) {
   return '${_coordinate(l.latitude, 'N', 'S')}, '
       '${_coordinate(l.longitude, 'E', 'W')}$altitude';
 }
-
-/// `5 juil. 2026`, `Jul 5, 2026`.
-String _date(DateTime d, String locale) =>
-    DateFormat.yMMMd(_intlLocale(locale)).format(d);
-
-/// [locale] as intl knows it — `fr-CA` is `fr_CA`, a region without formats
-/// of its own falls back to its language — else English.
-String _intlLocale(String locale) => Intl.verifiedLocale(
-  locale,
-  DateFormat.localeExists,
-  onFailure: (_) => 'en',
-)!;
 
 String _coordinate(double v, String positive, String negative) =>
     '${v.abs().toStringAsFixed(5)}° ${v < 0 ? negative : positive}';

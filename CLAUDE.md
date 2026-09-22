@@ -450,11 +450,10 @@ schema bump: JSON column and the existing `attachments` table.
 - macOS ImageIO reads no IPTC-IIM from a PNG (not even from its own
   conversions): the IIM-only fields are in the file, readable by exiftool,
   but Preview does not show them.
-- Dates in tooltips follow the system's language (`photo_metadata_text`,
-  `intl` date formats loaded in `main` — and in
-  `test/flutter_test_config.dart` for tests —, `systemLocaleOf` reads the
-  platform locale: `Localizations.localeOf` is always English since the
-  app declares no other locale). The rest of the UI stays English.
+- Dates in tooltips follow the system's language (`photo_metadata_text`
+  writes them with `localDate` / `localClock`; `intl` date formats loaded
+  in `main` — and in `test/flutter_test_config.dart` for tests). The rest
+  of the UI stays English.
 - Small images reach the server untouched, EXIF included: stripping
   metadata on send is not done yet.
 
@@ -507,6 +506,17 @@ numbers survive restarts and later settings changes.
   as its call returns — a turn whose calls are not all answered is then
   left out of later requests (`OpenAiCodec` skips it with its results,
   like one whose arguments never parsed).
+- The stats line under a reply ends with **when it was generated**
+  (`Message.generatedAt`: `GenerationStats.startedAt`, else the row's
+  `createdAt`), in the computer's time zone and the system's language:
+  the clock alone for today, the day added earlier this year, the year
+  too before that; the tooltip opens with the whole moment.
+  `presentation/ui/widgets/local_time_text.dart` is the one place a date
+  is written — `systemLocaleOf` (the platform locale, since
+  `Localizations.localeOf` is always English), `intlLocale`, and the
+  `DateFormat`s themselves, built once per locale because this line is
+  rebuilt on every streaming tick. The photo metadata dates go through
+  it too.
 - `Message.tokensPerSecond` (`MessageSpeedX`, next to `MessageContentX`)
   is the one speed shown and exported: `outputTokensPerSecond` (tokens
   over the time after the first token) when stats exist,

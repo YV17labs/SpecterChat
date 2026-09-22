@@ -150,7 +150,8 @@ extension MessageContentX on Message {
       content.whereType<TextContentBlock>().map((b) => b.text).join();
 }
 
-/// A message's speed, the same wherever it is shown or exported.
+/// A message's speed and the moment it was produced, the same wherever
+/// they are shown or exported.
 extension MessageSpeedX on Message {
   /// What was measured of this assistant turn, `null` for other messages
   /// and replies written before stats existed.
@@ -158,6 +159,10 @@ extension MessageSpeedX on Message {
     final GenerationStats g => g,
     _ => null,
   };
+
+  /// When the turn ran: the moment its request was sent, else the row's
+  /// own time for a message written before stats existed.
+  DateTime get generatedAt => generationStats?.startedAt ?? createdAt;
 
   /// Output tokens over the whole [Message.durationMs], prompt processing
   /// included — the only speed a reply without stats has.

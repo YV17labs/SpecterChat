@@ -6,6 +6,7 @@ import 'package:specterchat/domain/models/message.dart';
 import 'package:specterchat/domain/models/message_stats.dart';
 import 'package:specterchat/domain/services/llm_hook.dart';
 import 'package:specterchat/presentation/ui/widgets/content_blocks.dart';
+import 'package:specterchat/presentation/ui/widgets/local_time_text.dart';
 import 'package:specterchat/presentation/ui/widgets/message_bubble.dart';
 import 'package:specterchat/presentation/ui/widgets/streaming_indicator.dart';
 
@@ -197,11 +198,17 @@ void main() {
       await pumpApp(tester, MessageBubble(message: reply(stats)));
       await tester.pumpAndSettle();
 
-      // 354 tokens over 14.0s, not over the 15.7s the prompt included.
-      expect(find.text('354 tokens  ·  15.7s  ·  25.3 tok/s'), findsOneWidget);
+      // 354 tokens over 14.0s, not over the 15.7s the prompt included,
+      // then when it was generated, in the machine's zone.
+      final at = shortLocalTimestamp(stats.startedAt, locale: 'en');
+      expect(
+        find.text('354 tokens  ·  15.7s  ·  25.3 tok/s  ·  $at'),
+        findsOneWidget,
+      );
       final tooltip = tester.widget<Tooltip>(find.byType(Tooltip).last);
       expect(
         tooltip.message,
+        '${fullLocalTimestamp(stats.startedAt, locale: 'en')}\n'
         'qwen3.8:27b-mlx · http://localhost:11434/v1\n'
         'Prompt: 25184 tokens · first token after 1.7s\n'
         'Reasoning: 7.3s\n'
@@ -220,7 +227,8 @@ void main() {
       );
       await pumpApp(tester, MessageBubble(message: reply(stopped)));
       await tester.pumpAndSettle();
-      expect(find.text('3.2s  ·  stopped'), findsOneWidget);
+      final at = shortLocalTimestamp(stopped.startedAt, locale: 'en');
+      expect(find.text('3.2s  ·  stopped  ·  $at'), findsOneWidget);
     });
   });
 }

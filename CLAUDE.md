@@ -523,7 +523,10 @@ numbers survive restarts and later settings changes.
   line, under a user message that carries an image, and in the header of
   a tool result that returned one (`ExpandableBlock.trailing`): a
   screenshot is most of what a conversation weighs and nothing else said
-  so.
+  so. Every picture carries it too, over its top left corner
+  (`_WeightBadge`, the loaded bytes rather than the recorded
+  `byteSize`) — always drawn, not on hover, because that is where the
+  question is asked; its tooltip adds the size in pixels and the format.
 - `measure_text.dart` (`presentation/ui/widgets`) is the one place a
   measure is written short: `formatTokens` (`25.2K`, the context gauge
   uses it too), `formatBytes` (`823 KB`, base 1000 like the Finder — a

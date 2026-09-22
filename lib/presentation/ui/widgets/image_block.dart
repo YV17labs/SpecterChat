@@ -14,6 +14,7 @@ import '../../providers/image_providers.dart';
 import '../../providers/image_reuse_provider.dart';
 import '../../providers/settings_provider.dart';
 import 'local_time_text.dart';
+import 'measure_text.dart';
 import 'photo_metadata_text.dart';
 
 final _log = Logger('ImageBlock');
@@ -42,6 +43,7 @@ class ImageBlock extends ConsumerWidget {
         if (bytes == null) return const _ImageError(label: 'Image unavailable');
         return _LoadedImageBlock(
           bytes: bytes,
+          mimeType: block.mimeType,
           photo: block.photoMetadata?.summary,
           io: ref.watch(imageIoProvider),
           save: () => ref
@@ -108,6 +110,9 @@ class _ImageError extends StatelessWidget {
 class _LoadedImageBlock extends StatefulWidget {
   final Uint8List bytes;
 
+  /// What the file is, for the badge that says what it weighs.
+  final String mimeType;
+
   /// What is shown of the photo behind the image, when there is one.
   final PhotoSummary? photo;
 
@@ -123,6 +128,7 @@ class _LoadedImageBlock extends StatefulWidget {
 
   const _LoadedImageBlock({
     required this.bytes,
+    required this.mimeType,
     required this.io,
     required this.save,
     this.photo,
@@ -135,6 +141,8 @@ class _LoadedImageBlock extends StatefulWidget {
 
 class _LoadedImageBlockState extends State<_LoadedImageBlock> {
   double? _aspectRatio;
+  int? _width;
+  int? _height;
   bool _hovering = false;
   bool _justCopied = false;
   Timer? _copiedResetTimer;
@@ -150,6 +158,8 @@ class _LoadedImageBlockState extends State<_LoadedImageBlock> {
     super.didUpdateWidget(oldWidget);
     if (!identical(oldWidget.bytes, widget.bytes)) {
       _aspectRatio = null;
+      _width = null;
+      _height = null;
       _resolveImageDimensions();
     }
   }
@@ -168,7 +178,11 @@ class _LoadedImageBlockState extends State<_LoadedImageBlock> {
           final w = info.image.width.toDouble();
           final h = info.image.height.toDouble();
           if (h > 0 && mounted) {
-            setState(() => _aspectRatio = w / h);
+            setState(() {
+              _aspectRatio = w / h;
+              _width = info.image.width;
+              _height = info.image.height;
+            });
           }
           info.dispose();
         },
@@ -264,6 +278,16 @@ class _LoadedImageBlockState extends State<_LoadedImageBlock> {
               child: imageWidget,
             ),
           ),
+          Positioned(
+            left: 8,
+            top: 8,
+            child: _WeightBadge(
+              bytes: widget.bytes.length,
+              mimeType: widget.mimeType,
+              width: _width,
+              height: _height,
+            ),
+          ),
           if (widget.photo case final photo?)
             Positioned(
               left: 8,
@@ -314,6 +338,57 @@ class _LoadedImageBlockState extends State<_LoadedImageBlock> {
 
 /// Where the photo behind the image was taken, and with what: the camera
 /// on the pill, the rest in its tooltip.
+/// What the picture weighs, over its top left corner — always there,
+/// because "how heavy is this screenshot?" is asked of the image itself,
+/// not of the row it arrived in. The tooltip adds its size in pixels and
+/// its format.
+class _WeightBadge extends StatelessWidget {
+  final int bytes;
+  final String mimeType;
+  final int? width;
+  final int? height;
+
+  const _WeightBadge({
+    required this.bytes,
+    required this.mimeType,
+    this.width,
+    this.height,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final format = mimeType.split('/').last.toUpperCase();
+    final pixels = width != null && height != null ? '$width × $height · ' : '';
+    return Tooltip(
+      message: '$pixels$format · $bytes bytes',
+      waitDuration: const Duration(milliseconds: 300),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+        decoration: BoxDecoration(
+          color: _overlayBackground,
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.scale,
+              size: 12,
+              color: Colors.white,
+              semanticLabel: 'Weight',
+            ),
+            const SizedBox(width: 6),
+            Text(
+              formatBytes(bytes),
+              style: const TextStyle(fontSize: 11, color: Colors.white),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _MetadataBadge extends StatelessWidget {
   final PhotoSummary photo;
 

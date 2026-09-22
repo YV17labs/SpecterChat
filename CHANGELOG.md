@@ -57,9 +57,10 @@ model, that knows nothing of SpecterChat.
   request carried (↑ — the whole conversation, not just your last message),
   the tokens that came back (↓), and, when several turns answered you, the
   totals since your message (Σ) on the tokens as on the time.
-- **What a picture weighs is now shown**, in kilobytes: under the message
-  you sent it with, in the line under a reply that returned one, and in
-  the header of a tool result that took a screenshot. Token counts say
+- **What a picture weighs is now shown**, in kilobytes: on the picture
+  itself, at its top left corner, under the message you sent it with, in
+  the line under a reply that returned one, and in the header of a tool
+  result that took a screenshot — the last one without unfolding it. Token counts say
   nothing about the size of an image, and an image is most of what a
   conversation weighs.
 - **Hovering the line under a reply** spells every figure out in words and

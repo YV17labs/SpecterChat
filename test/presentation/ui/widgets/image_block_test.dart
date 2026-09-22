@@ -4,11 +4,39 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:specterchat/domain/models/message.dart';
 import 'package:specterchat/presentation/providers/image_reuse_provider.dart';
 import 'package:specterchat/presentation/ui/widgets/image_block.dart';
+import 'package:specterchat/presentation/ui/widgets/measure_text.dart';
 
 import '../../../support/image_fixtures.dart';
 import '../../../support/pump_app.dart';
 
 void main() {
+  testWidgets('a picture says what it weighs, without hovering', (
+    tester,
+  ) async {
+    final png = (await tester.runAsync(() => pngFixture(16, 16)))!;
+    final harness = TestHarness();
+    await harness.attachments.storeBytes(
+      attachmentId: 'att',
+      messageId: 'm',
+      bytes: png,
+      mimeType: 'image/png',
+    );
+    await pumpApp(
+      tester,
+      SizedBox(
+        width: 300,
+        height: 300,
+        child: ImageBlock(block: _image('att')),
+      ),
+      harness: harness,
+    );
+    await tester.pumpAndSettle();
+
+    // The real bytes, not the block's recorded size, and no hover needed.
+    expect(find.text(formatBytes(png.length)), findsOneWidget);
+    expect(find.byIcon(Icons.scale), findsOneWidget);
+  });
+
   testWidgets('copy, save and annotate go through the image services', (
     tester,
   ) async {

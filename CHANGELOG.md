@@ -53,9 +53,14 @@ model, that knows nothing of SpecterChat.
   version does not know about. Image bytes stay in their attachment, and the
   answer refers to them.
 - **Each tool call records how long it took and which server ran it.**
-- **Hovering the line under a reply** shows the detail: model, server,
-  prompt size, time to the first token, reasoning time, output speed and the
-  reason the model stopped.
+- **The line under a reply says what the exchange weighed**: the tokens the
+  request carried (↑ — the whole conversation, not just your last message),
+  the tokens that came back (↓), and, when several turns answered you, the
+  totals since your message (Σ) on the tokens as on the time.
+- **Hovering the line under a reply** spells every figure out in words and
+  shows the detail: model, server, tokens sent and received, time to the
+  first token, reasoning time, output speed, the reason the model stopped,
+  and what the whole exchange has cost so far.
 
 ### Changed
 
@@ -64,6 +69,9 @@ model, that knows nothing of SpecterChat.
   Expect higher numbers than before on conversations with a large context.
 - **A stopped or failed reply keeps its duration** and says so, instead of
   showing nothing.
+- **The line under a reply reads as small icons rather than words** —
+  sent, received, duration, speed, totals, time of day — so a longer line
+  stays legible under the message.
 - **Upgrading the database keeps your conversations.** Until now, every
   schema change wiped the history; from this version on, each change is an
   incremental step, and every version ever released is on the same starting

@@ -256,6 +256,8 @@ void main() {
     expect(summary['assistantTurns'], 3);
     expect(summary['toolCalls'], 1);
     expect(summary['completionTokens'], 536);
+    // Both measured turns were sent the same context, and both count.
+    expect(summary['promptTokens'], 50368);
     expect(summary['maxPromptTokens'], 25184);
     expect(summary['generationMs'], 24700);
     expect(summary['toolMs'], 1200);
@@ -278,6 +280,9 @@ void main() {
         'userMessageId': 'm1',
         'assistantTurns': 2,
         'toolCalls': 1,
+        // The tool round resent the context, so it is counted twice —
+        // what the run cost, the same Σ the reply shows.
+        'promptTokens': 50368,
         'completionTokens': 436,
         'generationMs': 20700,
         'toolMs': 1200,
@@ -288,6 +293,8 @@ void main() {
         'userMessageId': 'm5',
         'assistantTurns': 1,
         'toolCalls': 0,
+        // A reply written before stats existed reports no usage.
+        'promptTokens': 0,
         'completionTokens': 100,
         'generationMs': 4000,
         'toolMs': 0,

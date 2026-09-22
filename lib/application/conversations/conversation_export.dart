@@ -227,8 +227,9 @@ const _guide = {
       'overallTokensPerSecond = completionTokens / durationMs.',
   'runs':
       'One per user message. generationMs is the sum the app shows as Σ '
-      'under a reply; wallClockMs spans the first request to the end of '
-      'the last measured message.',
+      'under a reply; promptTokens adds up what each turn was sent, so a '
+      'tool loop counts the context it resent every time; wallClockMs '
+      'spans the first request to the end of the last measured message.',
   'images':
       'Image blocks carry their bytes as base64 (null when the attachment '
       'was deleted); a tool result rawResponse refers to them as '
@@ -300,14 +301,16 @@ Object? _jsonOrText(String raw) {
 
 int _sum(Iterable<int> values) => values.fold(0, (a, b) => a + b);
 
-/// What [messages] cost: the tokens and generation time of the assistant
-/// turns, and the time spent in tools.
+/// What [messages] cost: what the assistant turns weighed and how long
+/// they took (`totalsOf`, the very sums the app shows as Σ under a
+/// reply), and the time spent in tools.
 Map<String, dynamic> _totals(Iterable<Message> messages) {
-  final assistant = messages.where((m) => m.role == MessageRole.assistant);
+  final totals = totalsOf(messages);
   final tools = messages.where((m) => m.role == MessageRole.tool);
   return {
-    'completionTokens': _sum(assistant.map((m) => m.completionTokens)),
-    'generationMs': _sum(assistant.map((m) => m.durationMs)),
+    'promptTokens': totals.promptTokens,
+    'completionTokens': totals.completionTokens,
+    'generationMs': totals.durationMs,
     'toolMs': _sum(tools.map((m) => m.durationMs)),
   };
 }

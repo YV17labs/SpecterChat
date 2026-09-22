@@ -67,7 +67,7 @@ void main() {
               ),
             ], id: 't'),
           ],
-          cumulativeDurationMs: 3000,
+          runTotals: (promptTokens: 0, completionTokens: 42, durationMs: 3000),
         ),
       );
       await tester.pumpAndSettle();
@@ -76,8 +76,13 @@ void main() {
       expect(find.byType(ToolCallBlock), findsOneWidget);
       expect(find.text('Tool: search'), findsOneWidget);
       expect(find.text('Here you go'), findsOneWidget);
-      expect(find.textContaining('42 tokens'), findsOneWidget);
-      expect(find.textContaining('Σ 3.0s'), findsOneWidget);
+      // Tokens received, then the run's Σ time — this turn took 1.0s of
+      // the 3.0s the whole run has taken so far.
+      expect(find.byIcon(Icons.arrow_downward), findsOneWidget);
+      expect(find.text('42'), findsOneWidget);
+      expect(find.text('1.0s'), findsOneWidget);
+      expect(find.byIcon(Icons.functions), findsOneWidget);
+      expect(find.text('3.0s'), findsOneWidget);
       // The result rendered inline, not as an orphan block.
       expect(find.byType(ToolResultBlock), findsNothing);
 
@@ -128,7 +133,8 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 500));
     expect(find.byType(StreamingIndicator), findsOneWidget);
-    expect(find.textContaining('tokens'), findsNothing);
+    expect(find.byIcon(Icons.arrow_downward), findsNothing);
+    expect(find.byIcon(Icons.schedule), findsNothing);
   });
 
   testWidgets('auto-correction messages are labelled', (tester) async {
@@ -198,22 +204,58 @@ void main() {
       await pumpApp(tester, MessageBubble(message: reply(stats)));
       await tester.pumpAndSettle();
 
-      // 354 tokens over 14.0s, not over the 15.7s the prompt included,
-      // then when it was generated, in the machine's zone.
+      // What was sent and what came back, then 354 tokens over 14.0s —
+      // not over the 15.7s the prompt included — and when it was
+      // generated, in the machine's zone.
       final at = shortLocalTimestamp(stats.startedAt, locale: 'en');
-      expect(
-        find.text('354 tokens  ·  15.7s  ·  25.3 tok/s  ·  $at'),
-        findsOneWidget,
-      );
+      expect(find.byIcon(Icons.arrow_upward), findsOneWidget);
+      expect(find.text('25.2K'), findsOneWidget);
+      expect(find.byIcon(Icons.arrow_downward), findsOneWidget);
+      expect(find.text('354'), findsOneWidget);
+      expect(find.text('15.7s'), findsOneWidget);
+      expect(find.text('25.3 tok/s'), findsOneWidget);
+      expect(find.text(at), findsOneWidget);
+      // One turn answered alone: nothing to total.
+      expect(find.byIcon(Icons.functions), findsNothing);
       final tooltip = tester.widget<Tooltip>(find.byType(Tooltip).last);
       expect(
         tooltip.message,
         '${fullLocalTimestamp(stats.startedAt, locale: 'en')}\n'
         'qwen3.8:27b-mlx · http://localhost:11434/v1\n'
-        'Prompt: 25184 tokens · first token after 1.7s\n'
+        'Sent: 25184 tokens · first token after 1.7s\n'
         'Reasoning: 7.3s\n'
-        'Output: 354 tokens · in 14.0s · 25.3 tok/s\n'
+        'Received: 354 tokens · in 14.0s · 25.3 tok/s\n'
         'Finish: tool_calls',
+      );
+    });
+
+    testWidgets('a later turn of a run totals what the run has weighed', (
+      tester,
+    ) async {
+      await pumpApp(
+        tester,
+        MessageBubble(
+          message: reply(stats),
+          runTotals: (
+            promptTokens: 50368,
+            completionTokens: 708,
+            durationMs: 31400,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Σ on the tokens and Σ on the time, read together.
+      expect(find.byIcon(Icons.functions), findsNWidgets(2));
+      expect(find.text('51.1K'), findsOneWidget);
+      expect(find.text('31.4s'), findsOneWidget);
+      final tooltip = tester.widget<Tooltip>(find.byType(Tooltip).last);
+      expect(
+        tooltip.message,
+        endsWith(
+          'Since your message: 50368 sent · 708 received · '
+          '51076 tokens in 31.4s',
+        ),
       );
     });
 
@@ -228,7 +270,12 @@ void main() {
       await pumpApp(tester, MessageBubble(message: reply(stopped)));
       await tester.pumpAndSettle();
       final at = shortLocalTimestamp(stopped.startedAt, locale: 'en');
-      expect(find.text('3.2s  ·  stopped  ·  $at'), findsOneWidget);
+      // What it was sent is still known, what came back is not.
+      expect(find.text('25.2K'), findsOneWidget);
+      expect(find.byIcon(Icons.arrow_downward), findsNothing);
+      expect(find.text('3.2s'), findsOneWidget);
+      expect(find.text('stopped'), findsOneWidget);
+      expect(find.text(at), findsOneWidget);
     });
   });
 }

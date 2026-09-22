@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../application/conversations/conversation_runs.dart';
 import '../../../domain/chat_session_state.dart';
 import '../../../domain/models/message.dart';
 import '../../providers/chat_input_provider.dart';
@@ -41,7 +42,7 @@ class _ChatViewState extends ConsumerState<ChatView> {
   // changes, not on every rebuild.
   List<Message>? _cachedMessages;
   List<List<Message>> _grouped = const [];
-  Map<String, int> _cumulativeDurations = const {};
+  Map<String, RunTotals> _runTotals = const {};
 
   /// Tolerance (in pixels) for "at the bottom" detection. Kept tiny so
   /// re-attach only fires when the user deliberately scrolls all the way
@@ -216,7 +217,7 @@ class _ChatViewState extends ConsumerState<ChatView> {
     if (!identical(messages, _cachedMessages)) {
       _cachedMessages = messages;
       _grouped = groupMessages(messages);
-      _cumulativeDurations = cumulativeDurations(messages);
+      _runTotals = cumulativeRunTotals(messages);
     }
     final headerCount = hasMoreAbove ? 1 : 0;
 
@@ -246,7 +247,7 @@ class _ChatViewState extends ConsumerState<ChatView> {
                   key: ValueKey(head.id),
                   message: head,
                   toolResults: group.sublist(1),
-                  cumulativeDurationMs: _cumulativeDurations[head.id],
+                  runTotals: _runTotals[head.id],
                   progress: head.id == streamingMessageId ? progress : null,
                   onTellMore: (selection) => ref
                       .read(chatInputInjectionProvider.notifier)

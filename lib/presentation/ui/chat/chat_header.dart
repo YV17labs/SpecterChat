@@ -6,6 +6,7 @@ import '../../../core/theme.dart';
 import '../../../domain/chat_session_state.dart';
 import '../../providers/conversation_provider.dart';
 import '../../providers/effective_settings_provider.dart';
+import '../widgets/token_text.dart';
 
 /// Conversation title and context-usage gauge.
 class ChatHeader extends ConsumerWidget {
@@ -96,10 +97,5 @@ class ContextGauge extends StatelessWidget {
         ],
       ),
     );
-  }
-
-  static String formatTokens(int tokens) {
-    if (tokens >= 1000) return '${(tokens / 1000).toStringAsFixed(1)}K';
-    return tokens.toString();
   }
 }

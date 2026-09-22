@@ -506,7 +506,15 @@ numbers survive restarts and later settings changes.
   as its call returns — a turn whose calls are not all answered is then
   left out of later requests (`OpenAiCodec` skips it with its results,
   like one whose arguments never parsed).
-- The stats line under a reply ends with **when it was generated**
+- The stats line under a reply is a row of icons, not words
+  (`_Stat` in `message_bubble.dart`): ↑ what the request carried
+  (`Message.promptTokens`, the whole context — `null` without a `usage`
+  report, and the arrow is then left out), ↓ what came back, the
+  duration, the speed, then Σ tokens and Σ time for the run, the outcome
+  when it is not `completed`, and the clock. The tooltip spells every one
+  of them out in words — it is the legend for the icons — and ends with
+  what the run weighs when there is more than this turn in it.
+- That line ends with **when it was generated**
   (`Message.generatedAt`: `GenerationStats.startedAt`, else the row's
   `createdAt`), in the computer's time zone and the system's language:
   the clock alone for today, the day added earlier this year, the year
@@ -517,13 +525,20 @@ numbers survive restarts and later settings changes.
   `DateFormat`s themselves, built once per locale because this line is
   rebuilt on every streaming tick. The photo metadata dates go through
   it too.
-- `Message.tokensPerSecond` (`MessageSpeedX`, next to `MessageContentX`)
+- `Message.tokensPerSecond` (`MessageMeasuresX`, next to
+  `MessageContentX`)
   is the one speed shown and exported: `outputTokensPerSecond` (tokens
   over the time after the first token) when stats exist,
   `overallTokensPerSecond` for older replies. The bubble's tooltip shows
-  the recorded details. Σ (`cumulativeDurations`) sums the assistant
-  durations of a run, and runs come from `runsOf` — the same split the
-  export uses, so the two cannot drift.
+  the recorded details. `totalsOf` (`application/conversations/
+  conversation_runs.dart`) is the one place these sums are written: the
+  export's per-run totals and the Σ under a reply
+  (`cumulativeRunTotals`, the same fold stopped at each turn) are one
+  arithmetic, not two copies of it. Σ ↑ counts the context every turn
+  resent — what the run cost, not what its last request carried.
+  `formatTokens` (`presentation/ui/widgets/token_text.dart`) is the one
+  place a token count is written short (`25.2K`), on the line and on the
+  header's context gauge alike; the exact figure stays in the tooltip.
 
 Export: "Export (JSON)" in a conversation's menu (left sidebar) →
 `ConversationController.export` → `ConversationExporter` → `IFileSaver`

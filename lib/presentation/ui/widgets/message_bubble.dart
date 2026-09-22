@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../application/conversations/conversation_runs.dart';
 import '../../../core/theme.dart';
 import '../../../domain/chat_session_state.dart' show GenerationProgress;
 import '../../../domain/models/message.dart';
@@ -9,6 +10,7 @@ import 'content_blocks.dart';
 import 'local_time_text.dart';
 import 'message_hover_actions.dart';
 import 'streaming_indicator.dart';
+import 'token_text.dart';
 
 // Auto-correction bubble colors (amber at various alphas).
 const _correctionBg = Color(0x26FFC107);
@@ -21,9 +23,9 @@ class MessageBubble extends StatelessWidget {
   final Message message;
   final List<Message> toolResults;
 
-  /// Cumulative assistant-turn duration (ms) up to and including this
-  /// message. Null when not applicable (user/system messages).
-  final int? cumulativeDurationMs;
+  /// What the run this message answers in has cost up to and including
+  /// it. Null when not applicable (user/system messages).
+  final RunTotals? runTotals;
 
   /// Invoked when the user picks "Tell me more" from the right-click menu
   /// on a selection inside an assistant message. Null disables the item.
@@ -42,7 +44,7 @@ class MessageBubble extends StatelessWidget {
     super.key,
     required this.message,
     this.toolResults = const [],
-    this.cumulativeDurationMs,
+    this.runTotals,
     this.onTellMore,
     this.onFork,
     this.progress,
@@ -153,10 +155,7 @@ class MessageBubble extends StatelessWidget {
         if (!message.isStreaming &&
             message.role == MessageRole.assistant &&
             (message.completionTokens > 0 || message.stats != null))
-          _MessageStats(
-            message: message,
-            cumulativeDurationMs: cumulativeDurationMs,
-          ),
+          _MessageStats(message: message, runTotals: runTotals),
       ],
     );
     if (wrappedInSelectionArea) {
@@ -300,9 +299,16 @@ class _Avatar extends StatelessWidget {
   }
 }
 
-/// "354 tokens · 15.7s · 22.6 tok/s · Σ 20.7s · 14:32" under a reply;
-/// hovering shows what the turn recorded (model, prompt, first token,
-/// reasoning) and the whole date it was generated on.
+/// The line under a reply: ↑ 25.2K sent, ↓ 354 received, 15.7s, 25.3
+/// tok/s, Σ 51.0K and Σ 20.7s for the whole run, and when it was
+/// generated — each behind a small icon rather than a word, so the line
+/// stays scannable at caption size. Hovering spells all of it out in
+/// words, together with what the turn recorded (model, first token,
+/// reasoning): the tooltip is the legend for the icons.
+///
+/// ↑ is what the request carried — the whole context, not just the last
+/// message — ↓ what came back, and Σ the run since the user's message
+/// (`cumulativeRunTotals`), on the tokens and on the time alike.
 ///
 /// The time is the computer's: what is stored is UTC, so a conversation
 /// read later, or elsewhere, still reads in the reader's time zone.
@@ -312,56 +318,82 @@ class _Avatar extends StatelessWidget {
 /// replies written before that.
 class _MessageStats extends StatelessWidget {
   final Message message;
-  final int? cumulativeDurationMs;
+  final RunTotals? runTotals;
 
-  const _MessageStats({required this.message, this.cumulativeDurationMs});
+  const _MessageStats({required this.message, this.runTotals});
 
   static String _seconds(int ms) => '${(ms / 1000).toStringAsFixed(1)}s';
 
   @override
   Widget build(BuildContext context) {
     final stats = message.generationStats;
+    final prompt = message.promptTokens ?? 0;
     final tokens = message.completionTokens;
     final durationMs = message.durationMs;
-    final parts = <String>[
-      if (tokens > 0) '$tokens tokens',
-      if (durationMs > 0) _seconds(durationMs),
-    ];
     final rate = message.tokensPerSecond;
-    if (rate != null) parts.add('${rate.toStringAsFixed(1)} tok/s');
-    final cumulative = cumulativeDurationMs;
-    if (cumulative != null && cumulative > durationMs && cumulative > 0) {
-      parts.add('Σ ${_seconds(cumulative)}');
-    }
-    final ending = switch (stats?.outcome) {
-      GenerationOutcome.cancelled => 'stopped',
-      GenerationOutcome.failed => 'failed',
-      GenerationOutcome.interrupted => 'interrupted',
-      GenerationOutcome.completed || null => null,
-    };
-    if (ending != null) parts.add(ending);
+    final run = runTotals;
     final locale = systemLocaleOf(context);
-    parts.add(shortLocalTimestamp(message.generatedAt, locale: locale));
+    // Resolved once: this line is rebuilt on every streaming tick, for
+    // every reply on screen.
+    final style = context.specterStyles.caption.copyWith(
+      color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.35),
+    );
+
+    // A run with one turn in it has nothing more to total than the turn.
+    final runStats = <Widget>[
+      if (run != null && run.tokens > prompt + tokens)
+        _Stat(Icons.functions, formatTokens(run.tokens), style),
+      if (run != null && run.durationMs > durationMs)
+        _Stat(Icons.functions, _seconds(run.durationMs), style),
+    ];
 
     return Tooltip(
       message: [
         fullLocalTimestamp(message.generatedAt, locale: locale),
         if (stats != null) _details(stats),
+        if (run != null && runStats.isNotEmpty) _runDetails(run),
       ].join('\n'),
       waitDuration: const Duration(milliseconds: 400),
       child: Padding(
         padding: const EdgeInsets.only(top: 6),
-        child: Text(
-          parts.join('  ·  '),
-          style: context.specterStyles.caption.copyWith(
-            color: Theme.of(
-              context,
-            ).colorScheme.onSurface.withValues(alpha: 0.35),
-          ),
+        child: Wrap(
+          spacing: 10,
+          runSpacing: 2,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            if (prompt > 0)
+              _Stat(Icons.arrow_upward, formatTokens(prompt), style),
+            if (tokens > 0)
+              _Stat(Icons.arrow_downward, formatTokens(tokens), style),
+            if (durationMs > 0)
+              _Stat(Icons.timer_outlined, _seconds(durationMs), style),
+            if (rate != null)
+              _Stat(Icons.bolt, '${rate.toStringAsFixed(1)} tok/s', style),
+            ...runStats,
+            if (_ending(stats?.outcome) case (final icon, final label)?)
+              _Stat(icon, label, style),
+            _Stat(
+              Icons.schedule,
+              shortLocalTimestamp(message.generatedAt, locale: locale),
+              style,
+            ),
+          ],
         ),
       ),
     );
   }
+
+  /// How the turn ended, when it did not end normally.
+  static (IconData, String)? _ending(GenerationOutcome? outcome) =>
+      switch (outcome) {
+        GenerationOutcome.cancelled => (Icons.stop_circle_outlined, 'stopped'),
+        GenerationOutcome.failed => (Icons.error_outline, 'failed'),
+        GenerationOutcome.interrupted => (
+          Icons.warning_amber_rounded,
+          'interrupted',
+        ),
+        GenerationOutcome.completed || null => null,
+      };
 
   static String _details(GenerationStats s) {
     final first = s.firstTokenMs;
@@ -371,14 +403,14 @@ class _MessageStats extends StatelessWidget {
     return [
       [s.model, if (s.endpoint.isNotEmpty) s.endpoint].join(' · '),
       [
-        if (s.promptTokens case final p?) 'Prompt: $p tokens',
+        if (s.promptTokens case final p?) 'Sent: $p tokens',
         if (first != null) 'first token after ${_seconds(first)}',
       ].join(' · '),
       if (reasoning != null) 'Reasoning: ${_seconds(reasoning)}',
       [
         switch (s.completionTokens) {
-          final tokens? => 'Output: $tokens tokens',
-          null => 'Output: ${s.fragments} fragments',
+          final tokens? => 'Received: $tokens tokens',
+          null => 'Received: ${s.fragments} fragments',
         },
         if (generation != null) 'in ${_seconds(generation)}',
         if (rate != null) '${rate.toStringAsFixed(1)} tok/s',
@@ -387,6 +419,34 @@ class _MessageStats extends StatelessWidget {
       if (s.retry > 0) 'Automatic retry #${s.retry}',
       if (s.error case final error?) 'Error: $error',
     ].where((l) => l.isNotEmpty).join('\n');
+  }
+
+  /// What the whole run weighs, in words — the legend for the Σ icons.
+  static String _runDetails(RunTotals run) =>
+      'Since your message: ${run.promptTokens} sent · '
+      '${run.completionTokens} received · '
+      '${run.tokens} tokens in ${_seconds(run.durationMs)}';
+}
+
+/// One figure of the stats line: its icon and its value, as tight as the
+/// text itself so a row of them reads as one line.
+class _Stat extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final TextStyle style;
+
+  const _Stat(this.icon, this.label, this.style);
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 12, color: style.color),
+        const SizedBox(width: 3),
+        Text(label, style: style),
+      ],
+    );
   }
 }
 

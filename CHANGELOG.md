@@ -18,11 +18,13 @@ Everything a reply cost is now recorded with it and kept, and a conversation
 can be exported as one JSON file — meant to be handed to a person, or to a
 model, that knows nothing of SpecterChat.
 
-> **The database schema changed (v10).** Upgrading keeps your conversations.
-> Opening the same database again with a build older than this one **erases
-> it**: those builds recreate their tables whenever the schema version
-> differs, in either direction. Update the installed app rather than running
-> both.
+> **The database schema changed (v10).** Updating from any released version
+> (0.5.0 to 0.7.3, all on schema v8) keeps your conversations, and the
+> database is copied before it is touched. But opening that database again
+> with a build older than this one **erases it**: those builds recreate
+> their tables whenever the schema version differs, in either direction.
+> Update the installed app rather than running both, and keep the copy this
+> version leaves beside it.
 
 ### Added
 
@@ -64,8 +66,15 @@ model, that knows nothing of SpecterChat.
   showing nothing.
 - **Upgrading the database keeps your conversations.** Until now, every
   schema change wiped the history; from this version on, each change is an
-  incremental step. Databases older than 0.7.0 are still reset on first
-  open.
+  incremental step, and every version ever released is on the same starting
+  schema, so nobody loses anything on update.
+- **The database is copied before it is migrated**, next to itself
+  (`specter.db.v8.backup`), once per schema it comes from. Delete it when
+  you are satisfied the update went well.
+- **A database written by a newer version is left alone.** Instead of
+  rewriting what it does not understand, the app sets it aside
+  (`specter.db.v11.newer`) and starts a new one, so going back to an older
+  version can no longer destroy a history.
 
 ### Fixed
 

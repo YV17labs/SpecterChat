@@ -2,10 +2,17 @@ import 'dart:io';
 
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
+import 'package:logging/logging.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 part 'database.g.dart';
+
+final _log = Logger('AppDatabase');
+
+/// The schema this build knows. Also read before the database is opened
+/// ([prepareDatabaseFile]), so it lives outside the class.
+const int kSchemaVersion = 10;
 
 class Conversations extends Table {
   TextColumn get id => text()();
@@ -105,7 +112,7 @@ class AppDatabase extends _$AppDatabase {
   // ---------------------------------------------------------------
 
   @override
-  int get schemaVersion => 10;
+  int get schemaVersion => kSchemaVersion;
 
   static const _createConversationIdIndex =
       'CREATE INDEX IF NOT EXISTS idx_messages_conversation_id '
@@ -162,6 +169,55 @@ LazyDatabase _openConnection() {
     final dbFolder = await getApplicationDocumentsDirectory();
     final file = File(p.join(dbFolder.path, 'specterchat', 'specter.db'));
     await file.parent.create(recursive: true);
+    await prepareDatabaseFile(file);
     return NativeDatabase.createInBackground(file);
   });
+}
+
+/// Guards [file] against the build that is about to open it.
+///
+/// A file this build would migrate is copied first, next to itself
+/// (`specter.db.v9.backup`), so a migration that goes wrong leaves the
+/// history untouched somewhere. A file written by a *later* build is set
+/// aside instead (`specter.db.v11.newer`) and the app starts on a fresh
+/// one: a build that knows less than the file must never rewrite it.
+/// Drift runs `onUpgrade` whenever the versions differ, in either
+/// direction, and every build up to 0.7.3 recreated its tables there —
+/// opening a newer database with one of those empties it.
+Future<void> prepareDatabaseFile(
+  File file, {
+  int version = kSchemaVersion,
+}) async {
+  final stored = await databaseFileVersion(file);
+  if (stored == 0 || stored == version) return;
+  if (stored < version) {
+    final backup = File('${file.path}.v$stored.backup');
+    if (!backup.existsSync()) {
+      await file.copy(backup.path);
+      _log.info('Upgrading from schema v$stored; kept ${backup.path}');
+    }
+    return;
+  }
+  final aside = File('${file.path}.v$stored.newer');
+  await file.rename(aside.path);
+  _log.severe(
+    'Database is schema v$stored, this build knows v$version: '
+    'left it at ${aside.path} and started a new one',
+  );
+}
+
+/// The `user_version` SQLite keeps in a file's header (four bytes at
+/// offset 60), or 0 when there is no readable header — a missing file, or
+/// one no database wrote yet.
+Future<int> databaseFileVersion(File file) async {
+  if (!file.existsSync()) return 0;
+  final handle = await file.open();
+  try {
+    await handle.setPosition(60);
+    final bytes = await handle.read(4);
+    if (bytes.length < 4) return 0;
+    return bytes.buffer.asByteData(bytes.offsetInBytes).getUint32(0);
+  } finally {
+    await handle.close();
+  }
 }

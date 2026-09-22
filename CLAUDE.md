@@ -217,7 +217,22 @@ onUpgrade: (Migrator m, int from, int to) async {
 Below v8 the rows are still discarded: pre-UUIDv7 ids could not guarantee
 the ordering invariant, and `createAll` builds the current schema
 directly. From v8 on every bump is an incremental step that keeps the
-user's history — never add a `deleteTable` there.
+user's history — never add a `deleteTable` there. Every released build so
+far (0.5.0 → 0.7.3) carries schema v8, so updating from any of them keeps
+everything.
+
+`prepareDatabaseFile` runs before the file is opened (it reads the
+`user_version` from the header, four bytes at offset 60):
+
+- a file this build would migrate is copied next to itself first
+  (`specter.db.v9.backup`, once per source version), so a migration that
+  goes wrong still leaves the history somewhere;
+- a file written by a **later** build is set aside
+  (`specter.db.v11.newer`) and the app starts on a fresh one. Drift calls
+  `onUpgrade` whenever the versions differ, in *either* direction
+  (`hadUpgrade => versionBefore != versionNow`), and every build up to
+  0.7.3 recreated its tables there: opening a newer database with one of
+  those empties it. That is how a real conversation history was lost.
 
 ### How to add a migration
 1. Change the table definition in

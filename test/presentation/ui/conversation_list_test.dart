@@ -1,8 +1,12 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:specterchat/domain/models/message.dart';
 import 'package:specterchat/presentation/providers/conversation_provider.dart';
 import 'package:specterchat/presentation/ui/sidebar_left/conversation_list.dart';
 
+import '../../support/fakes.dart';
 import '../../support/pump_app.dart';
 
 void main() {
@@ -51,5 +55,46 @@ void main() {
     await tester.tap(find.widgetWithText(TextButton, 'Delete'));
     await tester.pumpAndSettle();
     expect(harness.conversations.rows.keys, [b]);
+  });
+
+  testWidgets('Export writes the conversation where the user says', (
+    tester,
+  ) async {
+    final harness = TestHarness();
+    await pumpApp(tester, const ConversationList(), harness: harness);
+    final id = await harness.conversations.createConversation();
+    await harness.conversations.renameConversation(id, 'Debug me');
+    await harness.messages.saveMessage(
+      testMessage(MessageRole.user, [
+        const ContentBlock.text(text: 'hello'),
+      ], conversationId: id),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.more_horiz));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Export (JSON)'));
+    await tester.pumpAndSettle();
+
+    final saved = harness.fileSaver.saved.single;
+    expect(saved.name, startsWith('Debug me '));
+    final doc = jsonDecode(utf8.decode(saved.bytes)) as Map<String, dynamic>;
+    expect((doc['conversation'] as Map)['title'], 'Debug me');
+    expect(doc['messages'], hasLength(1));
+    expect(find.text('Conversation exported'), findsOneWidget);
+  });
+
+  testWidgets('a cancelled export says nothing', (tester) async {
+    final harness = TestHarness()..fileSaver.cancel = true;
+    await pumpApp(tester, const ConversationList(), harness: harness);
+    await harness.conversations.createConversation();
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.more_horiz));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Export (JSON)'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(SnackBar), findsNothing);
   });
 }

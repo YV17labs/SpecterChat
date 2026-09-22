@@ -1,3 +1,4 @@
+import '../../../application/conversations/conversation_runs.dart';
 import '../../../domain/models/message.dart';
 
 /// Group each tool-result message with the assistant message that called
@@ -17,16 +18,16 @@ List<List<Message>> groupMessages(List<Message> messages) {
   return groups;
 }
 
-/// Cumulative assistant duration (ms) since the last user message,
-/// inclusive of each assistant message's own duration. Keyed by message
-/// id; user and tool messages have no entry.
+/// Cumulative assistant duration (ms) within each run, inclusive of each
+/// assistant message's own duration. Keyed by message id; user and tool
+/// messages have no entry. The same sum the export writes as a run's
+/// `generationMs`.
 Map<String, int> cumulativeDurations(List<Message> messages) {
   final result = <String, int>{};
-  var running = 0;
-  for (final msg in messages) {
-    if (msg.role == MessageRole.user) {
-      running = 0;
-    } else if (msg.role == MessageRole.assistant) {
+  for (final run in runsOf(messages)) {
+    var running = 0;
+    for (final msg in run.answers) {
+      if (msg.role != MessageRole.assistant) continue;
       running += msg.durationMs;
       result[msg.id] = running;
     }

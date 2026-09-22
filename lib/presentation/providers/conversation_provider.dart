@@ -5,6 +5,7 @@ import '../../domain/models/conversation.dart';
 import '../../domain/models/message.dart';
 import 'chat_input_provider.dart';
 import 'chat_provider.dart';
+import 'conversation_export_provider.dart';
 import 'database_provider.dart';
 import 'settings_provider.dart';
 
@@ -66,6 +67,13 @@ class ConversationController extends Notifier<String?> {
   }
 
   Future<void> rename(String id, String title) => _actions.rename(id, title);
+
+  /// Asks where to save [id]'s JSON export — every message, what each turn
+  /// was generated with and measured at — then writes it. `false` when
+  /// the user cancelled.
+  Future<bool> export(String id) => ref
+      .read(conversationExporterProvider)
+      .export(id, settings: ref.read(settingsProvider));
 
   Future<void> delete(String id) async {
     if (state == id) state = null;

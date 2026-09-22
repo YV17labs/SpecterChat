@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:specterchat/core/theme.dart';
+import 'package:specterchat/presentation/providers/conversation_export_provider.dart';
 import 'package:specterchat/presentation/providers/database_provider.dart';
 import 'package:specterchat/presentation/providers/image_providers.dart';
 import 'package:specterchat/presentation/providers/llm_provider.dart';
@@ -22,6 +23,7 @@ class TestHarness {
   final modelCatalogStore = InMemoryModelCatalogStore();
   final mcp = FakeMcpService();
   final imageIo = FakeImageIo();
+  final fileSaver = FakeFileSaver();
   final annotationRenderer = FakeAnnotationRenderer();
   FakeLlmService llm;
 
@@ -36,6 +38,7 @@ class TestHarness {
     mcpServiceProvider.overrideWithValue(mcp),
     llmServiceProvider.overrideWith((_) => llm),
     imageIoProvider.overrideWithValue(imageIo),
+    fileSaverProvider.overrideWithValue(fileSaver),
     imageNormalizerProvider.overrideWithValue(
       const PassThroughImageNormalizer(),
     ),

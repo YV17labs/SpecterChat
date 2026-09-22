@@ -5,6 +5,7 @@ import '../../../../application/mcp/mcp_content_text.dart';
 import '../../../../core/theme.dart';
 import '../../../../domain/models/app_settings.dart';
 import '../../../providers/mcp_provider.dart';
+import '../../widgets/snack.dart';
 import 'mcp_section_widgets.dart';
 
 class McpPromptRow extends ConsumerWidget {

@@ -38,21 +38,29 @@ lib/
                          request carries: text sampling vs image options),
                          photo_metadata (PhotoMetadata = PhotoSummary +
                          the verbatim PhotoMetadataBlocks; the
-                         PhotoMetadataRef an image block keeps; AiOrigin)
+                         PhotoMetadataRef an image block keeps; AiOrigin),
+                         message_stats (GenerationStats / ToolCallStats:
+                         what a message was produced with and measured at),
+                         request_context (the system prompt as sent and the
+                         tool definitions a request carried)
     repositories/      — i_conversation_repository, i_message_repository,
                          i_attachment_repository, i_settings_store,
                          i_model_catalog_store
     services/          — i_llm_service (StreamEvent), i_mcp_service,
                          llm_hook, cancellation_token, i_image_normalizer,
                          i_annotation_renderer, i_image_io (dialogs +
-                         clipboard), i_photo_metadata_codec
+                         clipboard), i_photo_metadata_codec, i_file_saver
+                         (non-image "Save as…")
   application/         — Use cases. Depends on core + domain only.
     chat/              — ChatSession (streaming worker), ChatSessionManager
                          (LRU registry), ChatSessionDeps, ChatLogic (pure),
-                         StreamAccumulator, StreamingPersister, ToolExecutor,
+                         StreamAccumulator, GenerationRecorder (a turn's
+                         stats), StreamingPersister, ToolExecutor,
                          message_writes (the one transactional "row + blobs"
                          write every message with images goes through)
-    conversations/     — ConversationActions (create / fork / rename / delete)
+    conversations/     — ConversationActions (create / fork / rename / delete),
+                         ConversationExporter (JSON export), runsOf (the
+                         one split of a history into runs)
     mcp/               — ActiveMcpServer + findServerForTool, content → text
     llm_hooks/         — LlmHookRegistry + per-model hooks (qwen3)
     images/            — PendingImage (composer draft entry + slot maths),
@@ -75,6 +83,7 @@ lib/
     images/            — UiImageNormalizer (dart:ui decode/downscale),
                          DesktopImageIo (file_selector + pasteboard),
                          ExifPhotoMetadataCodec (pure-Dart EXIF read/write)
+    files/             — DesktopFileSaver (file_selector save dialog)
   presentation/        — Riverpod + Flutter.
     providers/         — One file per concern. Controllers live here:
                          ConversationController (selection + actions),
@@ -84,7 +93,8 @@ lib/
                          ModelCatalogNotifier (owns the /models fetch and
                          the persisted image-model cache), ComposerNotifier
                          (pending images per conversation), image service
-                         providers, requestProfileProvider
+                         providers, requestProfileProvider,
+                         conversationExporterProvider
     rendering/         — dart:ui code that is not a widget: AnnotationPainting
                          (shared by the editor's CustomPainter and the PNG
                          export), UiAnnotationRenderer, decode helpers. No
@@ -171,7 +181,7 @@ dart run build_runner build
 ```
 
 ## Database Migrations (Drift)
-The database uses Drift. Current schema version: **8**
+The database uses Drift. Current schema version: **10**
 (`schemaVersion` in `lib/infrastructure/persistence/database.dart`).
 
 ### Schema version history
@@ -185,40 +195,38 @@ The database uses Drift. Current schema version: **8**
 - **v7** — `attachments` table; image bytes move out of message content JSON
 - **v8** — Ids standardised to UUIDv7 so `ORDER BY id` is a strict total
   order. Every row read and write depends on this invariant.
+- **v9** — `stats` JSON column on `messages` (`MessageStats`). First step
+  that keeps the user's data.
+- **v10** — `request_contexts` table: the system prompt as sent and the
+  tool definitions, once per change in a conversation
 
-### The migration is destructive — read this before changing it
-`onUpgrade` does **not** migrate data. It drops `messages` and
-`conversations` (plus `attachments` when coming from v7 or later), then
-recreates everything from scratch:
+### Migrations keep the data from v8 on
+`onUpgrade` has two regimes:
 
 ```dart
 onUpgrade: (Migrator m, int from, int to) async {
-  await m.deleteTable(messages.actualTableName);
-  await m.deleteTable(conversations.actualTableName);
-  if (from >= 7) {
-    await m.deleteTable(attachments.actualTableName);
+  if (from < 8) {
+    // drop messages, conversations (+ attachments from v7), createAll,
+    // recreate both indices — then return
   }
-  await m.createAll();
-  // + recreate both indices
+  if (from < 9) await m.addColumn(messages, messages.stats);
+  if (from < 10) await m.createTable(requestContexts);
 },
 ```
 
-This was deliberate at v8: pre-UUIDv7 ids could not guarantee the ordering
-invariant, so the old rows were discarded rather than backfilled. The
-consequence is that **any schema bump wipes the user's chat history**. If
-that is no longer acceptable, the strategy has to be replaced with
-incremental steps before the next bump — not patched around.
+Below v8 the rows are still discarded: pre-UUIDv7 ids could not guarantee
+the ordering invariant, and `createAll` builds the current schema
+directly. From v8 on every bump is an incremental step that keeps the
+user's history — never add a `deleteTable` there.
 
 ### How to add a migration
 1. Change the table definition in
    `lib/infrastructure/persistence/database.dart` (schema + migrations
    only — queries live in the repositories next to it)
 2. Increment `schemaVersion`
-3. Decide what `onUpgrade` should do. Keeping the current wipe means
-   existing users lose their data; preserving it means writing real
-   per-version steps (`if (from < 9) await m.addColumn(...)`) and dropping
-   the blanket `deleteTable` calls
-4. Update `onCreate` too if new installs need the change
+3. Add its step to `onUpgrade` (`if (from < 10) await m.addColumn(...)`),
+   after the existing ones; the `from < 8` branch needs nothing
+4. Update `onCreate` too if new installs need more than `createAll`
 5. Regenerate: `dart run build_runner build`
 6. Export the schema snapshot:
 ```bash
@@ -229,6 +237,8 @@ dart run drift_dev schema dump lib/infrastructure/persistence/database.dart drif
 dart run drift_dev schema generate --data-classes --companions drift_schemas/ test/infrastructure/persistence/generated_migrations/
 ```
 8. Add a migration test in `test/infrastructure/persistence/migration_test.dart`
+   (the v8 → v9 one writes rows with the old schema's helpers and reads
+   them back through `MessageRepository`)
 9. Run tests: `flutter test test/infrastructure/persistence/`
 
 ### Schema snapshots
@@ -237,8 +247,8 @@ Snapshots live in `drift_schemas/` as JSON; test helpers are generated into
 step 7 must be run once on a fresh clone or `flutter analyze` and
 `flutter test` fail.
 
-Only **v1, v2, v6, v7 and v8** have snapshots. v3, v4 and v5 were never
-exported, so no test covers those transitions.
+Only **v1, v2, v6, v7, v8, v9 and v10** have snapshots. v3, v4 and v5
+were never exported, so no test covers those transitions.
 
 ### Runtime safety
 - `PRAGMA foreign_keys = ON` is enforced in `beforeOpen`
@@ -432,6 +442,82 @@ schema bump: JSON column and the existing `attachments` table.
   app declares no other locale). The rest of the UI stays English.
 - Small images reach the server untouched, EXIF included: stripping
   metadata on send is not done yet.
+
+## Message stats and export
+
+Everything measured while a message is produced is stored with it, once,
+in `messages.stats` (`MessageStats`, JSON) — never recomputed, so a turn's
+numbers survive restarts and later settings changes.
+
+- `GenerationStats` (assistant turn): model and endpoint as the
+  `ILlmService` sends them (`llm.model` / `llm.endpoint`), the sampling
+  parameters or image options actually sent (from the `RequestProfile`),
+  `requestContextId`, retry number, `startedAt` (UTC, ms), `durationMs`,
+  `firstTokenMs`, `firstAnswerMs` (first non-reasoning output),
+  `fragments`, `promptTokens` / `completionTokens` (`null` without
+  `usage`), `outcome` (`completed` / `cancelled` / `failed` +
+  `error` / `interrupted`), and `server`: what the server said besides the
+  deltas, verbatim (`usage` with details, `finish_reason`, llama.cpp
+  `timings`, the envelope of the first chunk). Derived values
+  (`generationMs`, `reasoningMs`, `outputTokensPerSecond`,
+  `finishReason`) are getters in `GenerationStatsX`, never stored.
+- `GenerationRecorder` (application) measures a turn from the moment the
+  request is sent; the `StreamingPersister` writes its `snapshot()` on
+  every placeholder upsert (outcome `interrupted`, what stays after a
+  crash) and closes it in `commit()` / `commitPartial(outcome)`. The
+  message's `completionTokens` / `durationMs` columns mirror it — also for
+  a stopped or failed turn — and are what every reader uses.
+- `ServerReport` is the stream event behind `server`: `LlmService` emits
+  the first chunk's envelope once, then only chunks that say something
+  beyond their deltas; `null` values are skipped.
+- `RequestContext` (`request_contexts`, `IConversationRepository`): the
+  system prompt as sent (`ChatSessionDeps.mergedSystemPrompt`, MCP
+  instructions included) and the definitions of the tools offered (icons
+  stripped). The row id is the fingerprint of its content (sha256) and
+  the primary key is `(conversation_id, id)`, so storing the same context
+  again stores nothing and returns the same id — no session state, no
+  duplicates after a restart. An image request carries neither, so it
+  records none.
+- `ToolCallStats` (tool result): `startedAt`, `durationMs` of the MCP
+  call (also in the message's `durationMs`), server id and name. The
+  result's `rawResponse` is the server's whole answer —
+  `structuredContent`, `_meta`, per-item annotations, unknown fields
+  (`McpToolResult.extra`, `McpContent.raw`) — with image bytes replaced
+  by `"attachment:<attachmentId>"`.
+- A tool call is never lost: `StreamAccumulator.toolCalls` is a list in
+  arrival order (the server's `index` only maps to the call it
+  continues), a call the server gave no id gets one
+  (`ToolCallAccumulator.callId`), and a fragment carrying another id than
+  the call at its index starts a new call. Each result is written as soon
+  as its call returns — a turn whose calls are not all answered is then
+  left out of later requests (`OpenAiCodec` skips it with its results,
+  like one whose arguments never parsed).
+- `Message.tokensPerSecond` (`MessageSpeedX`, next to `MessageContentX`)
+  is the one speed shown and exported: `outputTokensPerSecond` (tokens
+  over the time after the first token) when stats exist,
+  `overallTokensPerSecond` for older replies. The bubble's tooltip shows
+  the recorded details. Σ (`cumulativeDurations`) sums the assistant
+  durations of a run, and runs come from `runsOf` — the same split the
+  export uses, so the two cannot drift.
+
+Export: "Export (JSON)" in a conversation's menu (left sidebar) →
+`ConversationController.export` → `ConversationExporter` → `IFileSaver`
+(`DesktopFileSaver`, which `DesktopImageIo.saveImage` also goes
+through). The history is loaded only once a location is chosen and
+encoded straight to UTF-8. `buildConversationExport` (pure) writes every
+message and block as stored (`toJson`, with the times in UTC,
+`runtimeType` renamed `type`, a tool result's `rawResponse` decoded and
+an image's bytes as `base64`), each message's `derived` values, a
+`summary` (totals, outcomes, per model: turns, tokens, decoding speed,
+time to first token), `runs` (one per user message: turns, tool calls,
+Σ, tool time, wall clock), the `requestContexts` its turns reference, the
+current settings, and a `guide` explaining the app, the tool loop, what
+the model is actually sent (keep it in step with
+`OpenAiCodec.buildMessages`) and how to read the file — which is meant
+for someone, or some model, that knows nothing of SpecterChat. Auto-correction messages are
+flagged (`autoCorrection`). Never exported: the API key and MCP server
+headers. Messages written before v9 have no stats: only their token count
+and duration.
 
 ## Image models
 

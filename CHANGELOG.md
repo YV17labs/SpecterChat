@@ -14,6 +14,71 @@ changes.
 
 ## [Unreleased]
 
+Everything a reply cost is now recorded with it and kept, and a conversation
+can be exported as one JSON file — meant to be handed to a person, or to a
+model, that knows nothing of SpecterChat.
+
+> **The database schema changed (v10).** Upgrading keeps your conversations.
+> Opening the same database again with a build older than this one **erases
+> it**: those builds recreate their tables whenever the schema version
+> differs, in either direction. Update the installed app rather than running
+> both.
+
+### Added
+
+- **Export a conversation as JSON.** "Export (JSON)" in a conversation's
+  menu, in the left sidebar, asks where to save and writes everything:
+  every message with its reasoning, the tool calls with the arguments the
+  model wrote, the tool results with the server's whole answer, the images
+  as base64 (screenshots included), what each reply was generated with and
+  measured at, totals per model, one entry per exchange, the current
+  settings, and a guide explaining the app and what the model is actually
+  sent. The API key and the MCP servers' headers are never exported.
+- **Each reply records what it was generated with and what was measured**,
+  once and for good: the model and the server it went to, the sampling
+  parameters (or the image options), the prompt and output token counts,
+  the time before the first token, the reasoning time, the total duration,
+  how the turn ended — finished, stopped, failed, or cut short by a crash —
+  and what the server reported alongside its answer (`finish_reason`, usage
+  details, llama.cpp timings). Kept in the database, so the numbers survive
+  a restart and later settings changes.
+- **The exact context of each request is recorded**: the system prompt as
+  sent, the MCP servers' instructions included, and the definition of every
+  tool offered. Stored once and reused while nothing changes, so it costs
+  almost nothing.
+- **Tool results keep the server's whole answer**, not just its text and
+  images: structured results, `_meta`, per-item annotations and fields this
+  version does not know about. Image bytes stay in their attachment, and the
+  answer refers to them.
+- **Each tool call records how long it took and which server ran it.**
+- **Hovering the line under a reply** shows the detail: model, server,
+  prompt size, time to the first token, reasoning time, output speed and the
+  reason the model stopped.
+
+### Changed
+
+- **The speed shown under a reply is now the generation speed**, measured
+  from the first token, so reading a long prompt no longer drags it down.
+  Expect higher numbers than before on conversations with a large context.
+- **A stopped or failed reply keeps its duration** and says so, instead of
+  showing nothing.
+- **Upgrading the database keeps your conversations.** Until now, every
+  schema change wiped the history; from this version on, each change is an
+  incremental step. Databases older than 0.7.0 are still reset on first
+  open.
+
+### Fixed
+
+- **A tool call the server sends without an identifier is no longer
+  dropped**, and two calls the server numbers alike are no longer merged
+  into one — the first was lost.
+- **Each tool result is written as soon as its call returns**, instead of
+  waiting for every tool of the turn: closing or losing the app no longer
+  drops the results already obtained.
+- **A reply whose tool calls were not all answered is no longer sent back to
+  the server**, which rejected the whole request and blocked the
+  conversation.
+
 ## [0.7.3] - 2026-09-21
 
 Photos keep their metadata through image edits. Everything happens in the

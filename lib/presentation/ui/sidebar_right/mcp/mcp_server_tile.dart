@@ -7,6 +7,7 @@ import '../../../../domain/models/mcp_server_state.dart';
 import '../../../providers/mcp_provider.dart';
 import '../../../providers/settings_provider.dart';
 import '../../widgets/settings_fields.dart';
+import '../../widgets/snack.dart';
 import 'mcp_prompt_row.dart';
 import 'mcp_resource_row.dart';
 import 'mcp_section_widgets.dart';

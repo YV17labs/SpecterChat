@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../core/theme.dart';
 import '../../../domain/models/conversation.dart';
 
-enum ConversationMenuAction { duplicate, rename, delete }
+enum ConversationMenuAction { duplicate, rename, export, delete }
 
 /// One row in the conversation list with its overflow menu.
 class ConversationTile extends StatelessWidget {
@@ -70,6 +70,13 @@ class ConversationTile extends StatelessWidget {
                       PopupMenuItem(
                         value: ConversationMenuAction.rename,
                         child: _MenuRow(icon: Icons.edit, label: 'Rename'),
+                      ),
+                      PopupMenuItem(
+                        value: ConversationMenuAction.export,
+                        child: _MenuRow(
+                          icon: Icons.file_download_outlined,
+                          label: 'Export (JSON)',
+                        ),
                       ),
                       PopupMenuItem(
                         value: ConversationMenuAction.delete,

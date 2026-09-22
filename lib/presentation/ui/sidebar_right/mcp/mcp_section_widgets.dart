@@ -4,6 +4,7 @@ import 'package:logging/logging.dart';
 
 import '../../../../core/theme.dart';
 import '../../../providers/chat_input_provider.dart';
+import '../../widgets/snack.dart';
 
 final _log = Logger('McpSidebar');
 
@@ -91,9 +92,4 @@ Future<void> injectMcpTextIntoChat(
     if (!context.mounted) return;
     showSnack(context, '$failureLabel: $e');
   }
-}
-
-void showSnack(BuildContext context, String message) {
-  if (!context.mounted) return;
-  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
 }

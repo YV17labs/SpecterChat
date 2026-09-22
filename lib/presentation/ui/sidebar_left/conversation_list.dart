@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/theme.dart';
 import '../../../domain/models/conversation.dart';
 import '../../providers/conversation_provider.dart';
+import '../widgets/snack.dart';
 import 'conversation_tile.dart';
 
 class ConversationList extends ConsumerStatefulWidget {
@@ -140,11 +141,24 @@ class _ConversationListState extends ConsumerState<ConversationList> {
         if (title != null && title.isNotEmpty) {
           await _controller.rename(conv.id, title);
         }
+      case ConversationMenuAction.export:
+        await _export(conv);
       case ConversationMenuAction.delete:
         if (await _confirmDelete(conv.title)) {
           await _controller.delete(conv.id);
         }
     }
+  }
+
+  Future<void> _export(Conversation conv) async {
+    String? message;
+    try {
+      if (await _controller.export(conv.id)) message = 'Conversation exported';
+    } on Exception catch (e) {
+      message = 'Export failed: $e';
+    }
+    if (message == null || !mounted) return;
+    showSnack(context, message);
   }
 
   Future<String?> _promptForTitle(String current) {

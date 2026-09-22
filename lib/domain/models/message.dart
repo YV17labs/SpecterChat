@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:freezed_annotation/freezed_annotation.dart';
 
+import 'message_stats.dart';
 import 'photo_metadata.dart';
 
 part 'message.freezed.dart';
@@ -107,8 +108,17 @@ abstract class Message with _$Message {
     required List<ContentBlock> content,
     required DateTime createdAt,
     @Default(false) bool isStreaming,
+
+    /// Output tokens the server reported for an assistant turn.
     @Default(0) int completionTokens,
+
+    /// Time it took to produce: the generation of an assistant turn, the
+    /// call of a tool result.
     @Default(0) int durationMs,
+
+    /// Everything measured while it was produced, with what it was
+    /// produced with (model, settings, server report).
+    MessageStats? stats,
   }) = _Message;
 
   factory Message.fromJson(Map<String, dynamic> json) =>
@@ -138,6 +148,26 @@ extension MessageContentX on Message {
   /// Concatenated text blocks, or the empty string.
   String get plainText =>
       content.whereType<TextContentBlock>().map((b) => b.text).join();
+}
+
+/// A message's speed, the same wherever it is shown or exported.
+extension MessageSpeedX on Message {
+  /// What was measured of this assistant turn, `null` for other messages
+  /// and replies written before stats existed.
+  GenerationStats? get generationStats => switch (stats) {
+    final GenerationStats g => g,
+    _ => null,
+  };
+
+  /// Output tokens over the whole [Message.durationMs], prompt processing
+  /// included — the only speed a reply without stats has.
+  double? get overallTokensPerSecond => completionTokens > 0 && durationMs > 0
+      ? completionTokens * 1000 / durationMs
+      : null;
+
+  /// The decoding speed when it was measured, else [overallTokensPerSecond].
+  double? get tokensPerSecond =>
+      generationStats?.outputTokensPerSecond ?? overallTokensPerSecond;
 }
 
 /// A streamed `tool_call.function.arguments` string is truncated if the

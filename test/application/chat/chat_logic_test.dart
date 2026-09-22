@@ -31,7 +31,7 @@ void main() {
         conversationId: 'c-1',
         content: 'Hello!',
         thinking: '',
-        toolCalls: {},
+        toolCalls: [],
         isStreaming: false,
       );
       expect(msg.id, 'a-1');
@@ -46,7 +46,7 @@ void main() {
         conversationId: 'c-1',
         content: 'answer',
         thinking: 'let me think...',
-        toolCalls: {},
+        toolCalls: [],
         isStreaming: false,
       );
       expect(msg.content, [
@@ -55,19 +55,19 @@ void main() {
       ]);
     });
 
-    test('includes valid tool calls and skips incomplete ones', () {
+    test('includes named tool calls and skips nameless ones', () {
       final valid = ToolCallAccumulator()
         ..id = 'tc-1'
         ..name = 'search';
       valid.argumentsBuffer.write('{"q":"dart"}');
-      final noId = ToolCallAccumulator()..name = 'search';
+      final noName = ToolCallAccumulator()..id = 'tc-2';
 
       final msg = logic.buildAssistantMessage(
         id: 'a-1',
         conversationId: 'c-1',
         content: '',
         thinking: '',
-        toolCalls: {0: valid, 1: noId},
+        toolCalls: [valid, noName],
         isStreaming: false,
       );
       expect(msg.content, [
@@ -85,24 +85,25 @@ void main() {
         conversationId: 'c-1',
         content: '',
         thinking: '',
-        toolCalls: {},
+        toolCalls: [],
         isStreaming: false,
       );
       expect(msg.content, [const ContentBlock.text(text: '')]);
     });
 
-    test('propagates streaming flag, tokens and duration', () {
+    test('propagates streaming flag and stats, tokens and duration', () {
+      final stats = testGenerationStats(durationMs: 340, completionTokens: 12);
       final msg = logic.buildAssistantMessage(
         id: 'a-1',
         conversationId: 'c-1',
         content: 'x',
         thinking: '',
-        toolCalls: {},
+        toolCalls: [],
         isStreaming: true,
-        completionTokens: 12,
-        durationMs: 340,
+        stats: stats,
       );
       expect(msg.isStreaming, true);
+      expect(msg.stats, stats);
       expect(msg.completionTokens, 12);
       expect(msg.durationMs, 340);
     });

@@ -69,7 +69,10 @@ class OpenAiCodec {
     }
   }
 
-  /// The messages array for one request.
+  /// The messages array for one request. What this builds is what the
+  /// conversation export's `guide.whatTheModelSees` describes — keep the
+  /// two in step.
+  ///
   ///
   /// [imageBytes] carries preloaded bytes for every image attachment
   /// referenced by [history]. The base64 string is materialised here,
@@ -381,9 +384,10 @@ class OpenAiCodec {
     return out;
   }
 
-  /// Assistant turns whose tool-call arguments never parsed, plus the tool
-  /// results that answer them. Replaying either makes the server reject
-  /// the whole request.
+  /// Assistant turns whose tool calls cannot be replayed — arguments that
+  /// never parsed, or a call left unanswered (the app was stopped or died
+  /// between the call and its result) — plus the tool results that answer
+  /// them. The server rejects a request holding either.
   Set<int> _indicesWithBrokenToolCalls(List<Message> history) {
     final skip = <int>{};
     for (var i = 0; i < history.length; i++) {
@@ -391,14 +395,24 @@ class OpenAiCodec {
       if (msg.role != MessageRole.assistant) continue;
       final toolCalls = msg.content.whereType<ToolCallContentBlock>();
       if (toolCalls.isEmpty) continue;
-      if (toolCalls.every((tc) => hasParseableToolCallArgs(tc.arguments))) {
-        continue;
-      }
-      skip.add(i);
+      // The run of tool messages that answers this turn.
+      final answered = <String>{};
       var j = i + 1;
       while (j < history.length && history[j].role == MessageRole.tool) {
-        skip.add(j);
+        answered.addAll(
+          history[j].content.whereType<ToolResultContentBlock>().map(
+            (r) => r.toolCallId,
+          ),
+        );
         j++;
+      }
+      final usable = toolCalls.every(
+        (tc) =>
+            hasParseableToolCallArgs(tc.arguments) && answered.contains(tc.id),
+      );
+      if (usable) continue;
+      for (var k = i; k < j; k++) {
+        skip.add(k);
       }
     }
     return skip;

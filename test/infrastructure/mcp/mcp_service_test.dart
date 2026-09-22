@@ -52,6 +52,27 @@ void main() {
       final result = contentFromMcp(const mcp.TextContent(text: 'hello'));
       expect(result, isA<McpTextContent>());
       expect((result as McpTextContent).text, 'hello');
+      expect(result.raw, {'type': 'text', 'text': 'hello'});
+    });
+
+    test('a tool result keeps everything the server sent', () {
+      final result = toolResultFromMcp(
+        mcp.CallToolResult.fromJson({
+          'content': [
+            {'type': 'text', 'text': '{"width":1920}'},
+          ],
+          'structuredContent': {'width': 1920},
+          '_meta': {'took': 12},
+          'vendorField': 'kept',
+        }),
+      );
+      expect((result.content.single as McpTextContent).text, '{"width":1920}');
+      expect(result.isError, isFalse);
+      expect(result.extra, {
+        'structuredContent': {'width': 1920},
+        '_meta': {'took': 12},
+        'vendorField': 'kept',
+      });
     });
 
     test('converts ImageContent', () {

@@ -13,8 +13,10 @@ import 'package:specterchat/domain/models/conversation.dart';
 import 'package:specterchat/domain/models/conversation_settings.dart';
 import 'package:specterchat/domain/models/mcp_server_state.dart';
 import 'package:specterchat/domain/models/message.dart';
+import 'package:specterchat/domain/models/message_stats.dart';
 import 'package:specterchat/domain/models/model_info.dart';
 import 'package:specterchat/domain/models/photo_metadata.dart';
+import 'package:specterchat/domain/models/request_context.dart';
 import 'package:specterchat/domain/models/request_profile.dart';
 import 'package:specterchat/domain/repositories/i_attachment_repository.dart';
 import 'package:specterchat/domain/repositories/i_conversation_repository.dart';
@@ -23,6 +25,7 @@ import 'package:specterchat/domain/repositories/i_model_catalog_store.dart';
 import 'package:specterchat/domain/repositories/i_settings_store.dart';
 import 'package:specterchat/domain/services/cancellation_token.dart';
 import 'package:specterchat/domain/services/i_annotation_renderer.dart';
+import 'package:specterchat/domain/services/i_file_saver.dart';
 import 'package:specterchat/domain/services/i_image_io.dart';
 import 'package:specterchat/domain/services/i_image_normalizer.dart';
 import 'package:specterchat/domain/services/i_llm_service.dart';
@@ -91,8 +94,31 @@ class InMemoryConversationRepository implements IConversationRepository {
   @override
   Future<void> deleteConversation(String id) async {
     rows.remove(id);
+    requestContexts.remove(id);
     _emit();
   }
+
+  /// Request contexts by conversation, then by id.
+  final Map<String, Map<String, RequestContext>> requestContexts = {};
+
+  @override
+  Future<String> saveRequestContext(
+    String conversationId,
+    RequestContext context,
+  ) async {
+    final stored = requestContexts[conversationId] ??= {};
+    for (final MapEntry(:key, :value) in stored.entries) {
+      if (value == context) return key;
+    }
+    final id = 'ctx-${stored.length + 1}';
+    stored[id] = context;
+    return id;
+  }
+
+  @override
+  Future<Map<String, RequestContext>> getRequestContexts(
+    String conversationId,
+  ) async => {...?requestContexts[conversationId]};
 }
 
 /// In-memory [IMessageRepository]. Reactive like the Drift one: every
@@ -379,6 +405,26 @@ Future<void> storePhotoMetadata(
 Uint8List fakePngBytes([int tag = 0]) =>
     Uint8List.fromList([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, tag]);
 
+/// [IFileSaver] that "saves" into [saved] without a dialog, or cancels
+/// when [cancel] is set.
+class FakeFileSaver implements IFileSaver {
+  bool cancel = false;
+  final List<({String name, Uint8List bytes})> saved = [];
+
+  @override
+  Future<bool> save({
+    required String suggestedName,
+    required String typeLabel,
+    required String extension,
+    required String mimeType,
+    required Future<Uint8List> Function() contents,
+  }) async {
+    if (cancel) return false;
+    saved.add((name: suggestedName, bytes: await contents()));
+    return true;
+  }
+}
+
 /// Scripted [ILlmService]: each call to [streamChatCompletion] plays the
 /// next script in [scripts]. A script is a list of events, or a function
 /// building the stream (to model cancellation mid-stream).
@@ -388,6 +434,12 @@ class FakeLlmService implements ILlmService {
   final List<List<McpToolInfo>> receivedTools = [];
   final List<RequestProfile> receivedProfiles = [];
   int calls = 0;
+
+  @override
+  String model = 'fake-model';
+
+  @override
+  String endpoint = 'http://fake.local/v1';
 
   FakeLlmService(this.scripts);
 
@@ -496,15 +548,17 @@ McpToolInfo tool(String name) =>
     McpToolInfo(name: name, description: name, inputSchema: const {});
 
 /// A message fixture with sensible defaults; only what the test cares
-/// about needs to be passed.
+/// about needs to be passed. Its token count and duration default to
+/// those of its [stats], as the chat pipeline writes them.
 Message testMessage(
   MessageRole role,
   List<ContentBlock> content, {
   String id = 'm',
   String conversationId = 'c',
   bool isStreaming = false,
-  int completionTokens = 0,
-  int durationMs = 0,
+  int? completionTokens,
+  int? durationMs,
+  MessageStats? stats,
   DateTime? createdAt,
 }) => Message(
   id: id,
@@ -513,8 +567,38 @@ Message testMessage(
   content: content,
   createdAt: createdAt ?? DateTime(2024),
   isStreaming: isStreaming,
-  completionTokens: completionTokens,
+  completionTokens:
+      completionTokens ??
+      (stats is GenerationStats ? stats.completionTokens : null) ??
+      0,
+  durationMs: durationMs ?? stats?.durationMs ?? 0,
+  stats: stats,
+);
+
+/// A measured assistant turn: 25184 prompt tokens, first token after
+/// 1.7 s, answer from 9 s, 354 tokens in 15.7 s. Only what the test cares
+/// about needs to be passed.
+GenerationStats testGenerationStats({
+  String model = 'qwen3.8:27b-mlx',
+  DateTime? startedAt,
+  int durationMs = 15700,
+  int? firstTokenMs = 1700,
+  int? firstAnswerMs = 9000,
+  int? promptTokens = 25184,
+  int? completionTokens = 354,
+  GenerationOutcome outcome = GenerationOutcome.completed,
+}) => GenerationStats(
+  model: model,
+  endpoint: 'http://localhost:11434/v1',
+  generation: const GenerationSettings(temperature: 0.6, topK: 20),
+  startedAt: startedAt ?? DateTime.utc(2026, 9, 22, 10),
   durationMs: durationMs,
+  firstTokenMs: firstTokenMs,
+  firstAnswerMs: firstAnswerMs,
+  promptTokens: promptTokens,
+  completionTokens: completionTokens,
+  outcome: outcome,
+  server: const {'finish_reason': 'tool_calls'},
 );
 
 ChatSessionDeps depsWith({

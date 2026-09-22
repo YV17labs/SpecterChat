@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:specterchat/domain/chat_session_state.dart';
 import 'package:specterchat/domain/models/message.dart';
+import 'package:specterchat/domain/models/message_stats.dart';
 import 'package:specterchat/domain/services/llm_hook.dart';
 import 'package:specterchat/presentation/ui/widgets/content_blocks.dart';
 import 'package:specterchat/presentation/ui/widgets/message_bubble.dart';
@@ -181,5 +182,45 @@ void main() {
     await tester.pump();
     expect(find.byType(StreamingIndicator), findsOneWidget);
     expect(find.byType(GenerationProgressBar), findsNothing);
+  });
+
+  group('stats line', () {
+    final stats = testGenerationStats();
+
+    Message reply(GenerationStats stats) => testMessage(MessageRole.assistant, [
+      const ContentBlock.text(text: 'ok'),
+    ], stats: stats);
+
+    testWidgets('speed is measured from the first token; details on hover', (
+      tester,
+    ) async {
+      await pumpApp(tester, MessageBubble(message: reply(stats)));
+      await tester.pumpAndSettle();
+
+      // 354 tokens over 14.0s, not over the 15.7s the prompt included.
+      expect(find.text('354 tokens  ·  15.7s  ·  25.3 tok/s'), findsOneWidget);
+      final tooltip = tester.widget<Tooltip>(find.byType(Tooltip).last);
+      expect(
+        tooltip.message,
+        'qwen3.8:27b-mlx · http://localhost:11434/v1\n'
+        'Prompt: 25184 tokens · first token after 1.7s\n'
+        'Reasoning: 7.3s\n'
+        'Output: 354 tokens · in 14.0s · 25.3 tok/s\n'
+        'Finish: tool_calls',
+      );
+    });
+
+    testWidgets('a stopped reply without usage still shows its time', (
+      tester,
+    ) async {
+      final stopped = stats.copyWith(
+        completionTokens: null,
+        outcome: GenerationOutcome.cancelled,
+        durationMs: 3200,
+      );
+      await pumpApp(tester, MessageBubble(message: reply(stopped)));
+      await tester.pumpAndSettle();
+      expect(find.text('3.2s  ·  stopped'), findsOneWidget);
+    });
   });
 }

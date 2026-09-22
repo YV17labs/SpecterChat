@@ -1,11 +1,13 @@
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
 import 'package:drift/drift.dart';
 import 'package:logging/logging.dart';
 
 import '../../core/id_gen.dart';
 import '../../domain/models/conversation.dart' as model;
 import '../../domain/models/conversation_settings.dart';
+import '../../domain/models/request_context.dart';
 import '../../domain/repositories/i_conversation_repository.dart';
 import 'database.dart';
 
@@ -103,6 +105,43 @@ class ConversationRepository implements IConversationRepository {
       )..where((t) => t.conversationId.equals(id))).go();
       await (_db.delete(_db.conversations)..where((t) => t.id.equals(id))).go();
     });
+  }
+
+  @override
+  Future<String> saveRequestContext(
+    String conversationId,
+    RequestContext context,
+  ) async {
+    final content = jsonEncode(context);
+    final id = sha256.convert(utf8.encode(content)).toString();
+    await _db
+        .into(_db.requestContexts)
+        .insert(
+          RequestContextsCompanion.insert(
+            id: id,
+            conversationId: conversationId,
+            content: content,
+            createdAt: _now(),
+          ),
+          // The same context stored again is the same row.
+          mode: InsertMode.insertOrIgnore,
+        );
+    return id;
+  }
+
+  @override
+  Future<Map<String, RequestContext>> getRequestContexts(
+    String conversationId,
+  ) async {
+    final rows = await (_db.select(
+      _db.requestContexts,
+    )..where((t) => t.conversationId.equals(conversationId))).get();
+    return {
+      for (final row in rows)
+        row.id: RequestContext.fromJson(
+          jsonDecode(row.content) as Map<String, dynamic>,
+        ),
+    };
   }
 
   Future<void> _update(String id, ConversationsCompanion entry) async {

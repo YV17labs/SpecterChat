@@ -5,15 +5,20 @@ import 'package:logging/logging.dart';
 
 import '../../core/id_gen.dart';
 import '../../domain/chat_session_state.dart';
+import '../../domain/models/app_settings.dart' show McpToolInfo;
 import '../../domain/models/conversation.dart';
 import '../../domain/models/message.dart';
+import '../../domain/models/message_stats.dart';
 import '../../domain/models/photo_metadata.dart';
+import '../../domain/models/request_context.dart';
+import '../../domain/models/request_profile.dart';
 import '../../domain/services/cancellation_token.dart';
 import '../../domain/services/i_llm_service.dart';
 import '../images/stored_photo_metadata.dart';
 import '../mcp/active_mcp_server.dart';
 import 'chat_logic.dart';
 import 'chat_session_deps.dart';
+import 'generation_recorder.dart';
 import 'message_writes.dart';
 import 'stream_accumulator.dart';
 import 'streaming_persister.dart';
@@ -31,7 +36,8 @@ final _log = Logger('ChatSession');
 ///           ├─> persists the user message
 ///           ├─> streams the assistant response; a [StreamingPersister]
 ///           │   upserts a placeholder row every ~120ms so the UI (which
-///           │   watches the messages table) sees content grow live
+///           │   watches the messages table) sees content grow live, and
+///           │   a [GenerationRecorder] measures it for the row's stats
 ///           ├─> runs any tool calls, then recurses into the LLM again
 ///           └─> finalises the placeholder row (flips is_streaming = 0)
 ///
@@ -73,7 +79,6 @@ class ChatSession {
   Future<void>? _inFlight;
   final StreamAccumulator _accumulator = StreamAccumulator();
   StreamingPersister? _persister;
-  Stopwatch _stopwatch = Stopwatch();
 
   // Image bytes accumulated across the tool-loop iterations of a single
   // send. Cleared when the send finalises so bytes don't outlive the
@@ -227,16 +232,23 @@ class ChatSession {
   }) async {
     _accumulator.reset();
     final messageId = generateId();
+    final tools = enabledToolsOf(deps.activeServers);
+    final recorder = GenerationRecorder(
+      model: deps.llm.model,
+      endpoint: deps.llm.endpoint,
+      profile: deps.profile,
+      requestContextId: await _storeRequestContext(deps, tools),
+      retry: hallucinationRetry,
+    );
     final persister = _persister = StreamingPersister(
       messageId: messageId,
       conversationId: conversationId,
       accumulator: _accumulator,
+      recorder: recorder,
       messages: deps.messages,
       logic: _logic,
       interval: _persistenceInterval,
     );
-    _stopwatch = Stopwatch()..start();
-    var completionTokens = 0;
     // The photo metadata an image of this turn inherits, copied once for
     // the turn: bound to the placeholder, it lives and dies with it (the
     // source's message may go, a discarded placeholder takes it along).
@@ -255,12 +267,13 @@ class ChatSession {
       systemPrompt: deps.mergedSystemPrompt,
       profile: deps.profile,
       imageBytes: _imageBytes,
-      tools: enabledToolsOf(deps.activeServers),
+      tools: tools,
       cancellationToken: _cancellation,
     );
 
     await for (final event in events) {
       lastActivity = DateTime.now();
+      recorder.record(event);
       switch (event) {
         case ContentDelta(:final text):
           _accumulator.addContent(text);
@@ -298,53 +311,46 @@ class ChatSession {
           // throttle tick — it is the whole point of the turn.
           await persister.flush(force: true);
         case StreamUsage(:final promptTokens, completionTokens: final ct):
-          completionTokens = ct;
           state.value = SessionStreaming(
             streamingMessageId: messageId,
             promptTokens: promptTokens,
             completionTokens: ct,
             progress: state.value.progress,
           );
+        case ServerReport():
+          break;
         case StreamDone():
           await _handleStreamDone(
             deps: deps,
-            completionTokens: completionTokens,
             hallucinationRetry: hallucinationRetry,
           );
           return;
         case StreamCancelled():
-          await _cleanupAfterInterruption();
+          await _cleanupAfterInterruption(GenerationOutcome.cancelled);
           return;
         case StreamError(:final message):
-          await _cleanupAfterInterruption();
+          await _cleanupAfterInterruption(
+            GenerationOutcome.failed,
+            error: message,
+          );
           state.value = state.value.toError(message);
           return;
       }
     }
 
     // Stream ended without a terminal event (rare) — treat as completion.
-    await _handleStreamDone(
-      deps: deps,
-      completionTokens: completionTokens,
-      hallucinationRetry: hallucinationRetry,
-    );
+    await _handleStreamDone(deps: deps, hallucinationRetry: hallucinationRetry);
   }
 
   Future<void> _handleStreamDone({
     required ChatSessionDeps deps,
-    required int completionTokens,
     required int hallucinationRetry,
   }) async {
     final persister = _persister!;
-    _stopwatch.stop();
-
     final analysis = _logic.analyzeCompletion(_accumulator, hook: deps.hook);
 
     if (analysis.keepMessage) {
-      await persister.commit(
-        completionTokens: completionTokens,
-        durationMs: _stopwatch.elapsedMilliseconds,
-      );
+      await persister.commit();
     } else {
       await persister.discard();
     }
@@ -377,6 +383,24 @@ class ChatSession {
     }
 
     await _autoTitleIfNeeded(deps, _accumulator.content.toString());
+  }
+
+  /// The id of what this request carries besides its messages — the system
+  /// prompt as sent and the tool definitions. Stored under its content's
+  /// fingerprint, so a turn that carries the same one references the same
+  /// row. `null` for an image model, sent neither.
+  Future<String?> _storeRequestContext(
+    ChatSessionDeps deps,
+    List<McpToolInfo> tools,
+  ) {
+    if (deps.profile is ImageRequestProfile) return Future.value();
+    return deps.conversations.saveRequestContext(
+      conversationId,
+      RequestContext(
+        systemPrompt: deps.mergedSystemPrompt,
+        tools: [for (final t in tools) t.copyWith(icons: const [])],
+      ),
+    );
   }
 
   /// Write a streamed image's bytes to the attachments table (bound to the
@@ -459,14 +483,17 @@ class ChatSession {
   }
 
   /// After a cancel or a transport error: keep the partial text if there is
-  /// any, otherwise drop the empty placeholder. Tool calls cut mid-stream
-  /// are removed first so the row never carries unparseable arguments.
-  Future<void> _cleanupAfterInterruption() async {
+  /// any, with how the turn ended, otherwise drop the empty placeholder.
+  /// Tool calls cut mid-stream are removed first so the row never carries
+  /// unparseable arguments.
+  Future<void> _cleanupAfterInterruption(
+    GenerationOutcome outcome, {
+    String? error,
+  }) async {
     final persister = _persister!;
-    _stopwatch.stop();
     _accumulator.dropIncompleteToolCalls();
     if (_accumulator.isSendable) {
-      await persister.commitPartial();
+      await persister.commitPartial(outcome, error: error);
     } else {
       await persister.discard();
     }

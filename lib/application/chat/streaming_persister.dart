@@ -3,8 +3,10 @@ import 'dart:async';
 import 'package:logging/logging.dart';
 
 import '../../domain/models/message.dart';
+import '../../domain/models/message_stats.dart';
 import '../../domain/repositories/i_message_repository.dart';
 import 'chat_logic.dart';
+import 'generation_recorder.dart';
 import 'stream_accumulator.dart';
 
 final _log = Logger('StreamingPersister');
@@ -14,10 +16,12 @@ final _log = Logger('StreamingPersister');
 /// Created per turn, together with the placeholder row it manages:
 ///
 ///   1. [flush] upserts the placeholder with whatever the accumulator
-///      holds — called on a periodic timer while the stream runs, and
-///      immediately when something the user should see right away lands
-///      (the first fragment of a tool call).
-///   2. [commit] writes the final content and flips `is_streaming` off.
+///      holds, and the recorder's measures so far — called on a periodic
+///      timer while the stream runs, and immediately when something the
+///      user should see right away lands (the first fragment of a tool
+///      call).
+///   2. [commit] writes the final content with the turn's final stats and
+///      flips `is_streaming` off.
 ///   3. [discard] deletes the row when the turn produced nothing.
 ///
 /// The session never touches timers or the repository for partial
@@ -27,10 +31,12 @@ class StreamingPersister {
     required this.messageId,
     required this.conversationId,
     required StreamAccumulator accumulator,
+    required GenerationRecorder recorder,
     required IMessageRepository messages,
     required ChatLogic logic,
     required Duration interval,
   }) : _accumulator = accumulator,
+       _recorder = recorder,
        _messages = messages,
        _logic = logic,
        _interval = interval;
@@ -38,6 +44,7 @@ class StreamingPersister {
   final String messageId;
   final String conversationId;
   final StreamAccumulator _accumulator;
+  final GenerationRecorder _recorder;
   final IMessageRepository _messages;
   final ChatLogic _logic;
   final Duration _interval;
@@ -66,26 +73,20 @@ class StreamingPersister {
     }
   }
 
-  /// Write the finished turn (same id, `is_streaming = 0`, token and
-  /// duration info) on top of the placeholder.
-  Future<void> commit({
-    required int completionTokens,
-    required int durationMs,
-  }) {
+  /// Write the finished turn (same id, `is_streaming = 0`, its final
+  /// stats) on top of the placeholder.
+  Future<void> commit() {
     stop();
-    return _finalize(
-      _snapshot(
-        isStreaming: false,
-        completionTokens: completionTokens,
-        durationMs: durationMs,
-      ),
-    );
+    _recorder.finish(GenerationOutcome.completed);
+    return _finalize(_snapshot(isStreaming: false));
   }
 
-  /// Keep whatever partial content exists and mark the row finished.
-  /// Used after a cancel so the user still sees what arrived.
-  Future<void> commitPartial() async {
+  /// Keep whatever partial content exists and mark the row finished, with
+  /// how the turn ended ([outcome], [error]). Used after a cancel or an
+  /// error so the user still sees what arrived.
+  Future<void> commitPartial(GenerationOutcome outcome, {String? error}) async {
     stop();
+    _recorder.finish(outcome, error: error);
     try {
       await _finalize(_snapshot(isStreaming: false));
     } catch (e, st) {
@@ -102,21 +103,19 @@ class StreamingPersister {
     });
   }
 
-  Message _snapshot({
-    required bool isStreaming,
-    int completionTokens = 0,
-    int durationMs = 0,
-  }) => _logic.buildAssistantMessage(
-    id: messageId,
-    conversationId: conversationId,
-    content: _accumulator.content.toString(),
-    thinking: _accumulator.thinking.toString(),
-    toolCalls: _accumulator.toolCalls,
-    images: _accumulator.images,
-    isStreaming: isStreaming,
-    completionTokens: completionTokens,
-    durationMs: durationMs,
-  );
+  /// The row as it stands, with the recorder's stats: unfinished while
+  /// streaming, final once [commit] or [commitPartial] closed them.
+  Message _snapshot({required bool isStreaming}) =>
+      _logic.buildAssistantMessage(
+        id: messageId,
+        conversationId: conversationId,
+        content: _accumulator.content.toString(),
+        thinking: _accumulator.thinking.toString(),
+        toolCalls: _accumulator.toolCalls,
+        images: _accumulator.images,
+        isStreaming: isStreaming,
+        stats: _recorder.snapshot(),
+      );
 
   /// Remove the placeholder row.
   Future<void> discard() async {

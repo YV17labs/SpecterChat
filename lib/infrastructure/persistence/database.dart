@@ -31,8 +31,30 @@ class Messages extends Table {
   BoolColumn get isStreaming => boolean().withDefault(const Constant(false))();
   DateTimeColumn get updatedAt => dateTime().nullable()();
 
+  /// JSON-encoded `MessageStats`: what was measured while the message was
+  /// produced, and with what. Written once, never recomputed.
+  TextColumn get stats => text().nullable()();
+
   @override
   Set<Column> get primaryKey => {id};
+}
+
+/// What text requests carried besides their messages (`RequestContext`,
+/// JSON): the system prompt as sent and the tool definitions. One row per
+/// change within a conversation, referenced by
+/// `GenerationStats.requestContextId`; deleted with the conversation.
+/// The id is the fingerprint of the content, so storing the same context
+/// twice stores it once — per conversation, so a delete cascades cleanly.
+@DataClassName('RequestContextRow')
+class RequestContexts extends Table {
+  TextColumn get id => text()();
+  TextColumn get conversationId =>
+      text().references(Conversations, #id, onDelete: KeyAction.cascade)();
+  TextColumn get content => text()();
+  DateTimeColumn get createdAt => dateTime()();
+
+  @override
+  Set<Column> get primaryKey => {conversationId, id};
 }
 
 /// Binary attachments (images, in practice) referenced by id from a
@@ -54,7 +76,7 @@ class Attachments extends Table {
 
 /// Schema, migrations and connection — nothing else. Queries live in the
 /// repositories so each table has exactly one owner.
-@DriftDatabase(tables: [Conversations, Messages, Attachments])
+@DriftDatabase(tables: [Conversations, Messages, Attachments, RequestContexts])
 class AppDatabase extends _$AppDatabase {
   /// Production constructor — uses file-backed SQLite.
   AppDatabase() : super(_openConnection());
@@ -76,10 +98,14 @@ class AppDatabase extends _$AppDatabase {
   // v7 — Attachments table; image bytes leave message content JSON.
   // v8 — Ids standardised to UUIDv7 so `ORDER BY id` is the strict total
   //      order. All row reads/writes rely on this invariant.
+  // v9 — `stats` JSON column on messages (model, settings, timings, server
+  //      report of each turn). First step that keeps the user's data.
+  // v10 — `request_contexts` table: system prompt as sent and tool
+  //       definitions, once per change in a conversation.
   // ---------------------------------------------------------------
 
   @override
-  int get schemaVersion => 8;
+  int get schemaVersion => 10;
 
   static const _createConversationIdIndex =
       'CREATE INDEX IF NOT EXISTS idx_messages_conversation_id '
@@ -97,16 +123,27 @@ class AppDatabase extends _$AppDatabase {
       await customStatement(_createAttachmentMessageIdIndex);
     },
     onUpgrade: (Migrator m, int from, int to) async {
-      // Fresh slate at v8: drop any pre-UUIDv7 data so `ORDER BY id`
-      // is trustworthy. `deleteTable` empties and drops in one step.
-      await m.deleteTable(messages.actualTableName);
-      await m.deleteTable(conversations.actualTableName);
-      if (from >= 7) {
-        await m.deleteTable(attachments.actualTableName);
+      if (from < 8) {
+        // Fresh slate below v8: drop any pre-UUIDv7 data so `ORDER BY id`
+        // is trustworthy. `deleteTable` empties and drops in one step;
+        // `createAll` then builds the current schema directly.
+        await m.deleteTable(messages.actualTableName);
+        await m.deleteTable(conversations.actualTableName);
+        if (from >= 7) {
+          await m.deleteTable(attachments.actualTableName);
+        }
+        await m.createAll();
+        await customStatement(_createConversationIdIndex);
+        await customStatement(_createAttachmentMessageIdIndex);
+        return;
       }
-      await m.createAll();
-      await customStatement(_createConversationIdIndex);
-      await customStatement(_createAttachmentMessageIdIndex);
+      // From v8 on, every step keeps the data.
+      if (from < 9) {
+        await m.addColumn(messages, messages.stats);
+      }
+      if (from < 10) {
+        await m.createTable(requestContexts);
+      }
     },
     beforeOpen: (details) async {
       await customStatement('PRAGMA foreign_keys = ON');

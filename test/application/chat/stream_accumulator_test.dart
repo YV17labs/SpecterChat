@@ -5,16 +5,13 @@ import 'package:specterchat/domain/services/i_llm_service.dart';
 
 void main() {
   group('ToolCallAccumulator', () {
-    test('isValid only when both id and name are set', () {
-      expect((ToolCallAccumulator()..name = 'x').isValid, isFalse);
+    test('a call is valid once named; without an id it gets one', () {
       expect((ToolCallAccumulator()..id = 'x').isValid, isFalse);
-      expect(
-        (ToolCallAccumulator()
-              ..id = 'x'
-              ..name = 'y')
-            .isValid,
-        isTrue,
-      );
+      final named = ToolCallAccumulator()..name = 'x';
+      expect(named.isValid, isTrue);
+      expect(named.callId, startsWith('call_'));
+      expect(named.callId, named.callId, reason: 'made up once');
+      expect((named..id = 'srv-1').callId, 'srv-1');
     });
 
     test('accumulates argument fragments', () {
@@ -53,7 +50,7 @@ void main() {
       );
       expect(first, isTrue);
       expect(second, isFalse);
-      expect(acc.toolCalls[0]!.arguments, '{}');
+      expect(acc.toolCalls.single.arguments, '{}');
       expect(acc.hasValidToolCalls, isTrue);
     });
 
@@ -66,7 +63,7 @@ void main() {
           argumentsDelta: '',
         ),
       );
-      expect(acc.toolCalls[0]!.name, 'search');
+      expect(acc.toolCalls.single.name, 'search');
     });
 
     test('isSendable with text or a valid tool call, not with thinking', () {
@@ -120,7 +117,33 @@ void main() {
         ),
       );
       acc.dropIncompleteToolCalls();
-      expect(acc.toolCalls.keys, [0]);
+      expect(acc.toolCalls.map((tc) => tc.name), ['ok']);
+    });
+
+    test('another id on the same index is another call', () {
+      // Servers that number every call 0 must not have them merged.
+      acc
+        ..addToolCallDelta(
+          const ToolCallDelta(
+            index: 0,
+            id: 'a',
+            name: 'app_list',
+            argumentsDelta: '{}',
+          ),
+        )
+        ..addToolCallDelta(
+          const ToolCallDelta(
+            index: 0,
+            id: 'b',
+            name: 'app_running',
+            argumentsDelta: '{',
+          ),
+        )
+        ..addToolCallDelta(const ToolCallDelta(index: 0, argumentsDelta: '}'));
+      expect(
+        [for (final tc in acc.toolCalls) (tc.id, tc.name, tc.arguments)],
+        [('a', 'app_list', '{}'), ('b', 'app_running', '{}')],
+      );
     });
 
     test('reset clears everything', () {

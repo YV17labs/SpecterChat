@@ -6,20 +6,36 @@ class McpToolResult {
   final List<McpContent> content;
   final bool isError;
 
-  McpToolResult({required this.content, this.isError = false});
+  /// Everything else the server returned, verbatim: `structuredContent`,
+  /// `_meta`, fields this client does not know.
+  final Map<String, dynamic> extra;
+
+  McpToolResult({
+    required this.content,
+    this.isError = false,
+    this.extra = const {},
+  });
 }
 
 sealed class McpContent {}
 
 class McpTextContent extends McpContent {
   final String text;
-  McpTextContent(this.text);
+
+  /// The item as the transport read it (annotations, `_meta`…), when
+  /// known — keys the MCP client itself does not model are already gone.
+  final Map<String, dynamic>? raw;
+  McpTextContent(this.text, {this.raw});
 }
 
 class McpImageContent extends McpContent {
   final String base64Data;
   final String mimeType;
-  McpImageContent({required this.base64Data, required this.mimeType});
+
+  /// The item as the transport read it (annotations, `_meta`…), when
+  /// known, without its bytes.
+  final Map<String, dynamic>? raw;
+  McpImageContent({required this.base64Data, required this.mimeType, this.raw});
 }
 
 /// Preserves any content type not yet handled (audio, video, resource…).

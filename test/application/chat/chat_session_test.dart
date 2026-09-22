@@ -5,9 +5,11 @@ import 'package:specterchat/application/chat/chat_session.dart';
 import 'package:specterchat/application/llm_hooks/llm_hook_registry.dart';
 import 'package:specterchat/application/llm_hooks/qwen3.dart';
 import 'package:specterchat/domain/chat_session_state.dart';
+import 'package:specterchat/domain/models/app_settings.dart';
 import 'package:specterchat/domain/models/conversation.dart';
 import 'package:specterchat/domain/models/image_settings.dart';
 import 'package:specterchat/domain/models/message.dart';
+import 'package:specterchat/domain/models/message_stats.dart';
 import 'package:specterchat/domain/models/photo_metadata.dart';
 import 'package:specterchat/domain/models/request_profile.dart';
 import 'package:specterchat/domain/services/i_llm_service.dart';
@@ -351,6 +353,7 @@ void main() {
         ]);
         expect(rows[1].plainText, startsWith(correctionPrefix));
         expect(rows.last.plainText, 'Proper answer');
+        expect((rows.last.stats! as GenerationStats).retry, 1);
         expect(llm.calls, 2);
       },
     );
@@ -397,6 +400,187 @@ void main() {
       expect(s.state.value, isA<SessionIdle>());
     },
   );
+
+  group('stats', () {
+    GenerationStats statsOf(Message m) => m.stats! as GenerationStats;
+
+    test(
+      'a reply records what it was generated with and measured at',
+      () async {
+        const generation = GenerationSettings(temperature: 0.6, topK: 20);
+        final llm = FakeLlmService.events([
+          [
+            const ServerReport({'id': 'chatcmpl-1', 'model': 'served-name'}),
+            const ThinkingDelta('hmm'),
+            const ContentDelta('Hello'),
+            const StreamUsage(promptTokens: 40, completionTokens: 2),
+            const ServerReport({
+              'finish_reason': 'stop',
+              'usage': {'prompt_tokens': 40, 'completion_tokens': 2},
+            }),
+            const StreamDone(),
+          ],
+        ]);
+        await session(
+          llm,
+          profile: const TextRequestProfile(generation: generation),
+        ).sendMessage('hi');
+
+        final reply = persisted().last;
+        final stats = statsOf(reply);
+        expect(stats.model, 'fake-model');
+        expect(stats.endpoint, 'http://fake.local/v1');
+        expect(stats.generation, generation);
+        expect(stats.image, isNull);
+        // The system prompt as sent and the tool definitions, stored once.
+        final context =
+            conversations.requestContexts[_conv]![stats.requestContextId]!;
+        expect(context.tools.map((t) => t.name), ['search']);
+        expect(stats.retry, 0);
+        expect(stats.outcome, GenerationOutcome.completed);
+        expect(stats.promptTokens, 40);
+        expect(stats.completionTokens, 2);
+        expect(stats.fragments, 2);
+        expect(stats.firstTokenMs, isNotNull);
+        expect(stats.firstAnswerMs, greaterThanOrEqualTo(stats.firstTokenMs!));
+        expect(stats.server, {
+          'id': 'chatcmpl-1',
+          'model': 'served-name',
+          'finish_reason': 'stop',
+          'usage': {'prompt_tokens': 40, 'completion_tokens': 2},
+        });
+        expect(stats.startedAt.isUtc, isTrue);
+        // The row's own columns agree with the stats.
+        expect(reply.completionTokens, 2);
+        expect(reply.durationMs, stats.durationMs);
+      },
+    );
+
+    test('the request context is stored once per change', () async {
+      final llm = FakeLlmService.events([
+        [const ContentDelta('one'), const StreamDone()],
+        [const ContentDelta('two'), const StreamDone()],
+        [const ContentDelta('three'), const StreamDone()],
+      ]);
+      var prompt = 'Be brief';
+      final s = ChatSession(
+        conversationId: _conv,
+        persistenceThrottle: const Duration(milliseconds: 5),
+        resolveDeps: () => depsWith(
+          llm: llm,
+          messages: messages,
+          conversations: conversations,
+          activeServers: [
+            activeServer(
+              tools: [tool('search')],
+              instructions: 'Use search first.',
+            ),
+          ],
+          systemPrompt: prompt,
+        ),
+      );
+      await s.sendMessage('a');
+      await s.sendMessage('b');
+      prompt = 'Be thorough';
+      await s.sendMessage('c');
+
+      final ids = [
+        for (final m in persisted())
+          if (m.role == MessageRole.assistant) statsOf(m).requestContextId,
+      ];
+      expect(ids[0], ids[1]);
+      expect(ids[2], isNot(ids[1]));
+      final contexts = conversations.requestContexts[_conv]!;
+      expect(contexts, hasLength(2));
+      expect(
+        contexts[ids[0]]!.systemPrompt,
+        'Be brief\n\n## MCP Server: srv\nUse search first.',
+      );
+      expect(contexts[ids[2]]!.systemPrompt, startsWith('Be thorough'));
+    });
+
+    test('an image model is sent no context and records none', () async {
+      await session(
+        FakeLlmService.events([
+          [const ContentDelta('ok'), const StreamDone()],
+        ]),
+        profile: const ImageRequestProfile(),
+      ).sendMessage('draw');
+      expect(statsOf(persisted().last).requestContextId, isNull);
+      expect(conversations.requestContexts[_conv], isNull);
+    });
+
+    test('the placeholder carries the turn so far, unfinished', () async {
+      final gate = Completer<void>();
+      final llm = FakeLlmService([
+        (_) async* {
+          yield const ContentDelta('par');
+          await gate.future;
+          yield const StreamDone();
+        },
+      ]);
+      final send = session(llm).sendMessage('hi');
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+
+      final placeholder = persisted().last;
+      expect(placeholder.isStreaming, isTrue);
+      expect(statsOf(placeholder).outcome, GenerationOutcome.interrupted);
+      expect(statsOf(placeholder).model, 'fake-model');
+
+      gate.complete();
+      await send;
+      expect(statsOf(persisted().last).outcome, GenerationOutcome.completed);
+    });
+
+    test('a stopped reply says so, its duration kept', () async {
+      final stalled = Completer<void>();
+      final llm = FakeLlmService([
+        (token) async* {
+          yield const ContentDelta('Let me');
+          await stalled.future;
+          yield const StreamCancelled();
+        },
+      ]);
+      final s = session(llm);
+      final send = s.sendMessage('hi');
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      final stop = s.stop();
+      stalled.complete();
+      await stop;
+      await send;
+
+      final reply = persisted().last;
+      expect(statsOf(reply).outcome, GenerationOutcome.cancelled);
+      expect(reply.durationMs, statsOf(reply).durationMs);
+      expect(reply.durationMs, greaterThan(0));
+    });
+
+    test('a failed reply keeps the error', () async {
+      await session(
+        FakeLlmService.events([
+          [const ContentDelta('partial'), const StreamError('boom')],
+        ]),
+      ).sendMessage('hi');
+      final stats = statsOf(persisted().last);
+      expect(stats.outcome, GenerationOutcome.failed);
+      expect(stats.error, 'boom');
+    });
+
+    test('a tool result records its call time and server', () async {
+      await session(
+        FakeLlmService.events([
+          [..._toolCall, const StreamDone()],
+          [const ContentDelta('Answer'), const StreamDone()],
+        ]),
+      ).sendMessage('search dart');
+
+      final result = persisted().singleWhere((m) => m.role == MessageRole.tool);
+      final stats = result.stats! as ToolCallStats;
+      expect(stats.serverId, 'srv');
+      expect(stats.serverName, 'srv');
+      expect(result.durationMs, stats.durationMs);
+    });
+  });
 
   group('images', () {
     final pngBytes = fakePngBytes();

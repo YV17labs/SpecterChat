@@ -1,8 +1,10 @@
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:specterchat/domain/models/app_settings.dart';
 import 'package:specterchat/domain/models/conversation.dart';
 import 'package:specterchat/domain/models/conversation_settings.dart';
 import 'package:specterchat/domain/models/message.dart';
+import 'package:specterchat/domain/models/request_context.dart';
 import 'package:specterchat/infrastructure/persistence/conversation_repository.dart';
 import 'package:specterchat/infrastructure/persistence/database.dart'
     hide Conversation, Message;
@@ -107,5 +109,37 @@ void main() {
     await repo.deleteConversation(id);
     expect(await all(), isEmpty);
     expect(await messages.getMessages(id), isEmpty);
+  });
+
+  test('request contexts round-trip and go with their conversation', () async {
+    final id = await repo.createConversation();
+    final other = await repo.createConversation();
+    const context = RequestContext(
+      systemPrompt: 'Be brief\n\n## MCP Server: dg\nUse the keyboard.',
+      tools: [
+        McpToolInfo(
+          name: 'key_press',
+          description: 'Press keys',
+          inputSchema: {
+            'type': 'object',
+            'properties': {
+              'keys': {'type': 'string'},
+            },
+          },
+        ),
+      ],
+    );
+    final contextId = await repo.saveRequestContext(id, context);
+    // Stored again, it is the same row; in another conversation, its own.
+    expect(await repo.saveRequestContext(id, context), contextId);
+    expect(await repo.saveRequestContext(other, context), contextId);
+    await repo.saveRequestContext(other, const RequestContext());
+
+    expect(await repo.getRequestContexts(id), {contextId: context});
+    expect(await repo.getRequestContexts(other), hasLength(2));
+
+    await repo.deleteConversation(id);
+    expect(await repo.getRequestContexts(id), isEmpty);
+    expect(await repo.getRequestContexts(other), hasLength(2));
   });
 }

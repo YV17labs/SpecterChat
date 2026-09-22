@@ -234,6 +234,23 @@ void main() {
         expect(messages.last['content'], 'ok');
       },
     );
+
+    test('a tool call left unanswered takes its turn out too', () {
+      // The app was stopped, or died, between the call and its result.
+      final history = [
+        testMessage(MessageRole.user, [const ContentBlock.text(text: 'q')]),
+        testMessage(MessageRole.assistant, [
+          const ContentBlock.toolCall(id: 'a', name: 'search', arguments: '{}'),
+          const ContentBlock.toolCall(id: 'b', name: 'shot', arguments: '{}'),
+        ]),
+        testMessage(MessageRole.tool, [
+          const ContentBlock.toolResult(toolCallId: 'a', toolName: 'search'),
+        ]),
+        testMessage(MessageRole.user, [const ContentBlock.text(text: 'again')]),
+      ];
+      final messages = codec.buildMessages(history: history, systemPrompt: '');
+      expect(messages.map((m) => m['role']), ['user', 'user']);
+    });
   });
 
   group('decodeDataUrl', () {

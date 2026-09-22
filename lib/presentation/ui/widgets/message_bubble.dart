@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../core/theme.dart';
 import '../../../domain/chat_session_state.dart' show GenerationProgress;
 import '../../../domain/models/message.dart';
+import '../../../domain/models/message_stats.dart';
 import '../../../domain/services/llm_hook.dart' show correctionPrefix;
 import 'content_blocks.dart';
 import 'message_hover_actions.dart';
@@ -150,10 +151,9 @@ class MessageBubble extends StatelessWidget {
             const StreamingIndicator(),
         if (!message.isStreaming &&
             message.role == MessageRole.assistant &&
-            message.completionTokens > 0)
+            (message.completionTokens > 0 || message.stats != null))
           _MessageStats(
-            tokens: message.completionTokens,
-            durationMs: message.durationMs,
+            message: message,
             cumulativeDurationMs: cumulativeDurationMs,
           ),
       ],
@@ -299,32 +299,44 @@ class _Avatar extends StatelessWidget {
   }
 }
 
+/// "354 tokens · 15.7s · 22.6 tok/s · Σ 20.7s" under a reply; hovering
+/// shows what the turn recorded (model, prompt, first token, reasoning).
+///
+/// The speed is the decoding speed when the turn was measured (tokens over
+/// the time after the first one), tokens over the whole duration for
+/// replies written before that.
 class _MessageStats extends StatelessWidget {
-  final int tokens;
-  final int durationMs;
+  final Message message;
   final int? cumulativeDurationMs;
 
-  const _MessageStats({
-    required this.tokens,
-    required this.durationMs,
-    this.cumulativeDurationMs,
-  });
+  const _MessageStats({required this.message, this.cumulativeDurationMs});
+
+  static String _seconds(int ms) => '${(ms / 1000).toStringAsFixed(1)}s';
 
   @override
   Widget build(BuildContext context) {
-    final parts = <String>['$tokens tokens'];
-    if (durationMs > 0) {
-      final seconds = durationMs / 1000;
-      parts
-        ..add('${seconds.toStringAsFixed(1)}s')
-        ..add('${(tokens / seconds).toStringAsFixed(1)} tok/s');
-    }
+    final stats = message.generationStats;
+    final tokens = message.completionTokens;
+    final durationMs = message.durationMs;
+    final parts = <String>[
+      if (tokens > 0) '$tokens tokens',
+      if (durationMs > 0) _seconds(durationMs),
+    ];
+    final rate = message.tokensPerSecond;
+    if (rate != null) parts.add('${rate.toStringAsFixed(1)} tok/s');
     final cumulative = cumulativeDurationMs;
     if (cumulative != null && cumulative > durationMs && cumulative > 0) {
-      parts.add('Σ ${(cumulative / 1000).toStringAsFixed(1)}s');
+      parts.add('Σ ${_seconds(cumulative)}');
     }
+    final ending = switch (stats?.outcome) {
+      GenerationOutcome.cancelled => 'stopped',
+      GenerationOutcome.failed => 'failed',
+      GenerationOutcome.interrupted => 'interrupted',
+      GenerationOutcome.completed || null => null,
+    };
+    if (ending != null) parts.add(ending);
 
-    return Padding(
+    final line = Padding(
       padding: const EdgeInsets.only(top: 6),
       child: Text(
         parts.join('  ·  '),
@@ -335,6 +347,38 @@ class _MessageStats extends StatelessWidget {
         ),
       ),
     );
+    if (stats == null) return line;
+    return Tooltip(
+      message: _details(stats),
+      waitDuration: const Duration(milliseconds: 400),
+      child: line,
+    );
+  }
+
+  static String _details(GenerationStats s) {
+    final first = s.firstTokenMs;
+    final reasoning = s.reasoningMs;
+    final generation = s.generationMs;
+    final rate = s.outputTokensPerSecond;
+    return [
+      [s.model, if (s.endpoint.isNotEmpty) s.endpoint].join(' · '),
+      [
+        if (s.promptTokens case final p?) 'Prompt: $p tokens',
+        if (first != null) 'first token after ${_seconds(first)}',
+      ].join(' · '),
+      if (reasoning != null) 'Reasoning: ${_seconds(reasoning)}',
+      [
+        switch (s.completionTokens) {
+          final tokens? => 'Output: $tokens tokens',
+          null => 'Output: ${s.fragments} fragments',
+        },
+        if (generation != null) 'in ${_seconds(generation)}',
+        if (rate != null) '${rate.toStringAsFixed(1)} tok/s',
+      ].join(' · '),
+      if (s.finishReason case final reason?) 'Finish: $reason',
+      if (s.retry > 0) 'Automatic retry #${s.retry}',
+      if (s.error case final error?) 'Error: $error',
+    ].where((l) => l.isNotEmpty).join('\n');
   }
 }
 

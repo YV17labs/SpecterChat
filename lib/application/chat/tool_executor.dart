@@ -4,6 +4,7 @@ import 'package:logging/logging.dart';
 
 import '../../core/id_gen.dart';
 import '../../domain/models/message.dart';
+import '../../domain/models/message_stats.dart';
 import '../../domain/repositories/i_attachment_repository.dart';
 import '../../domain/repositories/i_message_repository.dart';
 import '../../domain/services/i_mcp_service.dart';
@@ -18,47 +19,79 @@ final _log = Logger('ToolExecutor');
 /// Stateless — pass all dependencies per invocation. Images in tool
 /// results are extracted into the attachments table as blobs; the
 /// resulting [ImageContentBlock] references them by id only so
-/// `Message.content` JSON stays small.
+/// `Message.content` JSON stays small. Each result records how long its
+/// call took and which server ran it ([ToolCallStats]).
 class ToolExecutor {
   static const _prettyJson = JsonEncoder.withIndent('  ');
 
   const ToolExecutor();
 
-  /// Execute all valid tool calls in parallel and persist results.
+  /// Execute all valid tool calls in parallel. Each result is written as
+  /// soon as its call returns, so a crash while a slower one still runs
+  /// keeps those already done; ids are minted when the calls start, so the
+  /// results still read in call order.
   Future<void> executeAndSave({
     required String conversationId,
-    required Map<int, ToolCallAccumulator> toolCalls,
+    required List<ToolCallAccumulator> toolCalls,
     required IMcpService mcpService,
     required List<ActiveMcpServer> servers,
     required IMessageRepository messages,
     required IAttachmentRepository attachments,
   }) async {
-    final validCalls = toolCalls.values.where((tc) => tc.isValid).toList();
-
-    final prepared = await Future.wait(
-      validCalls.map(
-        (call) => _prepareSingle(
-          call: call,
-          conversationId: conversationId,
-          mcpService: mcpService,
-          servers: servers,
-        ),
-      ),
+    await Future.wait(
+      toolCalls
+          .where((tc) => tc.isValid)
+          .map(
+            (call) async => saveMessagesWithAttachments(messages, attachments, [
+              await _prepareSingle(
+                call: call,
+                conversationId: conversationId,
+                mcpService: mcpService,
+                servers: servers,
+              ),
+            ]),
+          ),
     );
-
-    await saveMessagesWithAttachments(messages, attachments, prepared);
   }
 
+  /// [_call], timed: the result records when the call started, how long
+  /// it took and which server ran it.
   Future<MessageWrite> _prepareSingle({
     required ToolCallAccumulator call,
     required String conversationId,
     required IMcpService mcpService,
     required List<ActiveMcpServer> servers,
   }) async {
+    final serverId = findServerForTool(servers, call.name!);
+    final startedAt = DateTime.now().toUtc();
+    final stopwatch = Stopwatch()..start();
+    final write = await _call(
+      call: call,
+      serverId: serverId,
+      conversationId: conversationId,
+      mcpService: mcpService,
+    );
+    final stats = ToolCallStats(
+      startedAt: startedAt,
+      durationMs: stopwatch.elapsedMilliseconds,
+      serverId: serverId,
+      serverName: servers.where((s) => s.id == serverId).firstOrNull?.name,
+    );
+    return MessageWrite(
+      write.message.copyWith(durationMs: stats.durationMs, stats: stats),
+      attachments: write.attachments,
+    );
+  }
+
+  Future<MessageWrite> _call({
+    required ToolCallAccumulator call,
+    required String? serverId,
+    required String conversationId,
+    required IMcpService mcpService,
+  }) async {
     final messageId = generateId();
     final toolName = call.name!;
-    final toolCallId = call.id!;
-    final serverId = findServerForTool(servers, toolName);
+    final toolCallId = call.callId;
 
     if (serverId == null) {
       return MessageWrite(
@@ -112,10 +145,10 @@ class ToolExecutor {
 
     for (final content in result.content) {
       switch (content) {
-        case McpTextContent(:final text):
+        case McpTextContent(:final text, :final raw):
           resultContent.add(ContentBlock.text(text: text));
-          rawItems.add({'type': 'text', 'text': text});
-        case McpImageContent(:final base64Data, :final mimeType):
+          rawItems.add(raw ?? {'type': 'text', 'text': text});
+        case McpImageContent(:final base64Data, :final mimeType, :final raw):
           final attachmentId = generateId();
           final bytes = base64Decode(base64Data);
           pending.add(
@@ -132,10 +165,12 @@ class ToolExecutor {
               byteSize: bytes.length,
             ),
           );
+          // The bytes are the attachment's; the item keeps the rest.
           rawItems.add({
+            ...?raw,
             'type': 'image',
             'mimeType': mimeType,
-            'data': '<blob ~${(bytes.length / 1024).round()}KB>',
+            'data': 'attachment:$attachmentId',
           });
         case McpUnsupportedContent(:final type, :final raw):
           resultContent.add(
@@ -145,9 +180,11 @@ class ToolExecutor {
       }
     }
 
+    // The server's whole answer, verbatim but for image bytes.
     final rawResponse = _prettyJson.convert({
       'isError': result.isError,
       'content': rawItems,
+      ...result.extra,
     });
 
     return MessageWrite(

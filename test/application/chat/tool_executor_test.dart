@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:specterchat/application/chat/stream_accumulator.dart';
 import 'package:specterchat/application/chat/tool_executor.dart';
 import 'package:specterchat/domain/models/message.dart';
+import 'package:specterchat/domain/models/message_stats.dart';
 import 'package:specterchat/domain/services/i_mcp_service.dart';
 
 import '../../support/fakes.dart';
@@ -27,7 +28,7 @@ void main() {
   });
 
   Future<List<Message>> run(
-    Map<int, ToolCallAccumulator> calls,
+    List<ToolCallAccumulator> calls,
     FakeMcpService mcp,
   ) async {
     await executor.executeAndSave(
@@ -48,7 +49,7 @@ void main() {
       'search': (args) =>
           McpToolResult(content: [McpTextContent('hit: ${args['q']}')]),
     });
-    final saved = await run({0: _call('tc-1', 'search', '{"q":"dart"}')}, mcp);
+    final saved = await run([_call('tc-1', 'search', '{"q":"dart"}')], mcp);
 
     expect(saved, hasLength(1));
     final block = saved.single.content.single as ToolResultContentBlock;
@@ -75,7 +76,7 @@ void main() {
         ],
       ),
     });
-    final saved = await run({0: _call('tc-1', 'shot', '')}, mcp);
+    final saved = await run([_call('tc-1', 'shot', '')], mcp);
 
     final block = saved.single.content.single as ToolResultContentBlock;
     final image = block.resultContent.single as ImageContentBlock;
@@ -89,12 +90,12 @@ void main() {
     final mcp = FakeMcpService({
       'search': (_) => McpToolResult(content: const []),
     });
-    await run({0: _call('tc-1', 'search', '  ')}, mcp);
+    await run([_call('tc-1', 'search', '  ')], mcp);
     expect(mcp.calls.single.$3, isEmpty);
   });
 
   test('unknown tool yields an error result instead of throwing', () async {
-    final saved = await run({0: _call('tc-1', 'nope', '{}')}, FakeMcpService());
+    final saved = await run([_call('tc-1', 'nope', '{}')], FakeMcpService());
     final block = saved.single.content.single as ToolResultContentBlock;
     expect(
       (block.resultContent.single as TextContentBlock).text,
@@ -105,7 +106,7 @@ void main() {
 
   test('a throwing tool yields an error result', () async {
     final mcp = FakeMcpService({'search': (_) => throw McpException('down')});
-    final saved = await run({0: _call('tc-1', 'search', '{}')}, mcp);
+    final saved = await run([_call('tc-1', 'search', '{}')], mcp);
     final block = saved.single.content.single as ToolResultContentBlock;
     expect(
       (block.resultContent.single as TextContentBlock).text,
@@ -121,7 +122,7 @@ void main() {
         ],
       ),
     });
-    final saved = await run({0: _call('tc-1', 'search', '{}')}, mcp);
+    final saved = await run([_call('tc-1', 'search', '{}')], mcp);
     final block = saved.single.content.single as ToolResultContentBlock;
     expect(
       (block.resultContent.single as TextContentBlock).text,
@@ -136,11 +137,11 @@ void main() {
         'search': (args) =>
             McpToolResult(content: [McpTextContent('${args['n']}')]),
       });
-      final saved = await run({
-        0: _call('a', 'search', '{"n":1}'),
-        1: ToolCallAccumulator()..name = 'search',
-        2: _call('b', 'search', '{"n":2}'),
-      }, mcp);
+      final saved = await run([
+        _call('a', 'search', '{"n":1}'),
+        ToolCallAccumulator()..id = 'nameless',
+        _call('b', 'search', '{"n":2}'),
+      ], mcp);
       expect(
         saved.map(
           (m) => (m.content.single as ToolResultContentBlock).toolCallId,
@@ -149,4 +150,91 @@ void main() {
       );
     },
   );
+
+  test('each result records when its call started and who ran it', () async {
+    await const ToolExecutor().executeAndSave(
+      conversationId: 'c',
+      toolCalls: [
+        _call('tc-1', 'search', '{}'),
+        _call('tc-2', 'nowhere', '{}'),
+        _call('tc-3', 'shot', '{}'),
+      ],
+      mcpService: FakeMcpService({
+        'search': (_) => McpToolResult(content: [McpTextContent('ok')]),
+      }),
+      servers: [
+        activeServer(id: 'dg', tools: [tool('search'), tool('shot')]),
+      ],
+      messages: messages,
+      attachments: attachments,
+    );
+
+    final saved = messages.messagesFor('c');
+    final [found, missing, failed] = [
+      for (final m in saved) m.stats! as ToolCallStats,
+    ];
+    expect((found.serverId, found.serverName), ('dg', 'dg'));
+    expect(found.startedAt.isUtc, isTrue);
+    expect((missing.serverId, missing.serverName), (null, null));
+    // A call that throws is measured too.
+    expect(failed.serverId, 'dg');
+    expect(
+      [for (final m in saved) m.durationMs],
+      [
+        for (final s in [found, missing, failed]) s.durationMs,
+      ],
+    );
+  });
+
+  test("the raw response is the server's whole answer, bytes aside", () async {
+    final mcp = FakeMcpService({
+      'shot': (_) => McpToolResult(
+        content: [
+          McpTextContent(
+            'taken',
+            raw: {
+              'type': 'text',
+              'text': 'taken',
+              'annotations': {'priority': 1},
+            },
+          ),
+          McpImageContent(
+            base64Data: base64Encode([1, 2, 3]),
+            mimeType: 'image/png',
+            raw: {
+              'type': 'image',
+              'mimeType': 'image/png',
+              '_meta': {'display': 1},
+            },
+          ),
+        ],
+        extra: {
+          'structuredContent': {'width': 1920},
+          '_meta': {'took': 12},
+        },
+      ),
+    });
+    final saved = await run([_call('tc-1', 'shot', '{}')], mcp);
+
+    final block = saved.single.content.single as ToolResultContentBlock;
+    final image = block.resultContent[1] as ImageContentBlock;
+    expect(jsonDecode(block.rawResponse), {
+      'isError': false,
+      'content': [
+        {
+          'type': 'text',
+          'text': 'taken',
+          'annotations': {'priority': 1},
+        },
+        {
+          'type': 'image',
+          'mimeType': 'image/png',
+          '_meta': {'display': 1},
+          'data': 'attachment:${image.attachmentId}',
+        },
+      ],
+      'structuredContent': {'width': 1920},
+      '_meta': {'took': 12},
+    });
+  });
 }

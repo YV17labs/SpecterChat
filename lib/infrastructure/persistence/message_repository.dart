@@ -1,11 +1,15 @@
 import 'dart:convert';
 
 import 'package:drift/drift.dart';
+import 'package:logging/logging.dart';
 
 import '../../domain/models/message.dart' as model;
+import '../../domain/models/message_stats.dart';
 import '../../domain/models/photo_metadata.dart' show AiOrigin;
 import '../../domain/repositories/i_message_repository.dart';
 import 'database.dart';
+
+final _log = Logger('MessageRepository');
 
 /// Drift-backed implementation of [IMessageRepository].
 ///
@@ -113,6 +117,7 @@ class MessageRepository implements IMessageRepository {
       durationMs: Value(message.durationMs),
       createdAt: message.createdAt,
       isStreaming: Value(message.isStreaming),
+      stats: Value(message.stats == null ? null : jsonEncode(message.stats)),
     );
   }
 
@@ -135,7 +140,20 @@ class MessageRepository implements IMessageRepository {
       completionTokens: row.completionTokens,
       durationMs: row.durationMs,
       isStreaming: row.isStreaming,
+      stats: _decodeStats(row.stats),
     );
+  }
+
+  /// A row's stats, `null` when it has none — or ones this build cannot
+  /// read (a later version's), which must not hide the message itself.
+  static MessageStats? _decodeStats(String? json) {
+    if (json == null) return null;
+    try {
+      return MessageStats.fromJson(jsonDecode(json) as Map<String, dynamic>);
+    } on Object catch (e) {
+      _log.fine('Unreadable message stats: $e');
+      return null;
+    }
   }
 
   /// Images a model made before their block recorded it have no

@@ -59,6 +59,12 @@ class LlmService implements ILlmService {
   }
 
   @override
+  String get model => _apiSettings.selectedModel;
+
+  @override
+  String get endpoint => _dio.options.baseUrl;
+
+  @override
   Future<List<ModelInfo>> fetchModels() async {
     try {
       final response = await _dio.get<Map<String, dynamic>>('/models');
@@ -122,9 +128,7 @@ class LlmService implements ILlmService {
       ),
     );
 
-    // Inline <think>/</think> splitter for servers that put reasoning in
-    // `content` (llama.cpp default) instead of a dedicated field.
-    final splitter = SseThinkSplitter();
+    final chunks = _ChunkReader();
 
     try {
       final response = await _dio.post<ResponseBody>(
@@ -165,19 +169,19 @@ class LlmService implements ILlmService {
           if (!trimmed.startsWith('data: ')) continue;
           final data = trimmed.substring(6);
           if (data == '[DONE]') {
-            for (final event in splitter.flush()) {
+            for (final event in chunks.splitter.flush()) {
               yield event;
             }
             yield const StreamDone();
             return;
           }
-          await for (final event in _parseChunk(data, splitter)) {
+          await for (final event in _parseChunk(data, chunks)) {
             yield event;
           }
         }
       }
 
-      for (final event in splitter.flush()) {
+      for (final event in chunks.splitter.flush()) {
         yield event;
       }
       yield const StreamDone();
@@ -207,10 +211,7 @@ class LlmService implements ILlmService {
   ///
   /// Async because an `images` entry may carry an http(s) URL that has to
   /// be fetched before it can be handed over as bytes.
-  Stream<StreamEvent> _parseChunk(
-    String data,
-    SseThinkSplitter splitter,
-  ) async* {
+  Stream<StreamEvent> _parseChunk(String data, _ChunkReader chunks) async* {
     final Map<String, dynamic> json;
     try {
       json = jsonDecode(data) as Map<String, dynamic>;
@@ -232,6 +233,8 @@ class LlmService implements ILlmService {
       yield StreamError('API error: $message');
       return;
     }
+
+    if (chunks.report(json) case final fields?) yield ServerReport(fields);
 
     // Usage arrives on the final chunk (with `stream_options.include_usage`).
     final usage = json['usage'];
@@ -261,7 +264,7 @@ class LlmService implements ILlmService {
 
     final content = delta['content'] as String?;
     if (content != null && content.isNotEmpty) {
-      yield* Stream.fromIterable(splitter.push(content));
+      yield* Stream.fromIterable(chunks.splitter.push(content));
     }
 
     // Extension: long-running server step (image generation).
@@ -382,5 +385,42 @@ class LlmService implements ILlmService {
       return value.map(_sanitizeForLog).toList();
     }
     return value;
+  }
+}
+
+/// Per-stream state of the SSE parser.
+class _ChunkReader {
+  /// Inline `<think>`/`</think>` splitter for servers that put reasoning in
+  /// `content` (llama.cpp default) instead of a dedicated field.
+  final splitter = SseThinkSplitter();
+
+  bool _envelopeReported = false;
+
+  /// Keys every chunk repeats: reported once, from the first chunk.
+  static const _envelope = {
+    'id',
+    'object',
+    'created',
+    'model',
+    'system_fingerprint',
+  };
+
+  /// What [chunk] says about the turn besides its deltas, verbatim, or
+  /// `null` when it says nothing new — most chunks. `null` values are
+  /// skipped: OpenAI sends `"usage": null` on every chunk but the last.
+  Map<String, dynamic>? report(Map<String, dynamic> chunk) {
+    final first = !_envelopeReported;
+    _envelopeReported = true;
+    final fields = <String, dynamic>{
+      for (final MapEntry(:key, :value) in chunk.entries)
+        if (key != 'choices' &&
+            value != null &&
+            (first || !_envelope.contains(key)))
+          key: value,
+    };
+    if (chunk['choices'] case [{'finish_reason': final Object reason}, ...]) {
+      fields['finish_reason'] = reason;
+    }
+    return fields.isEmpty ? null : fields;
   }
 }

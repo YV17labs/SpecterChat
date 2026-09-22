@@ -1,6 +1,8 @@
+import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:specterchat/domain/models/message.dart';
+import 'package:specterchat/domain/models/message_stats.dart';
 import 'package:specterchat/domain/models/photo_metadata.dart';
 import 'package:specterchat/infrastructure/persistence/conversation_repository.dart';
 import 'package:specterchat/infrastructure/persistence/database.dart'
@@ -214,5 +216,66 @@ void main() {
     expect(at(reply, 1).aiOrigin, AiOrigin.editedPhoto);
     expect(at(reply, 2).aiOrigin, AiOrigin.generated);
     expect(at(user, 0).aiOrigin, isNull);
+  });
+
+  group('stats', () {
+    final generation = testGenerationStats().copyWith(
+      requestContextId: 'ctx-1',
+      fragments: 360,
+      server: const {
+        'finish_reason': 'tool_calls',
+        'usage': {'prompt_tokens': 25184, 'completion_tokens': 354},
+      },
+    );
+
+    test('round-trip on a saved and on a streamed message', () async {
+      await repo.saveMessage(
+        msg('m-1', role: MessageRole.assistant).copyWith(stats: generation),
+      );
+      final tool = ToolCallStats(
+        startedAt: DateTime.utc(2026, 9, 22, 10, 0, 16),
+        durationMs: 420,
+        serverId: 'dg',
+        serverName: 'DG - User',
+      );
+      await repo.upsertStreamingMessage(
+        msg('m-2', role: MessageRole.tool).copyWith(stats: tool),
+      );
+
+      final [reply, result] = await repo.getMessages(convId);
+      expect(reply.stats, generation);
+      expect(result.stats, tool);
+    });
+
+    test('unreadable stats leave the message readable', () async {
+      await db
+          .into(db.messages)
+          .insert(
+            MessagesCompanion.insert(
+              id: 'm-1',
+              conversationId: convId,
+              role: 'assistant',
+              content: '[{"runtimeType":"text","text":"kept"}]',
+              createdAt: now,
+              stats: const Value('{"runtimeType":"fromTheFuture"}'),
+            ),
+          );
+      final [message] = await repo.getMessages(convId);
+      expect(message.plainText, 'kept');
+      expect(message.stats, isNull);
+    });
+
+    test('a streaming row is read with its latest stats', () async {
+      final streaming = msg('m-1', role: MessageRole.assistant);
+      final early = generation.copyWith(
+        durationMs: 300,
+        outcome: GenerationOutcome.interrupted,
+      );
+      await repo.upsertStreamingMessage(streaming.copyWith(stats: early));
+      expect((await repo.getMessages(convId)).single.stats, early);
+
+      await repo.upsertStreamingMessage(streaming.copyWith(stats: generation));
+      expect((await repo.getMessages(convId)).single.stats, generation);
+    });
   });
 }

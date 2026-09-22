@@ -1,5 +1,6 @@
 import '../../core/id_gen.dart';
 import '../../domain/models/message.dart';
+import '../../domain/models/message_stats.dart';
 import '../../domain/models/photo_metadata.dart';
 import '../../domain/services/llm_hook.dart';
 import 'message_writes.dart';
@@ -40,17 +41,18 @@ class CompletionAnalysis {
 class ChatLogic {
   const ChatLogic();
 
-  /// Build an assistant [Message] from accumulated stream buffers.
+  /// Build an assistant [Message] from accumulated stream buffers, with
+  /// what was measured of the turn so far ([stats]), whose token count and
+  /// duration also fill the message's own columns.
   Message buildAssistantMessage({
     required String id,
     required String conversationId,
     required String content,
     required String thinking,
-    required Map<int, ToolCallAccumulator> toolCalls,
+    required List<ToolCallAccumulator> toolCalls,
     required bool isStreaming,
     List<ImageContentBlock> images = const [],
-    int completionTokens = 0,
-    int durationMs = 0,
+    GenerationStats? stats,
   }) {
     final blocks = <ContentBlock>[];
 
@@ -63,11 +65,11 @@ class ChatLogic {
     // Images follow the text: the text buffer is a single block, so a
     // caption streamed after the image still reads above it.
     blocks.addAll(images);
-    for (final tc in toolCalls.values) {
+    for (final tc in toolCalls) {
       if (tc.isValid) {
         blocks.add(
           ContentBlock.toolCall(
-            id: tc.id!,
+            id: tc.callId,
             name: tc.name!,
             arguments: tc.arguments,
           ),
@@ -86,8 +88,9 @@ class ChatLogic {
       content: blocks,
       createdAt: DateTime.now(),
       isStreaming: isStreaming,
-      completionTokens: completionTokens,
-      durationMs: durationMs,
+      completionTokens: stats?.completionTokens ?? 0,
+      durationMs: stats?.durationMs ?? 0,
+      stats: stats,
     );
   }
 

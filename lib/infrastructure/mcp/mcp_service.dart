@@ -173,10 +173,7 @@ class McpClient {
       final result = await _client.callTool(
         mcp.CallToolRequest(name: name, arguments: arguments),
       );
-      return McpToolResult(
-        content: result.content.map(contentFromMcp).toList(),
-        isError: result.isError,
-      );
+      return toolResultFromMcp(result);
     } on mcp.McpError catch (e) {
       throw McpException(e.message, code: e.code);
     } on transport.SessionNotFoundError catch (e) {
@@ -244,12 +241,39 @@ McpIcon iconFromMcp(mcp.McpIcon icon) {
 }
 
 /// Converts an mcp_dart [mcp.Content] block to SpecterChat's [McpContent].
+/// A tool's result with everything the server sent: what the chat uses
+/// (content, isError) and the rest verbatim (`structuredContent`, `_meta`,
+/// unknown fields).
+///
+/// Read field by field rather than through `toJson()`, which serialises
+/// the content items — and an image item's base64 is re-validated
+/// (a regex plus a full decode) over megabytes only to be thrown away.
+McpToolResult toolResultFromMcp(mcp.CallToolResult result) => McpToolResult(
+  content: result.content.map(contentFromMcp).toList(),
+  isError: result.isError,
+  extra: {
+    if (result.hasStructuredContent)
+      'structuredContent': result.structuredContent,
+    '_meta': ?result.meta,
+    ...?result.extra,
+  },
+);
+
 McpContent contentFromMcp(mcp.Content content) {
   return switch (content) {
-    mcp.TextContent() => McpTextContent(content.text),
-    mcp.ImageContent() => McpImageContent(
+    mcp.TextContent() => McpTextContent(content.text, raw: content.toJson()),
+    // Not `toJson()`: it re-validates megabytes of base64 (a regex plus a
+    // full decode) that only the attachment keeps.
+    mcp.ImageContent(:final annotations, :final meta) => McpImageContent(
       base64Data: content.data,
       mimeType: content.mimeType,
+      raw: {
+        'type': content.type,
+        'mimeType': content.mimeType,
+        'theme': ?content.theme,
+        'annotations': ?annotations?.toJson(),
+        '_meta': ?meta,
+      },
     ),
     _ => McpUnsupportedContent(type: content.type, raw: content.toJson()),
   };

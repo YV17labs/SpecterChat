@@ -70,6 +70,16 @@ class StreamUsage extends StreamEvent {
   });
 }
 
+/// What the server says about the turn besides its output, verbatim and
+/// as it comes: the `usage` object with its details, `finish_reason`, the
+/// model it ran, server-side `timings` (llama.cpp)… Only recorded, with
+/// the message (`GenerationStats.server`); a later report overwrites the
+/// keys it repeats.
+class ServerReport extends StreamEvent {
+  final Map<String, dynamic> fields;
+  const ServerReport(this.fields);
+}
+
 /// The model finished its turn normally.
 class StreamDone extends StreamEvent {
   const StreamDone();
@@ -92,6 +102,11 @@ class StreamError extends StreamEvent {
 /// implementation detail of the service, not something the chat pipeline
 /// knows about.
 abstract interface class ILlmService {
+  /// The model requests name and the server they go to: what a turn
+  /// records it was generated with.
+  String get model;
+  String get endpoint;
+
   /// The server's model list, sorted by id. Image-generation servers
   /// describe themselves in [ModelInfo.image].
   Future<List<ModelInfo>> fetchModels();

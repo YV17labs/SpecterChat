@@ -627,4 +627,88 @@ void main() {
       expect(body.containsKey('generation'), isFalse);
     });
   });
+
+  group('ServerReport', () {
+    test(
+      'envelope once, then only what is new: usage, timings, finish_reason',
+      () async {
+        String chunk(Map<String, Object?> json) => 'data: ${jsonEncode(json)}';
+        const envelope = {
+          'id': 'chatcmpl-1',
+          'object': 'chat.completion.chunk',
+          'created': 1,
+          'model': 'qwen3',
+        };
+        service = createService([
+          chunk({
+            ...envelope,
+            'system_fingerprint': 'fp',
+            'usage': null,
+            'choices': [
+              {
+                'delta': {'content': 'a'},
+                'finish_reason': null,
+              },
+            ],
+          }),
+          chunk({
+            ...envelope,
+            'usage': null,
+            'choices': [
+              {
+                'delta': {'content': 'b'},
+                'finish_reason': null,
+              },
+            ],
+          }),
+          chunk({
+            ...envelope,
+            'created': 2,
+            'choices': [
+              {'delta': <String, Object?>{}, 'finish_reason': 'length'},
+            ],
+          }),
+          chunk({
+            'id': 'chatcmpl-1',
+            'choices': <Object?>[],
+            'usage': {
+              'prompt_tokens': 9,
+              'completion_tokens': 2,
+              'prompt_tokens_details': {'cached_tokens': 4},
+            },
+            'timings': {'predicted_per_second': 31.5},
+          }),
+          'data: [DONE]',
+          '',
+        ]);
+
+        final events = await service
+            .streamChatCompletion(history: _history, systemPrompt: '')
+            .toList();
+
+        final reports = events.whereType<ServerReport>().toList();
+        expect(reports.map((r) => r.fields), [
+          {
+            'id': 'chatcmpl-1',
+            'object': 'chat.completion.chunk',
+            'created': 1,
+            'model': 'qwen3',
+            'system_fingerprint': 'fp',
+          },
+          {'finish_reason': 'length'},
+          {
+            'usage': {
+              'prompt_tokens': 9,
+              'completion_tokens': 2,
+              'prompt_tokens_details': {'cached_tokens': 4},
+            },
+            'timings': {'predicted_per_second': 31.5},
+          },
+        ]);
+        final usage = events.whereType<StreamUsage>().single;
+        expect((usage.promptTokens, usage.completionTokens), (9, 2));
+        expect(events.whereType<ContentDelta>().map((e) => e.text), ['a', 'b']);
+      },
+    );
+  });
 }

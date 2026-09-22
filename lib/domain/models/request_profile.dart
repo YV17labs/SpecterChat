@@ -10,15 +10,23 @@ import 'image_settings.dart';
 /// mid-stream only affects the next turn.
 sealed class RequestProfile {
   const RequestProfile();
+
+  /// Sampling parameters, `null` for an image model.
+  GenerationSettings? get generation => null;
+
+  /// Image options, `null` for a text model.
+  ImageSettings? get image => null;
 }
 
 class TextRequestProfile extends RequestProfile {
+  @override
   final GenerationSettings generation;
 
   const TextRequestProfile({this.generation = const GenerationSettings()});
 }
 
 class ImageRequestProfile extends RequestProfile {
+  @override
   final ImageSettings image;
 
   const ImageRequestProfile({this.image = const ImageSettings()});

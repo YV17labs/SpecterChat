@@ -5,6 +5,7 @@ import 'package:pasteboard/pasteboard.dart';
 
 import '../../core/image_mime.dart';
 import '../../domain/services/i_image_io.dart';
+import '../files/desktop_file_saver.dart';
 
 /// [IImageIo] on the desktop plugins: `file_selector` for the dialogs,
 /// `pasteboard` for image clipboard access. macOS needs the
@@ -33,20 +34,15 @@ class DesktopImageIo implements IImageIo {
   Future<bool> saveImage({
     required String mimeType,
     required Future<Uint8List> Function() contents,
-  }) async {
+  }) {
     final ext = extensionForMime(mimeType);
-    final location = await getSaveLocation(
+    return const DesktopFileSaver().save(
       suggestedName: 'image.$ext',
-      acceptedTypeGroups: [
-        XTypeGroup(label: 'Image', extensions: [ext]),
-      ],
-    );
-    if (location == null) return false;
-    await XFile.fromData(
-      await contents(),
+      typeLabel: 'Image',
+      extension: ext,
       mimeType: mimeType,
-    ).saveTo(location.path);
-    return true;
+      contents: contents,
+    );
   }
 
   @override

@@ -16,7 +16,9 @@ changes.
 
 Everything a reply cost is now recorded with it and kept, and a conversation
 can be exported as one JSON file — meant to be handed to a person, or to a
-model, that knows nothing of SpecterChat.
+model, that knows nothing of SpecterChat. And what a request carries when
+the conversation no longer fits the context window is now decided here,
+rather than left to the server.
 
 > **The database schema changed (v10).** Updating from any released version
 > (0.5.0 to 0.7.3, all on schema v8) keeps your conversations, and the
@@ -67,6 +69,13 @@ model, that knows nothing of SpecterChat.
   shows the detail: model, server, tokens sent and received, time to the
   first token, reasoning time, output speed, the reason the model stopped,
   and what the whole exchange has cost so far.
+- **"Images Kept"**, in the right panel, says how many of the conversation's
+  images travel with each request — globally or for one conversation. It is
+  off by default: every image you sent goes out on every turn. Keeping only
+  the last few makes sense for screenshots, which lose their value as the
+  conversation moves on, and not for a conversation about three
+  photographs, so you are the one who says which you are having. What is
+  left out of a request is never removed from the conversation.
 
 ### Changed
 
@@ -90,6 +99,24 @@ model, that knows nothing of SpecterChat.
   rewriting what it does not understand, the app sets it aside
   (`specter.db.v11.newer`) and starts a new one, so going back to an older
   version can no longer destroy a history.
+- **The conversation is trimmed to fit the context window before it is
+  sent.** The whole conversation goes out on every turn — the protocol
+  keeps nothing between requests — and until now, what happened when it no
+  longer fitted was the server's business: a server that overflows forgets
+  on its own, says nothing about it, and can cut a tool call away from the
+  result answering it. The app now decides. A request carries the context
+  length you set, less the room reserved for the answer, less a tenth.
+  Images are left out first, one being worth a thousand tokens of the
+  conversation that would be dropped to make room for it; what still does
+  not fit costs whole exchanges, the oldest ones first. The exchange you
+  are waiting on always travels, even when it is over the window on its
+  own — sending it is the only way to find out what the server makes of
+  it — and nothing is ever cut inside an exchange, so a tool call is never
+  separated from its result.
+- **What a request left out is recorded with the reply** and written in the
+  export (`stats.droppedRuns`, `stats.droppedImages`), so a short answer
+  can be explained afterwards. The conversation itself is never rewritten:
+  a trim shapes the request, not your history.
 
 ### Fixed
 
@@ -102,6 +129,16 @@ model, that knows nothing of SpecterChat.
 - **A reply whose tool calls were not all answered is no longer sent back to
   the server**, which rejected the whole request and blocked the
   conversation.
+- **A generated image is no longer sent back on the model's own turn.** The
+  OpenAI schema accepts an image only on a message you send, so a strict
+  server refused the whole request and the conversation could not go on.
+  The image now follows the turn that produced it in a message of its own —
+  after the tool results, when that turn called tools — and "now make it
+  blue" still edits it. Image servers keep the previous shape, which their
+  protocol asks for.
+- **The images of a turn that also called tools are no longer lost.** That
+  path never looked at them, so a model that generated a picture and called
+  a tool in the same turn could not edit the picture afterwards.
 
 ## [0.7.3] - 2026-09-21
 

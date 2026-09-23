@@ -318,9 +318,15 @@ that cache so the panel is right before the first fetch.
 `requestProfileProvider` turns the selection into a `TextRequestProfile`
 or `ImageRequestProfile`, snapshotted per send in `ChatSessionDeps`.
 
-`OpenAiCodec.contentParts` emits `image_url` data-URL parts for **user and
-assistant** messages alike — a generated image is re-sent on the next turn
-so "now make it blue" edits it.
+**Images ride on `user` messages.** The OpenAI schema takes an `image_url`
+part there only; an assistant message takes `text` and `refusal` parts. A
+generated image still has to come back for "now make it blue" to edit it,
+so `buildMessages` puts it in a `user` message right after the turn that
+made it — after its tool results when that turn called tools, since
+nothing may come between a `tool_calls` message and the results answering
+it. `AssistantImagePlacement.inline` is the one exception, and only for
+the image profile: Pictor reads the image back on the assistant turn
+itself (`PROTOCOL.md`), which is how it edits what it made.
 
 **Model → user.** `LlmService._parseChunk` understands two extra fields on
 `delta`:

@@ -7,6 +7,24 @@ import '../../domain/models/model_info.dart';
 import '../../domain/models/request_profile.dart';
 import 'schema_inliner.dart';
 
+/// Where the images an assistant turn carries go on the wire.
+///
+/// The OpenAI schema takes an `image_url` content part on a `user`
+/// message only; an assistant message takes `text` and `refusal` parts.
+/// A generated image still has to come back on the next request for
+/// "now make it blue" to edit it, so it travels in a message of its own.
+enum AssistantImagePlacement {
+  /// The images follow their turn in a `user` message — after its tool
+  /// results if it called tools, since nothing may come between a
+  /// `tool_calls` message and the results that answer it.
+  followingUserMessage,
+
+  /// `image_url` parts on the assistant message itself. What the image
+  /// server asks for: it keeps nothing between requests and edits what
+  /// the client re-sends on the assistant turn (`../pictor/PROTOCOL.md`).
+  inline,
+}
+
 /// Translates domain messages and tools into the OpenAI chat/completions
 /// wire format. The only place in the app that knows what an
 /// `image_url` part or a `tool_calls` array looks like.
@@ -19,8 +37,16 @@ class OpenAiCodec {
   /// model gets its sampling parameters, the system prompt and the tools;
   /// an image server gets the `generation` options object and neither a
   /// system prompt nor tools — it ignores both, and leaving them out keeps
-  /// the request small and unambiguous. A new kind of backend is a new
+  /// the request small and unambiguous, and it reads a generated image
+  /// back on the assistant turn that made it
+  /// ([AssistantImagePlacement.inline]). A new kind of backend is a new
   /// profile and a new case here, nothing else.
+  ///
+  /// The text body is written for the local OpenAI-compatible servers this
+  /// app targets rather than for api.openai.com: `top_k`, `min_p` and
+  /// `repeat_penalty` are not in the OpenAI schema at all, and the token
+  /// cap goes out under its deprecated name `max_tokens` — the only one
+  /// every one of those servers reads.
   Map<String, dynamic> requestBody({
     required String model,
     required RequestProfile profile,
@@ -43,6 +69,8 @@ class OpenAiCodec {
           'stream_options': {'include_usage': true},
           'temperature': g.temperature,
           'top_p': g.topP,
+          // Ollama reads no other name (`openai/openai.go`) and silently
+          // generates without a limit when it is missing; see above.
           'max_tokens': g.maxTokens,
           'frequency_penalty': g.frequencyPenalty,
           'presence_penalty': g.presencePenalty,
@@ -62,6 +90,7 @@ class OpenAiCodec {
             history: history,
             systemPrompt: '',
             imageBytes: imageBytes,
+            assistantImages: AssistantImagePlacement.inline,
           ),
           'stream': true,
           if (options.isNotEmpty) 'generation': options,
@@ -82,6 +111,8 @@ class OpenAiCodec {
     required List<Message> history,
     required String systemPrompt,
     ImageBytesMap imageBytes = const {},
+    AssistantImagePlacement assistantImages =
+        AssistantImagePlacement.followingUserMessage,
   }) {
     final skip = _indicesWithBrokenToolCalls(history);
     final messages = <Map<String, dynamic>>[];
@@ -90,45 +121,60 @@ class OpenAiCodec {
       messages.add({'role': 'system', 'content': systemPrompt});
     }
 
-    // Pending image content parts collected from consecutive tool results.
-    // Flushed as a single user message once the tool-result run ends,
-    // so we never break the required tool-message sequence (the spec
-    // mandates all tool results appear consecutively after the assistant
-    // tool_calls message).
-    var pendingImageParts = <Map<String, dynamic>>[];
+    // Images that travel apart, see [AssistantImagePlacement]. They wait
+    // here and go out as one user message at the next point where a user
+    // message may be inserted — never between an assistant `tool_calls`
+    // message and the results the spec requires to follow it directly.
+    var displacedImageParts = <Map<String, dynamic>>[];
+
+    void displace(String attachmentId, String provenance) {
+      final loaded = imageBytes[attachmentId];
+      if (loaded == null) return;
+      displacedImageParts
+        ..add(imageUrlPart(loaded))
+        ..add({'type': 'text', 'text': provenance});
+    }
 
     for (var i = 0; i < history.length; i++) {
       if (skip.contains(i)) continue;
       final msg = history[i];
-      messages.add(messageToApi(msg, imageBytes));
 
-      // Collect images from tool results — the spec only allows text in
-      // tool-role content, so images must go in a separate user message.
+      // One split, so what leaves the message and what is re-emitted just
+      // below are the same list: each image goes out exactly once.
+      final split =
+          msg.role == MessageRole.assistant &&
+              assistantImages == AssistantImagePlacement.followingUserMessage
+          ? _splitImageBlocks(msg)
+          : (message: msg, displaced: const <ImageContentBlock>[]);
+
+      messages.add(messageToApi(split.message, imageBytes));
+
+      for (final image in split.displaced) {
+        displace(
+          image.attachmentId,
+          'Image generated by the assistant on the turn above.',
+        );
+      }
+
+      // A tool message holds text only, whatever the placement.
       if (msg.role == MessageRole.tool) {
-        for (final block in msg.content) {
-          if (block is! ToolResultContentBlock) continue;
-          for (final inner in block.resultContent) {
-            if (inner is! ImageContentBlock) continue;
-            final loaded = imageBytes[inner.attachmentId];
-            if (loaded == null) continue;
-            pendingImageParts
-              ..add(imageUrlPart(loaded))
-              ..add({
-                'type': 'text',
-                'text': 'Image result from tool "${block.toolName}".',
-              });
+        for (final result in msg.content.whereType<ToolResultContentBlock>()) {
+          for (final image
+              in result.resultContent.whereType<ImageContentBlock>()) {
+            displace(
+              image.attachmentId,
+              'Image result from tool "${result.toolName}".',
+            );
           }
         }
       }
 
-      // Flush pending images when the consecutive tool-result run ends
-      // (next message is not a tool, or we reached the end of history).
-      if (pendingImageParts.isNotEmpty) {
-        final nextIsNotTool =
+      if (displacedImageParts.isNotEmpty) {
+        final canInsertUserMessage =
             i + 1 >= history.length || history[i + 1].role != MessageRole.tool;
-        if (nextIsNotTool) {
-          messages.add({'role': 'user', 'content': pendingImageParts});
-          pendingImageParts = <Map<String, dynamic>>[];
+        if (canInsertUserMessage) {
+          messages.add({'role': 'user', 'content': displacedImageParts});
+          displacedImageParts = <Map<String, dynamic>>[];
         }
       }
     }
@@ -246,6 +292,8 @@ class OpenAiCodec {
   ///
   /// Unresolved attachment ids (deleted, corrupted, not-yet-loaded) are
   /// silently dropped; the surrounding text/tool structure is preserved.
+  /// Images ride on the message holding them: it is [buildMessages] that
+  /// takes an assistant turn's off it, see [AssistantImagePlacement].
   Map<String, dynamic> messageToApi(Message message, ImageBytesMap imageBytes) {
     if (message.role == MessageRole.assistant) {
       final toolCalls = message.content
@@ -293,6 +341,12 @@ class OpenAiCodec {
     }
 
     final parts = contentParts(message, imageBytes);
+    // Nothing left to say: an image-only turn whose images travel apart,
+    // or a message whose only attachment no longer resolves. An empty
+    // parts array is not a content value; the empty string is.
+    if (parts.isEmpty) {
+      return {'role': message.role.name, 'content': ''};
+    }
     if (parts.length == 1 && parts.first['type'] == 'text') {
       return {'role': message.role.name, 'content': parts.first['text']};
     }
@@ -382,6 +436,27 @@ class OpenAiCodec {
       ));
     }
     return out;
+  }
+
+  /// [message] split into what stays on it and the image blocks that
+  /// travel apart, in one pass — the two halves are defined once, so an
+  /// image cannot be dropped from both or kept in both. With nothing to
+  /// move the message itself comes back rather than a copy of it.
+  ({Message message, List<ImageContentBlock> displaced}) _splitImageBlocks(
+    Message message,
+  ) {
+    final kept = <ContentBlock>[];
+    final images = <ImageContentBlock>[];
+    for (final block in message.content) {
+      if (block is ImageContentBlock) {
+        images.add(block);
+      } else {
+        kept.add(block);
+      }
+    }
+    return images.isEmpty
+        ? (message: message, displaced: images)
+        : (message: message.copyWith(content: kept), displaced: images);
   }
 
   /// Assistant turns whose tool calls cannot be replayed — arguments that

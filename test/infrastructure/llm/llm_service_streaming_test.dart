@@ -562,6 +562,9 @@ void main() {
           .toList();
       final body = interceptor.bodies.single;
       expect(body['temperature'], 0.3);
+      // The token cap goes out as `max_tokens`: Ollama reads no other
+      // name and drops the limit entirely without it.
+      expect(body['max_tokens'], 4096);
       expect(body.containsKey('generation'), isFalse);
       expect((body['messages'] as List).first, {
         'role': 'system',

@@ -14,6 +14,8 @@ changes.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-23
+
 Everything a reply cost is now recorded with it and kept, and a conversation
 can be exported as one JSON file — meant to be handed to a person, or to a
 model, that knows nothing of SpecterChat. And what a request carries when

@@ -17,6 +17,7 @@ abstract class EffectiveSettings with _$EffectiveSettings {
     required GenerationSettings generation,
     required ImageSettings image,
     required int contextLength,
+    required int imageHistoryLimit,
     required List<String> enabledMcpServerIds,
   }) = _EffectiveSettings;
 
@@ -26,6 +27,7 @@ abstract class EffectiveSettings with _$EffectiveSettings {
     generation: global.generation,
     image: global.image,
     contextLength: global.api.contextLength,
+    imageHistoryLimit: global.api.imageHistoryLimit,
     enabledMcpServerIds: const [],
   );
 
@@ -43,6 +45,8 @@ abstract class EffectiveSettings with _$EffectiveSettings {
       generation: overrides?.generation ?? global.generation,
       image: overrides?.image ?? global.image,
       contextLength: overrides?.contextLength ?? global.api.contextLength,
+      imageHistoryLimit:
+          overrides?.imageHistoryLimit ?? global.api.imageHistoryLimit,
       enabledMcpServerIds: overrides?.enabledMcpServerIds ?? const [],
     );
   }

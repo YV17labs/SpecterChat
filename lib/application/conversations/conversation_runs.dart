@@ -5,19 +5,53 @@ import '../../domain/models/message.dart';
 /// with a user message.
 typedef ConversationRun = ({Message? user, List<Message> answers});
 
-/// [messages] (in order) split into runs. The one place that decides where
-/// a run starts — the export's totals and the Σ under a reply must agree.
-List<ConversationRun> runsOf(Iterable<Message> messages) {
-  final runs = <ConversationRun>[];
-  for (final message in messages) {
-    if (message.role == MessageRole.user) {
-      runs.add((user: message, answers: []));
-    } else if (message.role != MessageRole.system) {
-      if (runs.isEmpty) runs.add((user: null, answers: []));
-      runs.last.answers.add(message);
+/// Where each run starts in [messages] — the one place that decides it.
+///
+/// A run opens on every user message, and on the first message of a
+/// history that does not begin with one. System messages before it open
+/// nothing. [runsOf] reads this as runs; the context budget reads it as
+/// the boundaries it may cut on, since dropping anything less than a
+/// whole run can separate a tool call from the result that answers it.
+List<int> runStartsOf(List<Message> messages) {
+  final starts = <int>[];
+  for (var i = 0; i < messages.length; i++) {
+    final role = messages[i].role;
+    if (role == MessageRole.user) {
+      starts.add(i);
+    } else if (starts.isEmpty && role != MessageRole.system) {
+      starts.add(i);
     }
   }
-  return runs;
+  return starts;
+}
+
+/// [messages] (in order) split into runs, on the boundaries
+/// [runStartsOf] gives — the export's totals and the Σ under a reply
+/// must agree.
+List<ConversationRun> runsOf(Iterable<Message> messages) {
+  final list = messages is List<Message> ? messages : messages.toList();
+  final starts = runStartsOf(list);
+  return [
+    for (var k = 0; k < starts.length; k++)
+      _runIn(
+        list,
+        starts[k],
+        k + 1 < starts.length ? starts[k + 1] : list.length,
+      ),
+  ];
+}
+
+/// The run held in `[from, to)`. Its user message is the first one when
+/// the run opens on it; system messages are not answers.
+ConversationRun _runIn(List<Message> messages, int from, int to) {
+  final opensOnUser = messages[from].role == MessageRole.user;
+  return (
+    user: opensOnUser ? messages[from] : null,
+    answers: [
+      for (var i = opensOnUser ? from + 1 : from; i < to; i++)
+        if (messages[i].role != MessageRole.system) messages[i],
+    ],
+  );
 }
 
 /// What some assistant turns weighed and how long they took. Tool

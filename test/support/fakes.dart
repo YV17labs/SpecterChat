@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:specterchat/application/chat/chat_session_deps.dart';
+import 'package:specterchat/application/chat/context_budget.dart';
 import 'package:specterchat/application/chat/message_writes.dart';
 import 'package:specterchat/application/llm_hooks/llm_hook_registry.dart';
 import 'package:specterchat/application/mcp/active_mcp_server.dart';
@@ -611,6 +612,7 @@ ChatSessionDeps depsWith({
   String modelName = 'fake-model',
   String systemPrompt = '',
   RequestProfile profile = const TextRequestProfile(),
+  ContextBudget budget = const ContextBudget.unlimited(),
   LlmHookRegistry hooks = const LlmHookRegistry.none(),
 }) => ChatSessionDeps(
   llm: llm,
@@ -622,5 +624,6 @@ ChatSessionDeps depsWith({
   modelName: modelName,
   effectiveSystemPrompt: systemPrompt,
   profile: profile,
+  budget: budget,
   hooks: hooks,
 );

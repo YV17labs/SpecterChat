@@ -57,10 +57,12 @@ lib/
                          StreamAccumulator, GenerationRecorder (a turn's
                          stats), StreamingPersister, ToolExecutor,
                          message_writes (the one transactional "row + blobs"
-                         write every message with images goes through)
+                         write every message with images goes through),
+                         ContextBudget + trimHistory (what one request may
+                         carry, and what the history loses to fit)
     conversations/     — ConversationActions (create / fork / rename / delete),
-                         ConversationExporter (JSON export), runsOf (the
-                         one split of a history into runs)
+                         ConversationExporter (JSON export), runStartsOf /
+                         runsOf (the one split of a history into runs)
     mcp/               — ActiveMcpServer + findServerForTool, content → text
     llm_hooks/         — LlmHookRegistry + per-model hooks (qwen3)
     images/            — PendingImage (composer draft entry + slot maths),
@@ -136,6 +138,10 @@ Rules that keep it that way:
   maps pixels to normalised points and calls `setState`. `ComposerNotifier`
   owns the pending images; `ChatComposer` owns the text controller and
   turns refusals into snackbars.
+- **A history is cut on run boundaries, never inside one.**
+  `runStartsOf` is the one place that decides where a run starts, and
+  `trimHistory` may only drop whole ones: anything finer separates a tool
+  call from the result answering it, which the server then refuses.
 - **`ORDER BY id` is the canonical message order.** `generateId()` is a
   monotonic UUIDv7 (`core/id_gen.dart`); never mint ids any other way.
 - **Cancellation is a domain concept** (`CancellationToken`,
@@ -462,6 +468,48 @@ schema bump: JSON column and the existing `attachments` table.
   of the UI stays English.
 - Small images reach the server untouched, EXIF included: stripping
   metadata on send is not done yet.
+
+## Context budget
+
+The chat/completions protocol is stateless: the whole conversation goes
+out on every turn, and that part is not a choice. What *is* a choice is
+what happens when it no longer fits — and letting the server decide is
+the bad one. A server that overflows forgets alone, says nothing about
+it, and can cut a tool call away from the result answering it.
+
+`ContextBudget` (`application/chat/context_budget.dart`) is what one
+request may carry; `trimHistory` is what the history loses to fit it.
+`ChatSession._runPipeline` trims *before* loading image bytes, so a
+picture the model will not see is not read from disk either.
+
+- **The window is `AppSettings.contextLength`**, overridable per
+  conversation, and the prompt gets it less the answer
+  (`GenerationSettings.maxTokens`) less a tenth — the same buffer
+  Roo-Code keeps, here absorbing the fact that nothing is measured.
+- **Nothing is measured, because there is nothing to ask.** The app
+  talks to any OpenAI-compatible server: no tokenizer, no
+  `count_tokens`. `estimateMessageTokens` counts UTF-8 bytes over four
+  and a flat `kImageTokens` (1024) per image, which is what Continue
+  does for the same reason. Reasoning is *not* counted — it never
+  reaches the wire, and counting it would trim a history that fits.
+- **Images go before turns do.** One picture is worth a thousand tokens
+  of conversation, so the image limit is applied first and only what
+  still does not fit costs whole runs.
+- **`imageHistoryLimit` is off by default** (`0` = every image travels).
+  Keeping only the last few is *not* a norm: the one documented
+  precedent is Anthropic's computer-use demo, which keeps three because
+  "images are screenshots that are of diminishing value as the
+  conversation progresses". That holds for an agent watching a screen
+  and not for a conversation about three photographs, so the user says
+  which they are having ("Images Kept" in the right panel).
+- **Runs are dropped oldest first and the last one always stays**, even
+  when it alone is over budget — sending it is the only way to find out
+  what the server makes of it.
+- **A trim is never silent.** `GenerationStats.droppedRuns` /
+  `droppedImages` record it with everything else the turn was produced
+  with, so the export says what the request did *not* carry. Stored
+  messages are never rewritten: the trim shapes the request, not the
+  history.
 
 ## Message stats and export
 

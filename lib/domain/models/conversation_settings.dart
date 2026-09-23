@@ -19,6 +19,10 @@ abstract class ConversationSettings with _$ConversationSettings {
     ImageSettings? image,
     int? contextLength,
 
+    /// Images kept from the history; `null` inherits the global
+    /// [ApiSettings.imageHistoryLimit], `0` sends every one of them.
+    int? imageHistoryLimit,
+
     /// IDs of MCP servers the user explicitly enabled for this conversation.
     /// `null` means no override (no servers enabled); `[]` means explicitly none.
     List<String>? enabledMcpServerIds,

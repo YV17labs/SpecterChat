@@ -16,6 +16,8 @@ class GenerationRecorder {
     required RequestProfile profile,
     String? requestContextId,
     int retry = 0,
+    int droppedRuns = 0,
+    int droppedImages = 0,
     DateTime Function() now = DateTime.now,
     int Function()? elapsedMs,
   }) : _base = GenerationStats(
@@ -25,6 +27,8 @@ class GenerationRecorder {
          image: profile.image,
          requestContextId: requestContextId,
          retry: retry,
+         droppedRuns: droppedRuns,
+         droppedImages: droppedImages,
          startedAt: now().toUtc(),
          durationMs: 0,
          outcome: GenerationOutcome.interrupted,

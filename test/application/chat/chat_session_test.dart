@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:specterchat/application/chat/chat_session.dart';
+import 'package:specterchat/application/chat/context_budget.dart';
 import 'package:specterchat/application/llm_hooks/llm_hook_registry.dart';
 import 'package:specterchat/application/llm_hooks/qwen3.dart';
 import 'package:specterchat/domain/chat_session_state.dart';
@@ -49,6 +50,7 @@ void main() {
     LlmHookRegistry hooks = const LlmHookRegistry.none(),
     String modelName = 'fake-model',
     RequestProfile profile = const TextRequestProfile(),
+    ContextBudget budget = const ContextBudget.unlimited(),
     InMemoryAttachmentRepository? attachments,
   }) => ChatSession(
     conversationId: _conv,
@@ -65,6 +67,7 @@ void main() {
       hooks: hooks,
       modelName: modelName,
       profile: profile,
+      budget: budget,
     ),
   );
 
@@ -120,6 +123,52 @@ void main() {
       ]);
       await session(llm, profile: profile).sendMessage('draw');
       expect(llm.receivedProfiles.single, same(profile));
+    });
+
+    test('a history over budget is trimmed before it is sent', () async {
+      // Two earlier exchanges the window cannot hold, then the new one.
+      for (final id in ['000-old', '001-mid']) {
+        await messages.saveMessage(
+          testMessage(
+            MessageRole.user,
+            [ContentBlock.text(text: 'x' * 4000)],
+            id: id,
+            conversationId: _conv,
+          ),
+        );
+      }
+      final llm = FakeLlmService.events([
+        [const ContentDelta('ok'), const StreamDone()],
+      ]);
+      await session(
+        llm,
+        budget: const ContextBudget(contextLength: 1500, answerTokens: 200),
+      ).sendMessage('and now?');
+
+      // The oldest exchange did not travel; the new one did.
+      final sent = llm.receivedHistories.single;
+      expect(sent.map((m) => m.id), isNot(contains('000-old')));
+      expect(sent.last.plainText, 'and now?');
+
+      // The turn says what its request left out.
+      final stats = persisted().last.stats as GenerationStats;
+      expect(stats.droppedRuns, 1);
+      expect(stats.droppedImages, 0);
+    });
+
+    test('a history that fits is sent whole and nothing is recorded', () async {
+      final llm = FakeLlmService.events([
+        [const ContentDelta('ok'), const StreamDone()],
+      ]);
+      await session(
+        llm,
+        budget: const ContextBudget(contextLength: 32768, answerTokens: 4096),
+      ).sendMessage('hello');
+
+      expect(llm.receivedHistories.single, hasLength(1));
+      final stats = persisted().last.stats as GenerationStats;
+      expect(stats.droppedRuns, 0);
+      expect(stats.droppedImages, 0);
     });
 
     test('auto-titles a fresh conversation from the first reply', () async {

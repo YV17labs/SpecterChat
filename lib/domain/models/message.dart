@@ -172,10 +172,10 @@ int contentBytesOf(Iterable<ContentBlock> blocks) {
   var bytes = 0;
   for (final block in blocks) {
     bytes += switch (block) {
-      TextContentBlock(:final text) => _utf8Length(text),
-      ThinkingContentBlock(:final text) => _utf8Length(text),
+      TextContentBlock(:final text) => utf8Length(text),
+      ThinkingContentBlock(:final text) => utf8Length(text),
       ToolCallContentBlock(:final name, :final arguments) =>
-        _utf8Length(name) + _utf8Length(arguments),
+        utf8Length(name) + utf8Length(arguments),
       ImageContentBlock(:final byteSize) => byteSize,
       // The raw response is the same content again, in the server's own
       // shape, and its images are references — counting it would count
@@ -189,17 +189,23 @@ int contentBytesOf(Iterable<ContentBlock> blocks) {
 }
 
 /// The bytes [text] takes as UTF-8, counted rather than encoded: this runs
-/// while a reply streams.
-int _utf8Length(String text) {
+/// while a reply streams, and again over every message of a history the
+/// context budget has to weigh.
+///
+/// Walked as UTF-16 code units rather than runes, which decode surrogate
+/// pairs to count them: a pair is four UTF-8 bytes, so two for each half
+/// gives the same answer without putting it back together.
+int utf8Length(String text) {
   var bytes = 0;
-  for (final rune in text.runes) {
-    bytes += rune < 0x80
+  for (var i = 0; i < text.length; i++) {
+    final unit = text.codeUnitAt(i);
+    bytes += unit < 0x80
         ? 1
-        : rune < 0x800
+        : unit < 0x800
         ? 2
-        : rune < 0x10000
-        ? 3
-        : 4;
+        : (unit & 0xF800) == 0xD800
+        ? 2
+        : 3;
   }
   return bytes;
 }

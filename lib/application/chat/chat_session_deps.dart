@@ -7,6 +7,7 @@ import '../../domain/services/i_mcp_service.dart';
 import '../../domain/services/llm_hook.dart';
 import '../llm_hooks/llm_hook_registry.dart';
 import '../mcp/active_mcp_server.dart';
+import 'context_budget.dart';
 
 /// Immutable snapshot of everything a [ChatSession] needs to stream one
 /// response. Resolved fresh at each `sendMessage` by the session manager
@@ -30,6 +31,11 @@ class ChatSessionDeps {
   /// this send. Part of the snapshot for the same reason as the rest.
   final RequestProfile profile;
 
+  /// What this request may carry, and so what the history loses before it
+  /// is sent. Snapshotted with the rest: widening the window mid-answer
+  /// must not change what the turn in flight was built from.
+  final ContextBudget budget;
+
   const ChatSessionDeps({
     required this.llm,
     required this.mcpService,
@@ -40,6 +46,7 @@ class ChatSessionDeps {
     required this.modelName,
     required this.effectiveSystemPrompt,
     this.profile = const TextRequestProfile(),
+    this.budget = const ContextBudget.unlimited(),
     this.hooks = const LlmHookRegistry.none(),
   });
 

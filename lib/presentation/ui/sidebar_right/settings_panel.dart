@@ -44,6 +44,7 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
   late final TextEditingController _topKController;
   late final TextEditingController _maxTokensController;
   late final TextEditingController _contextLengthController;
+  late final TextEditingController _imageHistoryLimitController;
 
   @override
   void initState() {
@@ -63,6 +64,9 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
     _contextLengthController = TextEditingController(
       text: settings.api.contextLength.toString(),
     );
+    _imageHistoryLimitController = TextEditingController(
+      text: settings.api.imageHistoryLimit.toString(),
+    );
 
     // Sync controllers once when settings finish loading from disk.
     late final ProviderSubscription<AppSettings> sub;
@@ -80,6 +84,7 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
     _topKController.dispose();
     _maxTokensController.dispose();
     _contextLengthController.dispose();
+    _imageHistoryLimitController.dispose();
     super.dispose();
   }
 
@@ -91,6 +96,7 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
     _baseUrlController.text = global.api.baseUrl;
     _apiKeyController.text = global.api.apiKey;
     _contextLengthController.text = effective.contextLength.toString();
+    _imageHistoryLimitController.text = effective.imageHistoryLimit.toString();
     _systemPromptController.text = effective.systemPrompt;
     _topKController.text = effective.generation.topK.toString();
     _maxTokensController.text = effective.generation.maxTokens.toString();
@@ -210,6 +216,17 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
           hint: '32768',
           onChanged: (v) {
             if (v > 0) _updateContextLength(conversationId, v);
+          },
+        ),
+      ),
+      const SizedBox(height: 8),
+      LabeledField(
+        label: 'Images Kept',
+        child: _IntField(
+          controller: _imageHistoryLimitController,
+          hint: '0 — every image',
+          onChanged: (v) {
+            if (v >= 0) _updateImageHistoryLimit(conversationId, v);
           },
         ),
       ),
@@ -401,6 +418,20 @@ class _SettingsPanelState extends ConsumerState<SettingsPanel> {
       ref
           .read(settingsProvider.notifier)
           .updateApi(api.copyWith(contextLength: contextLength));
+    }
+  }
+
+  void _updateImageHistoryLimit(String? conversationId, int limit) {
+    if (conversationId != null) {
+      _updateConversation(
+        conversationId,
+        (s) => s.copyWith(imageHistoryLimit: limit),
+      );
+    } else {
+      final api = ref.read(settingsProvider).api;
+      ref
+          .read(settingsProvider.notifier)
+          .updateApi(api.copyWith(imageHistoryLimit: limit));
     }
   }
 

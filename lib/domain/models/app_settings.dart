@@ -12,6 +12,12 @@ abstract class ApiSettings with _$ApiSettings {
     @Default('') String apiKey,
     @Default('') String selectedModel,
     @Default(32768) int contextLength,
+
+    /// How many of a history's images are sent, the newest first. `0`
+    /// sends every one of them, which is the default: keeping only the
+    /// last few is what an agent watching a screen wants, not what a
+    /// conversation about three photographs wants.
+    @Default(0) int imageHistoryLimit,
   }) = _ApiSettings;
 
   factory ApiSettings.fromJson(Map<String, dynamic> json) =>

@@ -29,6 +29,7 @@ final chatSessionManagerProvider = Provider<ChatSessionManager>((ref) {
       modelName: ref.read(settingsProvider).api.selectedModel,
       effectiveSystemPrompt: ref.read(effectiveSettingsProvider).systemPrompt,
       profile: ref.read(requestProfileProvider),
+      budget: ref.read(contextBudgetProvider),
       hooks: defaultLlmHookRegistry,
     ),
   );

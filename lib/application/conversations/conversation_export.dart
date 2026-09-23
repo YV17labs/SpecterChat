@@ -186,7 +186,9 @@ const _guide = {
       "as sent — the user's prompt followed by the MCP servers' "
       'instructions — and the tool definitions (name, description, input '
       'JSON schema) in requestContexts[stats.requestContextId]; and every '
-      'earlier message of the conversation.',
+      'earlier message of the conversation that still fitted — '
+      'stats.droppedRuns and stats.droppedImages say what the context '
+      'budget left out of it, and are 0 when the whole history went.',
   'whatTheModelSees':
       'Reasoning (thinking blocks) is never sent back. An assistant turn '
       'with tool calls is sent as its first text block and its tool_calls '
@@ -203,7 +205,12 @@ const _guide = {
       'back on the assistant turn itself: that is how it edits what it '
       'made. An assistant turn whose tool-call '
       'arguments are not valid JSON is left out of later requests, with '
-      'its tool results.',
+      'its tool results. When the history no longer fits the context '
+      'window, the oldest exchanges are left out whole — never half of '
+      'one, since a tool call must travel with the result answering it — '
+      'and, if the user set a limit, all but the newest images are taken '
+      'off the messages that stay. The messages themselves are never '
+      'rewritten: this file holds the conversation as it happened.',
   'autoCorrection':
       'A user message marked autoCorrection was not written by the user: '
       'the app sends it when the model wrote a tool call as text instead '

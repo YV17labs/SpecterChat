@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../application/chat/context_budget.dart';
 import '../../domain/models/request_profile.dart';
 import '../../domain/services/i_llm_service.dart';
 import '../../infrastructure/llm/llm_service.dart';
@@ -28,4 +29,21 @@ final requestProfileProvider = Provider<RequestProfile>((ref) {
     effectiveSettingsProvider.select((s) => s.generation),
   );
   return TextRequestProfile(generation: generation);
+});
+
+/// What the next send may carry, and so what its history loses first.
+///
+/// An image request gets no budget: the server reads the images the
+/// client re-sends and ignores the window this setting describes, so
+/// there is nothing here to weigh.
+final contextBudgetProvider = Provider<ContextBudget>((ref) {
+  if (ref.watch(selectedImageModelProvider) != null) {
+    return const ContextBudget.unlimited();
+  }
+  final settings = ref.watch(effectiveSettingsProvider);
+  return ContextBudget(
+    contextLength: settings.contextLength,
+    answerTokens: settings.generation.maxTokens,
+    imageLimit: settings.imageHistoryLimit,
+  );
 });

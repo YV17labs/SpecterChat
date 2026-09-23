@@ -25,6 +25,7 @@ EffectiveSettings _effective(List<String> enabledIds) => EffectiveSettings(
   generation: const GenerationSettings(),
   image: const ImageSettings(),
   contextLength: 32768,
+  imageHistoryLimit: 0,
   enabledMcpServerIds: enabledIds,
 );
 

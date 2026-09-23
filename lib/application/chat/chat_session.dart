@@ -18,6 +18,7 @@ import '../images/stored_photo_metadata.dart';
 import '../mcp/active_mcp_server.dart';
 import 'chat_logic.dart';
 import 'chat_session_deps.dart';
+import 'context_budget.dart';
 import 'generation_recorder.dart';
 import 'message_writes.dart';
 import 'stream_accumulator.dart';
@@ -209,7 +210,9 @@ class ChatSession {
     int hallucinationRetry = 0,
   }) async {
     if (_isCancelled) return;
-    final history = await deps.messages.getMessages(conversationId);
+    final stored = await deps.messages.getMessages(conversationId);
+    final trimmed = trimHistory(stored, deps.budget);
+    final history = trimmed.history;
     final imageIds = _logic.collectImageAttachmentIds(history);
     // Only fetch bytes for ids we don't already hold from an earlier
     // turn — tool-loop recursion revisits the same attachments many
@@ -221,6 +224,7 @@ class ChatSession {
     await _streamResponse(
       deps: deps,
       history: history,
+      trim: trimmed,
       hallucinationRetry: hallucinationRetry,
     );
   }
@@ -228,6 +232,7 @@ class ChatSession {
   Future<void> _streamResponse({
     required ChatSessionDeps deps,
     required List<Message> history,
+    required HistoryTrim trim,
     required int hallucinationRetry,
   }) async {
     _accumulator.reset();
@@ -239,6 +244,8 @@ class ChatSession {
       profile: deps.profile,
       requestContextId: await _storeRequestContext(deps, tools),
       retry: hallucinationRetry,
+      droppedRuns: trim.droppedRuns,
+      droppedImages: trim.droppedImages,
     );
     final persister = _persister = StreamingPersister(
       messageId: messageId,

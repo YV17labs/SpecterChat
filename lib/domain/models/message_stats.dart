@@ -81,6 +81,13 @@ sealed class MessageStats with _$MessageStats {
     required GenerationOutcome outcome,
     String? error,
 
+    /// What the context budget left out of this request: whole earlier
+    /// exchanges, and images taken off the messages that stayed. Both `0`
+    /// when the history went out as it was stored — which is the usual
+    /// case, since trimming only starts once the window is nearly full.
+    @Default(0) int droppedRuns,
+    @Default(0) int droppedImages,
+
     /// Everything else the server said about the turn, verbatim: `usage`
     /// with its details, `finish_reason`, the model it actually ran,
     /// server-side `timings` (llama.cpp)… Later chunks overwrite earlier

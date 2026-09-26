@@ -2,9 +2,11 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/theme.dart';
 import '../../../domain/models/message.dart';
+import '../../providers/link_provider.dart';
 import 'expandable_block.dart';
 import 'image_block.dart';
 import 'measure_text.dart';
@@ -49,8 +51,9 @@ class ContentBlockWidget extends StatelessWidget {
   }
 }
 
-/// Renders markdown text content.
-class TextBlock extends StatelessWidget {
+/// Renders markdown text content. A link opens in the system's browser,
+/// if `LinkFollower` lets it.
+class TextBlock extends ConsumerWidget {
   final String text;
   final bool isStreaming;
 
@@ -67,12 +70,14 @@ class TextBlock extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     if (text.isEmpty) return const SizedBox.shrink();
     return MarkdownBody(
       data: text,
       selectable: selectable && !isStreaming,
       styleSheet: context.specterStyles.markdownStyleSheet,
+      onTapLink: (_, href, _) =>
+          ref.read(linkFollowerProvider).follow(href).ignore(),
     );
   }
 }

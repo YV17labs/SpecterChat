@@ -14,6 +14,15 @@ changes.
 
 ## [Unreleased]
 
+### Added
+
+- **Links in a conversation open in the browser.** Clicking a link in a
+  reply, a message or a tool result's text — a Markdown link or a bare
+  address — opens it in the default browser, and an e-mail address in the mail
+  client. Only web and mail links are followed: a link to a file on this
+  computer, or to another application, does nothing, since the model or
+  an MCP server wrote it.
+
 ## [0.8.0] - 2026-09-23
 
 Everything a reply cost is now recorded with it and kept, and a conversation

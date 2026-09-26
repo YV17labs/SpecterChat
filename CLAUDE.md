@@ -50,7 +50,7 @@ lib/
                          llm_hook, cancellation_token, i_image_normalizer,
                          i_annotation_renderer, i_image_io (dialogs +
                          clipboard), i_photo_metadata_codec, i_file_saver
-                         (non-image "Save as…")
+                         (non-image "Save as…"), i_link_opener
   application/         — Use cases. Depends on core + domain only.
     chat/              — ChatSession (streaming worker), ChatSessionManager
                          (LRU registry), ChatSessionDeps, ChatLogic (pure),
@@ -65,6 +65,8 @@ lib/
                          runsOf (the one split of a history into runs)
     mcp/               — ActiveMcpServer + findServerForTool, content → text
     llm_hooks/         — LlmHookRegistry + per-model hooks (qwen3)
+    links/             — LinkFollower: opens a link through ILinkOpener
+                         if followableLink lets it
     images/            — PendingImage (composer draft entry + slot maths),
                          DrawingSession (editor state machine), Annotation
                          History/Geometry, expandPendingImages (outgoing
@@ -86,6 +88,7 @@ lib/
                          DesktopImageIo (file_selector + pasteboard),
                          ExifPhotoMetadataCodec (pure-Dart EXIF read/write)
     files/             — DesktopFileSaver (file_selector save dialog)
+    links/             — SystemLinkOpener (url_launcher, external app)
   presentation/        — Riverpod + Flutter.
     providers/         — One file per concern. Controllers live here:
                          ConversationController (selection + actions),
@@ -120,9 +123,10 @@ Rules that keep it that way:
   the `ChatSession` handle. Create/fork/delete a conversation only via
   `conversationControllerProvider`.
 - **Widgets do not call platform plugins.** File dialogs and the image
-  clipboard go through `IImageIo` (`imageIoProvider`); the only plugin a
-  widget touches is `desktop_drop`'s `DropTarget`. Enforced by
-  `architecture_test`.
+  clipboard go through `IImageIo` (`imageIoProvider`), links through
+  `LinkFollower` (`linkFollowerProvider`), never the raw `ILinkOpener`;
+  the only plugin a widget touches is `desktop_drop`'s `DropTarget`.
+  Enforced by `architecture_test`.
 - **`McpServerConfig` is persisted, `McpServerState` is not.** Never add
   runtime fields (connection, tool lists) to the config model. Same rule
   for what the server reports about its models: that is a cache, kept in

@@ -29,6 +29,7 @@ import 'package:specterchat/domain/services/i_annotation_renderer.dart';
 import 'package:specterchat/domain/services/i_file_saver.dart';
 import 'package:specterchat/domain/services/i_image_io.dart';
 import 'package:specterchat/domain/services/i_image_normalizer.dart';
+import 'package:specterchat/domain/services/i_link_opener.dart';
 import 'package:specterchat/domain/services/i_llm_service.dart';
 import 'package:specterchat/domain/services/i_mcp_service.dart';
 
@@ -424,6 +425,15 @@ class FakeFileSaver implements IFileSaver {
     saved.add((name: suggestedName, bytes: await contents()));
     return true;
   }
+}
+
+/// [ILinkOpener] that records the links it is handed instead of opening
+/// them.
+class FakeLinkOpener implements ILinkOpener {
+  final List<Uri> opened = [];
+
+  @override
+  Future<void> open(Uri uri) async => opened.add(uri);
 }
 
 /// Scripted [ILlmService]: each call to [streamChatCompletion] plays the

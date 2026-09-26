@@ -6,6 +6,7 @@ import 'package:specterchat/core/theme.dart';
 import 'package:specterchat/presentation/providers/conversation_export_provider.dart';
 import 'package:specterchat/presentation/providers/database_provider.dart';
 import 'package:specterchat/presentation/providers/image_providers.dart';
+import 'package:specterchat/presentation/providers/link_provider.dart';
 import 'package:specterchat/presentation/providers/llm_provider.dart';
 import 'package:specterchat/presentation/providers/mcp_provider.dart';
 import 'package:specterchat/presentation/providers/model_catalog_provider.dart';
@@ -24,6 +25,7 @@ class TestHarness {
   final mcp = FakeMcpService();
   final imageIo = FakeImageIo();
   final fileSaver = FakeFileSaver();
+  final links = FakeLinkOpener();
   final annotationRenderer = FakeAnnotationRenderer();
   FakeLlmService llm;
 
@@ -39,6 +41,7 @@ class TestHarness {
     llmServiceProvider.overrideWith((_) => llm),
     imageIoProvider.overrideWithValue(imageIo),
     fileSaverProvider.overrideWithValue(fileSaver),
+    linkOpenerProvider.overrideWithValue(links),
     imageNormalizerProvider.overrideWithValue(
       const PassThroughImageNormalizer(),
     ),

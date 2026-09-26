@@ -131,9 +131,13 @@ void main() {
   });
 
   test('UI never talks to the desktop plugins directly', () {
-    // File dialogs and the clipboard go through `IImageIo`; the only
-    // widget-level plugin is the drop target.
-    const plugins = ['package:file_selector/', 'package:pasteboard/'];
+    // File dialogs and the clipboard go through `IImageIo`, links through
+    // `LinkFollower`; the only widget-level plugin is the drop target.
+    const plugins = [
+      'package:file_selector/',
+      'package:pasteboard/',
+      'package:url_launcher/',
+    ];
     forbid('presentation/ui', (i) => plugins.any(i.startsWith));
   });
 

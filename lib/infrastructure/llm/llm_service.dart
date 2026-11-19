@@ -6,6 +6,7 @@ import 'package:dio/dio.dart';
 import 'package:logging/logging.dart';
 
 import '../../core/app_info.dart';
+import '../../core/image_mime.dart';
 import '../../domain/chat_session_state.dart' show GenerationProgress;
 import '../../domain/models/app_settings.dart';
 import '../../domain/models/message.dart';
@@ -18,7 +19,8 @@ import 'sse_think_splitter.dart';
 
 final _log = Logger('LlmService');
 
-/// [ILlmService] over an OpenAI-compatible `chat/completions` endpoint.
+/// [ILlmService] over an OpenAI-compatible server: `chat/completions`,
+/// and `images/generations` for a model asked through the Images API.
 ///
 /// Holds only what identifies the connection (client, base URL, selected
 /// model). What a request carries beyond the messages comes with each call
@@ -28,6 +30,12 @@ class LlmService implements ILlmService {
   final Dio _dio;
   final ApiSettings _apiSettings;
   final OpenAiCodec _codec;
+
+  /// How long an Images API answer may stay silent. The client's five
+  /// minutes suit a chat that streams tokens; a picture can take longer
+  /// with nothing to say meanwhile — a server that does not stream sends
+  /// its first byte once it is drawn. Stop ends a turn that hangs.
+  static const _imagesReceiveTimeout = Duration(minutes: 30);
 
   LlmService({
     required Dio dio,
@@ -104,6 +112,16 @@ class LlmService implements ILlmService {
       return;
     }
 
+    if (profile case ImageRequestProfile(api: ImageApi.imagesEndpoint)) {
+      yield* _streamImages(
+        history: history,
+        profile: profile,
+        imageBytes: imageBytes,
+        cancellationToken: cancellationToken,
+      );
+      return;
+    }
+
     final body = _codec.requestBody(
       model: _apiSettings.selectedModel,
       profile: profile,
@@ -112,79 +130,109 @@ class LlmService implements ILlmService {
       imageBytes: imageBytes,
       tools: tools,
     );
+    final chunks = _ChunkReader();
+    yield* _postEvents(
+      '/chat/completions',
+      body,
+      cancellationToken,
+      onData: (data) => _parseChunk(data, chunks),
+      onEnd: chunks.splitter.flush,
+    );
+  }
 
+  /// One turn of an [ImageApi.imagesEndpoint] model:
+  /// `POST /images/generations`, streamed. mlx-serve answers with typed
+  /// events — `progress` (`stage`, `step`, `total`), then `complete`
+  /// carrying the non-streamed body (`data[]`), or `error`; a server that
+  /// ignores `stream` sends that body alone.
+  ///
+  /// The API has one thing to give, so an answer without it is a failure
+  /// and not a turn that said nothing: an empty `data`, a picture in a
+  /// format the app does not read, a page that is not the API at all —
+  /// each would otherwise end as a reply with nothing in it, no error
+  /// shown.
+  Stream<StreamEvent> _streamImages({
+    required List<Message> history,
+    required ImageRequestProfile profile,
+    required ImageBytesMap imageBytes,
+    required CancellationToken? cancellationToken,
+  }) async* {
+    final Map<String, dynamic> body;
+    try {
+      body = _codec.imagesRequestBody(
+        model: _apiSettings.selectedModel,
+        profile: profile,
+        history: history,
+        imageBytes: imageBytes,
+      );
+    } on UnsendableImageRequest catch (e) {
+      yield StreamError(e.message);
+      return;
+    }
+    // What was sent decides it: the API never says.
+    final textToImage = !body.containsKey('image');
+    final events = _postEvents(
+      '/images/generations',
+      body,
+      cancellationToken,
+      receiveTimeout: _imagesReceiveTimeout,
+      onData: (data) => _parseImagesEvent(data, textToImage: textToImage),
+      onBody: (text) => _parseImagesEvent(text, textToImage: textToImage),
+    );
+    var pictures = 0;
+    await for (final event in events) {
+      if (event is ImageDelta) pictures++;
+      if (event is StreamDone && pictures == 0) {
+        yield const StreamError('The server answered without a picture.');
+        return;
+      }
+      yield event;
+    }
+  }
+
+  /// [body] POSTed to [path], the answer read as server-sent events:
+  /// [onData] turns each `data:` payload into events, [onEnd] gives what
+  /// is still buffered once the stream ends (`[DONE]` or the end of the
+  /// body), and [onBody] reads a body that holds no event at all — a
+  /// server that ignores `stream` answers with one JSON document.
+  ///
+  /// Every endpoint ends the same way, on exactly one terminal event:
+  /// cancellation, a transport error and a parser that throws all come
+  /// out as one, and an error is the end whatever the server sends after
+  /// it. This stream itself never fails.
+  Stream<StreamEvent> _postEvents(
+    String path,
+    Map<String, dynamic> body,
+    CancellationToken? cancellationToken, {
+    required Stream<StreamEvent> Function(String data) onData,
+    Iterable<StreamEvent> Function() onEnd = _nothing,
+    Stream<StreamEvent> Function(String body)? onBody,
+    Duration? receiveTimeout,
+  }) async* {
     if (_log.isLoggable(Level.INFO)) {
       _log.info(
-        'POST ${_dio.options.baseUrl}/chat/completions\n'
+        'POST ${_dio.options.baseUrl}$path\n'
         '${const JsonEncoder.withIndent('  ').convert(_sanitizeForLog(body))}',
       );
     }
 
-    // Map the transport-agnostic token onto Dio's cancel primitive.
-    final dioToken = CancelToken();
-    unawaited(
-      cancellationToken?.whenCancelled.then(
-        (_) => dioToken.cancel('cancelled'),
-      ),
-    );
-
-    final chunks = _ChunkReader();
-
     try {
-      final response = await _dio.post<ResponseBody>(
-        '/chat/completions',
-        data: body,
-        options: Options(responseType: ResponseType.stream),
-        cancelToken: dioToken,
+      final events = _readEvents(
+        path,
+        body,
+        cancellationToken,
+        onData: onData,
+        onEnd: onEnd,
+        onBody: onBody,
+        receiveTimeout: receiveTimeout,
       );
-
-      final stream = response.data?.stream;
-      if (stream == null) {
-        yield const StreamError('Empty response body');
-        return;
-      }
-      final sseBuffer = StringBuffer();
-
-      // Decode through a streaming decoder so a multi-byte character split
-      // across two chunks is not turned into replacement glyphs.
-      await for (final chunk in utf8.decoder.bind(stream)) {
-        if (cancellationToken?.isCancelled ?? false) {
-          yield const StreamCancelled();
-          return;
-        }
-
-        sseBuffer.write(chunk);
-        // A single `data:` line can be several MB (a base64 image). Only
-        // re-scan the buffer when a line may have completed — otherwise
-        // every network packet would copy and split the whole buffer.
-        if (!chunk.contains('\n')) continue;
-        final lines = sseBuffer.toString().split('\n');
-        // Keep the last potentially incomplete line in the buffer.
-        sseBuffer
-          ..clear()
-          ..write(lines.removeLast());
-
-        for (final line in lines) {
-          final trimmed = line.trim();
-          if (!trimmed.startsWith('data: ')) continue;
-          final data = trimmed.substring(6);
-          if (data == '[DONE]') {
-            for (final event in chunks.splitter.flush()) {
-              yield event;
-            }
-            yield const StreamDone();
-            return;
-          }
-          await for (final event in _parseChunk(data, chunks)) {
-            yield event;
-          }
-        }
-      }
-
-      for (final event in chunks.splitter.flush()) {
+      // `await for`, never `yield*`: that hands a stream's error straight
+      // to the listener, past the `catch` below, and the turn would never
+      // end — its row left as still streaming.
+      await for (final event in events) {
         yield event;
+        if (event is StreamError) return;
       }
-      yield const StreamDone();
     } on DioException catch (e) {
       if (e.type == DioExceptionType.cancel) {
         _log.info('Stream cancelled by user');
@@ -207,30 +255,221 @@ class LlmService implements ILlmService {
     }
   }
 
+  /// The request behind [_postEvents] and the reading of its answer,
+  /// with nothing caught: a transport error or a parser that throws
+  /// fails this stream, and [_postEvents] turns that into an event.
+  Stream<StreamEvent> _readEvents(
+    String path,
+    Map<String, dynamic> body,
+    CancellationToken? cancellationToken, {
+    required Stream<StreamEvent> Function(String data) onData,
+    required Iterable<StreamEvent> Function() onEnd,
+    required Stream<StreamEvent> Function(String body)? onBody,
+    required Duration? receiveTimeout,
+  }) async* {
+    // Map the transport-agnostic token onto Dio's cancel primitive.
+    final dioToken = CancelToken();
+    unawaited(
+      cancellationToken?.whenCancelled.then(
+        (_) => dioToken.cancel('cancelled'),
+      ),
+    );
+
+    final response = await _dio.post<ResponseBody>(
+      path,
+      data: body,
+      options: Options(
+        responseType: ResponseType.stream,
+        receiveTimeout: receiveTimeout,
+      ),
+      cancelToken: dioToken,
+    );
+
+    final stream = response.data?.stream;
+    if (stream == null) {
+      yield const StreamError('Empty response body');
+      return;
+    }
+    final sseBuffer = StringBuffer();
+    // The body as it came, kept for [onBody] until an event shows up.
+    final plain = onBody == null ? null : StringBuffer();
+    var sawEvent = false;
+
+    // `null` once `[DONE]` has been read. The space after `data:` is
+    // optional in server-sent events, and not every server writes it.
+    Stream<StreamEvent>? readLine(String line) {
+      final trimmed = line.trim();
+      if (!trimmed.startsWith('data:')) {
+        if (!sawEvent) plain?.writeln(line);
+        return const Stream.empty();
+      }
+      sawEvent = true;
+      final data = trimmed.substring(5).trimLeft();
+      return data == '[DONE]' ? null : onData(data);
+    }
+
+    // Decode through a streaming decoder so a multi-byte character split
+    // across two chunks is not turned into replacement glyphs.
+    await for (final chunk in utf8.decoder.bind(stream)) {
+      if (cancellationToken?.isCancelled ?? false) {
+        yield const StreamCancelled();
+        return;
+      }
+
+      sseBuffer.write(chunk);
+      // A single `data:` line can be several MB (a base64 image). Only
+      // re-scan the buffer when a line may have completed — otherwise
+      // every network packet would copy and split the whole buffer.
+      if (!chunk.contains('\n')) continue;
+      final lines = sseBuffer.toString().split('\n');
+      // Keep the last potentially incomplete line in the buffer.
+      sseBuffer
+        ..clear()
+        ..write(lines.removeLast());
+
+      for (final line in lines) {
+        final events = readLine(line);
+        if (events == null) {
+          yield* Stream.fromIterable(onEnd());
+          yield const StreamDone();
+          return;
+        }
+        yield* events;
+      }
+    }
+
+    // The last line need not end with a newline.
+    final events = readLine(sseBuffer.toString());
+    if (events != null) yield* events;
+    if (!sawEvent && plain != null && plain.toString().trim().isNotEmpty) {
+      yield* onBody!(plain.toString());
+    }
+    yield* Stream.fromIterable(onEnd());
+    yield const StreamDone();
+  }
+
+  static Iterable<StreamEvent> _nothing() => const [];
+
+  /// [data] as a JSON object; `null`, and skipped, when it is not one.
+  static Map<String, dynamic>? _decodeEvent(String data) {
+    try {
+      return jsonDecode(data) as Map<String, dynamic>;
+    } on FormatException {
+      _log.fine('Skipping malformed event: ${_truncate(data)}');
+    } on TypeError {
+      _log.fine('Skipping non-object event: ${_truncate(data)}');
+    }
+    return null;
+  }
+
+  /// What an event that reports a failure says: the OpenAI envelope
+  /// (`{"error": {"message": …}}`), a bare `error` value, or the
+  /// `message` of an event typed `error`.
+  static String _errorMessage(Map<String, dynamic> event) =>
+      switch (event['error']) {
+        {'message': final String message} => message,
+        null => switch (event['message']) {
+          final String message => message,
+          _ => 'unknown error',
+        },
+        final error => '$error',
+      };
+
+  /// A server's progress report, read leniently: it is shown and
+  /// forgotten, so a field of another type is left out rather than
+  /// failing the turn. A `total` of 0 is a server's "indeterminate".
+  static GenerationProgress _progressFrom(
+    Map<dynamic, dynamic> report, {
+    required String stage,
+  }) {
+    int? integer(Object? value) => value is num ? value.toInt() : null;
+    final total = integer(report['total']);
+    final message = report['message'];
+    return GenerationProgress(
+      stage: stage,
+      step: integer(report['step']),
+      total: total == 0 ? null : total,
+      percent: integer(report['percent']),
+      message: message is String ? message : null,
+    );
+  }
+
+  /// One event of an Images API answer (or the whole answer of a server
+  /// that does not stream) → zero or more events. Malformed ones are
+  /// skipped. [textToImage] is whether the request carried no image.
+  Stream<StreamEvent> _parseImagesEvent(
+    String data, {
+    required bool textToImage,
+  }) async* {
+    final json = _decodeEvent(data);
+    if (json == null) return;
+
+    if (json['type'] == 'error' || json['error'] != null) {
+      yield StreamError('API error: ${_errorMessage(json)}');
+      return;
+    }
+
+    if (json['type'] == 'progress') {
+      final stage = json['stage'];
+      yield ProgressDelta(
+        _progressFrom(json, stage: stage is String ? stage : 'generating'),
+      );
+      return;
+    }
+
+    // The answer — a closing event, or the whole body of a server that
+    // does not stream. Everything in it but the pictures is a report on
+    // the turn; the pictures are megabytes of base64, never part of it.
+    final report = {
+      for (final MapEntry(:key, :value) in json.entries)
+        if (key != 'type' &&
+            value != null &&
+            !OpenAiCodec.imagesPictureKeys.contains(key))
+          key: value,
+    };
+    if (report.isNotEmpty) yield ServerReport(report);
+    for (final picture in OpenAiCodec.imagesResponseData(json)) {
+      final image = picture.url != null
+          ? await _resolveImageUrl(picture.url!)
+          : _decodeBase64Image(picture.base64!);
+      if (image == null) continue;
+      yield ImageDelta(
+        bytes: image.bytes,
+        mimeType: image.mimeType,
+        textToImage: textToImage,
+      );
+    }
+  }
+
+  /// A `b64_json` picture, its type read from its bytes; `null` when it is
+  /// not base64 or not an image the app takes.
+  static ImageBytes? _decodeBase64Image(String base64) {
+    try {
+      final bytes = base64Decode(base64.trim());
+      final mime = sniffImageMime(bytes);
+      if (mime == null) {
+        _log.warning('Image of unknown format in the answer, skipped');
+        return null;
+      }
+      return (bytes: bytes, mimeType: mime);
+    } on FormatException {
+      _log.warning('Malformed base64 image in the answer, skipped');
+      return null;
+    }
+  }
+
   /// One `data:` line → zero or more events. Malformed lines are skipped.
   ///
   /// Async because an `images` entry may carry an http(s) URL that has to
   /// be fetched before it can be handed over as bytes.
   Stream<StreamEvent> _parseChunk(String data, _ChunkReader chunks) async* {
-    final Map<String, dynamic> json;
-    try {
-      json = jsonDecode(data) as Map<String, dynamic>;
-    } on FormatException {
-      _log.fine('Skipping malformed SSE JSON line: ${_truncate(data)}');
-      return;
-    } on TypeError {
-      _log.fine('Skipping non-object SSE JSON line: ${_truncate(data)}');
-      return;
-    }
+    final json = _decodeEvent(data);
+    if (json == null) return;
 
     // A server that fails after the stream started sends the OpenAI error
     // envelope as an event instead of an HTTP status.
-    final error = json['error'];
-    if (error != null) {
-      final message = error is Map
-          ? error['message'] as String? ?? error.toString()
-          : error.toString();
-      yield StreamError('API error: $message');
+    if (json['error'] != null) {
+      yield StreamError('API error: ${_errorMessage(json)}');
       return;
     }
 
@@ -268,19 +507,9 @@ class LlmService implements ILlmService {
     }
 
     // Extension: long-running server step (image generation).
-    final progress = delta['progress'];
-    if (progress is Map) {
-      final stage = progress['stage'] as String?;
-      if (stage != null && stage.isNotEmpty) {
-        yield ProgressDelta(
-          GenerationProgress(
-            stage: stage,
-            step: (progress['step'] as num?)?.toInt(),
-            total: (progress['total'] as num?)?.toInt(),
-            percent: (progress['percent'] as num?)?.toInt(),
-            message: progress['message'] as String?,
-          ),
-        );
+    if (delta['progress'] case final Map<dynamic, dynamic> progress) {
+      if (progress['stage'] case final String stage when stage.isNotEmpty) {
+        yield ProgressDelta(_progressFrom(progress, stage: stage));
       }
     }
 
@@ -313,22 +542,32 @@ class LlmService implements ILlmService {
   /// Bytes for an image URL: inline for `data:` URLs, fetched for
   /// http(s) ones (relative paths resolve against the API base URL, which
   /// is how the server refers back to its own `/v1/files/…`).
+  ///
+  /// The API key goes to the API server and nowhere else. A picture kept
+  /// on another host — a CDN, a storage bucket, which is where the Images
+  /// API's `url` answers usually point — is fetched without it, the way
+  /// an HTTP client drops credentials when a redirect leaves the origin.
   Future<ImageBytes?> _resolveImageUrl(String url) async {
     final inline = OpenAiCodec.decodeDataUrl(url);
     if (inline != null) return inline;
-    if (!url.startsWith('http://') &&
-        !url.startsWith('https://') &&
-        !url.startsWith('/')) {
+    final base = Uri.tryParse(_dio.options.baseUrl);
+    final target = url.startsWith('/')
+        ? base?.replace(path: url)
+        : Uri.tryParse(url);
+    if (target == null || !const {'http', 'https'}.contains(target.scheme)) {
       _log.fine('Ignoring image URL with unsupported scheme');
       return null;
     }
     try {
-      final target = url.startsWith('/')
-          ? Uri.parse(_dio.options.baseUrl).replace(path: url).toString()
-          : url;
-      final response = await _dio.get<List<int>>(
+      final response = await _dio.getUri<List<int>>(
         target,
-        options: Options(responseType: ResponseType.bytes),
+        options: Options(
+          responseType: ResponseType.bytes,
+          // A `null` value takes the client's default header off.
+          headers: base != null && _sameOrigin(target, base)
+              ? null
+              : {'Authorization': null},
+        ),
       );
       final bytes = response.data;
       if (bytes == null || bytes.isEmpty) return null;
@@ -345,6 +584,10 @@ class LlmService implements ILlmService {
       return null;
     }
   }
+
+  /// Same scheme, host and port: what a credential is scoped to.
+  static bool _sameOrigin(Uri a, Uri b) =>
+      a.scheme == b.scheme && a.host == b.host && a.port == b.port;
 
   static String _truncate(String s) =>
       s.length > 200 ? '${s.substring(0, 200)}…' : s;
@@ -372,9 +615,18 @@ class LlmService implements ILlmService {
     }
   }
 
-  /// Replace large base64 strings with a short summary for logging.
+  /// How a bare base64 string starts: 200 characters of its alphabet and
+  /// nothing else. Text does not — it has spaces or, written in a script
+  /// that uses none, characters outside that alphabet; a URL has its
+  /// `:`, JSON its braces and quotes.
+  static final _base64Head = RegExp('^[A-Za-z0-9+/_-]{200}');
+
+  /// Replace large base64 strings — data URLs, and the bare base64 of an
+  /// Images API body — with a short summary for logging.
   static Object? _sanitizeForLog(Object? value) {
-    if (value is String && value.startsWith('data:') && value.length > 200) {
+    if (value is String &&
+        value.length > 200 &&
+        (value.startsWith('data:') || _base64Head.hasMatch(value))) {
       final sizeKb = (value.length * 3 / 4 / 1024).round();
       return '<base64 ~${sizeKb}KB>';
     }

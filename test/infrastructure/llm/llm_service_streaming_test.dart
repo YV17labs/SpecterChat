@@ -4,9 +4,11 @@ import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:logging/logging.dart';
 import 'package:specterchat/domain/models/app_settings.dart';
 import 'package:specterchat/domain/models/image_settings.dart';
 import 'package:specterchat/domain/models/message.dart';
+import 'package:specterchat/domain/models/model_info.dart';
 import 'package:specterchat/domain/models/request_profile.dart';
 import 'package:specterchat/domain/services/cancellation_token.dart';
 import 'package:specterchat/domain/services/i_llm_service.dart';
@@ -33,14 +35,18 @@ ResponseBody _fakeStreamResponse(List<String> sseLines) {
 class _FakeStreamInterceptor extends Interceptor {
   final List<String> sseLines;
 
-  /// Every `/chat/completions` body seen, for request-shape assertions.
+  /// Every `/chat/completions` or `/images/generations` body seen, and
+  /// where it went, for request-shape assertions.
   final List<Map<String, dynamic>> bodies = [];
+  final List<String> paths = [];
 
   _FakeStreamInterceptor(this.sseLines);
 
   @override
   void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
-    if (options.path == '/chat/completions') {
+    if (options.path == '/chat/completions' ||
+        options.path == '/images/generations') {
+      paths.add(options.path);
       bodies.add(Map<String, dynamic>.from(options.data as Map));
       handler.resolve(
         Response(
@@ -298,6 +304,47 @@ void main() {
       expect(events.whereType<ContentDelta>().length, 1);
     });
 
+    // The session waits for a terminal event: a parser that throws must
+    // not escape as a stream error, or the turn never ends.
+    test('a chunk of an unexpected shape ends the turn as an error', () async {
+      service = createService([
+        'data: {"choices":[{"delta":{"content":"Hello"}}]}',
+        'data: {"choices":[{"delta":{"content":["not","a","string"]}}]}',
+        'data: {"choices":[{"delta":{"content":"never read"}}]}',
+        'data: [DONE]',
+      ]);
+
+      final events = await service
+          .streamChatCompletion(history: _history, systemPrompt: '')
+          .toList();
+
+      expect(events.whereType<ContentDelta>().single.text, 'Hello');
+      expect(events.last, isA<StreamError>());
+      expect(
+        (events.last as StreamError).message,
+        startsWith('Unexpected error'),
+      );
+    });
+
+    test('`data:` is read with or without the space after it', () async {
+      service = createService([
+        'data:{"choices":[{"delta":{"content":"Hello"}}]}',
+        'data:   {"choices":[{"delta":{"content":" world"}}]}',
+        'data:[DONE]',
+        'data: {"choices":[{"delta":{"content":"after the end"}}]}',
+      ]);
+
+      final events = await service
+          .streamChatCompletion(history: _history, systemPrompt: '')
+          .toList();
+
+      expect(events.whereType<ContentDelta>().map((e) => e.text), [
+        'Hello',
+        ' world',
+      ]);
+      expect(events.last, isA<StreamDone>());
+    });
+
     test('skips chunks with null/empty choices', () async {
       service = createService([
         'data: {"choices":null}',
@@ -422,6 +469,20 @@ void main() {
       expect(p.total, 40);
       expect(p.percent, 30);
       expect(p.message, 'Génération 12/40');
+    });
+
+    test('a progress field of another type is left out', () async {
+      service = createService([
+        'data: {"choices":[{"delta":{"progress":{"stage":"load","step":"3","total":0,"message":7}}}]}',
+        'data: {"choices":[{"delta":{"progress":{"stage":7}}}]}',
+        'data: [DONE]',
+      ]);
+      final events = await service
+          .streamChatCompletion(history: _history, systemPrompt: '')
+          .toList();
+      final p = events.whereType<ProgressDelta>().single.progress;
+      expect((p.stage, p.step, p.total, p.message), ('load', null, null, null));
+      expect(events.last, isA<StreamDone>());
     });
 
     test('yields ImageDelta for data-URL images', () async {
@@ -628,6 +689,344 @@ void main() {
       final body = interceptor.bodies.single;
       expect(body['temperature'], const GenerationSettings().temperature);
       expect(body.containsKey('generation'), isFalse);
+    });
+  });
+
+  group('Images API model', () {
+    const profile = ImageRequestProfile(api: ImageApi.imagesEndpoint);
+    // A PNG signature is all the sniffer reads.
+    final png = base64Encode([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+    Message user(List<ContentBlock> content) => Message(
+      id: 'm',
+      conversationId: 'c',
+      role: MessageRole.user,
+      content: content,
+      createdAt: DateTime(2024),
+    );
+    Future<List<StreamEvent>> run(
+      List<String> lines, {
+      List<Message>? history,
+      ImageBytesMap imageBytes = const {},
+      ImageRequestProfile profile = profile,
+    }) => createService(lines, selectedModel: 'qwen-mlx')
+        .streamChatCompletion(
+          history: history ?? _history,
+          systemPrompt: 'never sent',
+          profile: profile,
+          imageBytes: imageBytes,
+        )
+        .toList();
+
+    test('progress, then the picture: asked at images/generations', () async {
+      final events = await run(
+        [
+          'data: {"type":"progress","stage":"load","step":0,"total":0}',
+          '',
+          'data: {"type":"progress","stage":"denoise","step":3,"total":8}',
+          '',
+          'data: {"type":"complete","created":0,"data":[{"b64_json":"$png"}]}',
+          '',
+        ],
+        // The seed the session drew for the turn travels like any other.
+        profile: const ImageRequestProfile(
+          image: ImageSettings(seed: 1234),
+          api: ImageApi.imagesEndpoint,
+        ),
+      );
+
+      expect(interceptor.paths, ['/images/generations']);
+      expect(interceptor.bodies.single, {
+        'model': 'qwen-mlx',
+        'prompt': 'hi',
+        'seed': 1234,
+        'stream': true,
+      });
+      expect(
+        events.whereType<ProgressDelta>().map(
+          (e) => (e.progress.stage, e.progress.step, e.progress.total),
+        ),
+        [('load', 0, null), ('denoise', 3, 8)],
+      );
+      final image = events.whereType<ImageDelta>().single;
+      expect(image.mimeType, 'image/png');
+      expect(image.bytes, base64Decode(png));
+      expect(image.textToImage, isTrue);
+      expect(events.whereType<ServerReport>().single.fields, {'created': 0});
+      expect(events.last, isA<StreamDone>());
+    });
+
+    test('an edit is not text to image', () async {
+      final events = await run(
+        ['data: {"type":"complete","data":[{"b64_json":"$png"}]}'],
+        history: [
+          user(const [
+            ContentBlock.text(text: 'make it blue'),
+            ContentBlock.image(
+              attachmentId: 'a',
+              mimeType: 'image/png',
+              byteSize: 1,
+            ),
+          ]),
+        ],
+        imageBytes: {
+          'a': (bytes: Uint8List.fromList([1]), mimeType: 'image/png'),
+        },
+      );
+      expect(interceptor.bodies.single['mode'], 'edit');
+      expect(events.whereType<ImageDelta>().single.textToImage, isFalse);
+    });
+
+    test('an error event ends the turn with its message', () async {
+      final events = await run([
+        'data: {"type":"error","message":"transparent: not on this model"}',
+      ]);
+      expect(
+        events.whereType<StreamError>().single.message,
+        'API error: transparent: not on this model',
+      );
+    });
+
+    test('a server that does not stream answers with the body', () async {
+      final events = await run(['{"created":0,"data":[{"b64_json":"$png"}]}']);
+      expect(events.whereType<ImageDelta>(), hasLength(1));
+      expect(events.last, isA<StreamDone>());
+    });
+
+    // OpenAI's own streaming: previews, then the picture on the closing
+    // event — megabytes of base64 that must not be recorded as a report.
+    test('a picture on the closing event; previews are skipped', () async {
+      final events = await run([
+        'data: {"type":"image_generation.partial_image","b64_json":"$png","partial_image_index":0}',
+        '',
+        'data: {"type":"image_generation.completed","b64_json":"$png","usage":{"total_tokens":10}}',
+      ]);
+      expect(events.whereType<ImageDelta>(), hasLength(1));
+      final reported = {
+        for (final report in events.whereType<ServerReport>()) ...report.fields,
+      };
+      expect(reported, {
+        'partial_image_index': 0,
+        'usage': {'total_tokens': 10},
+      });
+      expect(events.last, isA<StreamDone>());
+    });
+
+    test('an answer without a picture is an error, not an empty reply', () {
+      final withoutPicture = <String, List<String>>{
+        'an empty data array': ['data: {"type":"complete","data":[]}'],
+        'a format the app does not read': [
+          'data: {"type":"complete","data":[{"b64_json":"${base64Encode([1, 2, 3])}"}]}',
+        ],
+        'a page that is not the API': ['<html><body>It works!</body></html>'],
+        'nothing but progress': ['data: {"type":"progress","stage":"load"}'],
+      };
+      return Future.wait([
+        for (final MapEntry(key: what, value: lines) in withoutPicture.entries)
+          run(lines).then((events) {
+            expect(events.whereType<StreamDone>(), isEmpty, reason: what);
+            expect(
+              (events.last as StreamError).message,
+              'The server answered without a picture.',
+              reason: what,
+            );
+          }),
+      ]);
+    });
+
+    test('a progress field of another type does not fail the turn', () async {
+      final events = await run([
+        'data: {"type":"progress","stage":"denoise","step":"3","total":"8"}',
+        'data: {"type":"complete","data":[{"b64_json":"$png"}]}',
+      ]);
+      final p = events.whereType<ProgressDelta>().single.progress;
+      expect((p.stage, p.step, p.total), ('denoise', null, null));
+      expect(events.whereType<ImageDelta>(), hasLength(1));
+      expect(events.last, isA<StreamDone>());
+    });
+
+    test('no text in the last message: an error, nothing sent', () async {
+      final events = await run(const [], history: [user(const [])]);
+      expect(interceptor.bodies, isEmpty);
+      expect(events.single, isA<StreamError>());
+    });
+
+    test('Edit with nothing to edit: an error, nothing sent', () async {
+      final events = await run(
+        const [],
+        profile: const ImageRequestProfile(
+          image: ImageSettings(mode: ImageMode.edit),
+          api: ImageApi.imagesEndpoint,
+        ),
+      );
+      expect(interceptor.bodies, isEmpty);
+      expect(
+        (events.single as StreamError).message,
+        contains('Edit needs an image'),
+      );
+    });
+  });
+
+  group('a picture given as a URL', () {
+    final png = Uint8List.fromList([0x89, 0x50, 0x4E, 0x47]);
+    late List<({Uri uri, Object? authorization})> fetched;
+
+    Future<List<StreamEvent>> run(String url) {
+      fetched = [];
+      final dio = Dio(
+        BaseOptions(
+          baseUrl: 'http://api.local:8080/v1',
+          headers: {'Authorization': 'Bearer secret'},
+        ),
+      );
+      dio.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            if (options.method == 'GET') {
+              fetched.add((
+                uri: options.uri,
+                authorization: options.headers['Authorization'],
+              ));
+              return handler.resolve(
+                Response(
+                  requestOptions: options,
+                  data: png,
+                  statusCode: 200,
+                  headers: Headers.fromMap({
+                    'content-type': ['image/png'],
+                  }),
+                ),
+              );
+            }
+            handler.resolve(
+              Response(
+                requestOptions: options,
+                data: _fakeStreamResponse([
+                  'data: {"type":"complete","data":[{"url":"$url"}]}',
+                ]),
+                statusCode: 200,
+              ),
+            );
+          },
+        ),
+      );
+      return LlmService(
+            dio: dio,
+            apiSettings: const ApiSettings(
+              baseUrl: 'http://api.local:8080/v1',
+              selectedModel: 'm',
+            ),
+          )
+          .streamChatCompletion(
+            history: _history,
+            systemPrompt: '',
+            profile: const ImageRequestProfile(api: ImageApi.imagesEndpoint),
+          )
+          .toList();
+    }
+
+    test('on the API server: fetched with the key', () async {
+      final events = await run('/v1/files/abc.png');
+      expect(
+        fetched.single.uri.toString(),
+        'http://api.local:8080/v1/files/abc.png',
+      );
+      expect(fetched.single.authorization, 'Bearer secret');
+      expect(events.whereType<ImageDelta>().single.bytes, png);
+
+      await run('http://api.local:8080/files/abc.png');
+      expect(fetched.single.authorization, 'Bearer secret');
+    });
+
+    test('on another host: fetched without the key', () async {
+      for (final elsewhere in [
+        'https://cdn.example.com/abc.png',
+        // Same host, another port or scheme: another origin.
+        'http://api.local:9090/abc.png',
+        'https://api.local:8080/abc.png',
+      ]) {
+        final events = await run(elsewhere);
+        expect(fetched.single.uri.toString(), elsewhere);
+        expect(fetched.single.authorization, isNull, reason: elsewhere);
+        expect(events.whereType<ImageDelta>(), hasLength(1));
+      }
+    });
+
+    test('an address that is not http(s) is not fetched', () async {
+      final events = await run('file:///etc/passwd');
+      expect(fetched, isEmpty);
+      expect(events.last, isA<StreamError>());
+    });
+  });
+
+  group('request log', () {
+    Future<String> logged(Future<void> Function() request) async {
+      final records = <LogRecord>[];
+      final previous = Logger.root.level;
+      Logger.root.level = Level.INFO;
+      final sub = Logger.root.onRecord.listen(records.add);
+      addTearDown(() {
+        Logger.root.level = previous;
+        return sub.cancel();
+      });
+      await request();
+      return records
+          .map((r) => r.message)
+          .singleWhere((m) => m.startsWith('POST '));
+    }
+
+    Message user(List<ContentBlock> content) => Message(
+      id: 'm',
+      conversationId: 'c',
+      role: MessageRole.user,
+      content: content,
+      createdAt: DateTime(2024),
+    );
+
+    test('pictures are summarised, bare base64 included', () async {
+      final bytes = Uint8List.fromList(List.filled(600, 0xAB));
+      final log = await logged(
+        () => createService(const ['data: {"type":"complete","data":[]}'])
+            .streamChatCompletion(
+              history: [
+                user(const [
+                  ContentBlock.text(text: 'make it blue'),
+                  ContentBlock.image(
+                    attachmentId: 'a',
+                    mimeType: 'image/png',
+                    byteSize: 600,
+                  ),
+                ]),
+              ],
+              systemPrompt: '',
+              profile: const ImageRequestProfile(api: ImageApi.imagesEndpoint),
+              imageBytes: {'a': (bytes: bytes, mimeType: 'image/png')},
+            )
+            .drain<void>(),
+      );
+      expect(log, contains('"image": "<base64 ~1KB>"'));
+      expect(log, isNot(contains(base64Encode(bytes))));
+    });
+
+    test('long text without a space is logged as written', () async {
+      // Scripts that use no spaces, a long address, compact JSON.
+      final texts = [
+        '漢字' * 150,
+        'https://example.com/${'a/' * 150}',
+        '{"k":"${'v' * 300}"}',
+      ];
+      for (final text in texts) {
+        final log = await logged(
+          () => createService(const ['data: [DONE]'])
+              .streamChatCompletion(
+                history: [
+                  user([ContentBlock.text(text: text)]),
+                ],
+                systemPrompt: '',
+              )
+              .drain<void>(),
+        );
+        expect(log, contains(jsonEncode(text)));
+      }
     });
   });
 

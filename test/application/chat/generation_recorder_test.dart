@@ -5,6 +5,7 @@ import 'package:specterchat/application/chat/generation_recorder.dart';
 import 'package:specterchat/domain/models/app_settings.dart';
 import 'package:specterchat/domain/models/image_settings.dart';
 import 'package:specterchat/domain/models/message_stats.dart';
+import 'package:specterchat/domain/models/model_info.dart';
 import 'package:specterchat/domain/models/request_profile.dart';
 import 'package:specterchat/domain/services/i_llm_service.dart';
 
@@ -83,6 +84,7 @@ void main() {
     r.record(ImageDelta(bytes: Uint8List(1), mimeType: 'image/png'));
     final stats = r.finish(GenerationOutcome.completed);
     expect(stats.image, image);
+    expect(stats.imageApi, ImageApi.chatGeneration);
     expect(stats.generation, isNull);
     expect(stats.firstAnswerMs, 30000);
     expect(stats.reasoningMs, isNull);

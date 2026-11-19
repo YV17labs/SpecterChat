@@ -18,12 +18,15 @@ final llmServiceProvider = Provider<ILlmService>((ref) {
 
 /// What the next send carries besides the messages: the effective
 /// sampling parameters for a text model, the effective image options for
-/// an image model.
+/// an image model (less what it decides alone) — with how it is asked.
 final requestProfileProvider = Provider<RequestProfile>((ref) {
   final imageModel = ref.watch(selectedImageModelProvider);
   if (imageModel != null) {
     final image = ref.watch(effectiveSettingsProvider.select((s) => s.image));
-    return ImageRequestProfile(image: image);
+    return ImageRequestProfile(
+      image: image.sentTo(imageModel),
+      api: imageModel.api,
+    );
   }
   final generation = ref.watch(
     effectiveSettingsProvider.select((s) => s.generation),

@@ -51,17 +51,30 @@ abstract class ImageSettings with _$ImageSettings {
   /// The same settings with every value that merely restates the server's
   /// [defaults] (or the "no option" meaning: `auto`, empty prompt, opaque)
   /// folded back to `null`. Keeps "is anything overridden?" and the request
-  /// payload honest whatever the UI wrote.
+  /// payload honest whatever the UI wrote. A default the server does not
+  /// give folds nothing: any value set against it is sent.
   ImageSettings normalised(ImageDefaults defaults) => ImageSettings(
     mode: mode == ImageMode.auto ? null : mode,
     baseSize: baseSize == defaults.baseSize ? null : baseSize,
     aspectRatio: aspectRatio,
     steps: steps == defaults.steps ? null : steps,
     seed: seed,
-    guidance: guidance != null && (guidance! - defaults.guidance).abs() < 0.01
-        ? null
-        : guidance,
+    guidance: switch ((guidance, defaults.guidance)) {
+      (final g?, final d?) when (g - d).abs() < 0.01 => null,
+      _ => guidance,
+    },
     negativePrompt: negativePrompt?.isEmpty ?? false ? null : negativePrompt,
     transparent: transparent == false ? null : transparent,
+  );
+
+  /// What goes to [model]: these settings less what the model decides
+  /// alone or cannot do. A model with a fixed schedule runs its own
+  /// steps, and one that only draws has no Chat mode (the panel shows it
+  /// as Auto), so neither is sent — the server would ignore them, and the
+  /// turn's stats would record them as asked. The settings themselves
+  /// keep them for the next model.
+  ImageSettings sentTo(ImageModelInfo model) => copyWith(
+    steps: model.capabilities.fixedSteps == null ? steps : null,
+    mode: mode == ImageMode.chat && !model.canChat ? null : mode,
   );
 }

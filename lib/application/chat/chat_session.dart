@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:logging/logging.dart';
@@ -54,16 +55,21 @@ class ChatSession {
     ChatLogic logic = const ChatLogic(),
     ToolExecutor toolExecutor = const ToolExecutor(),
     Duration persistenceThrottle = const Duration(milliseconds: 120),
+    Random? random,
   }) : _resolveDeps = resolveDeps,
        _logic = logic,
        _toolExecutor = toolExecutor,
-       _persistenceInterval = persistenceThrottle;
+       _persistenceInterval = persistenceThrottle,
+       _random = random ?? Random();
 
   final String conversationId;
   final ChatSessionDepsResolver _resolveDeps;
   final ChatLogic _logic;
   final ToolExecutor _toolExecutor;
   final Duration _persistenceInterval;
+
+  /// Draws what a turn has to draw for itself ([RequestProfile.forTurn]).
+  final Random _random;
 
   /// Observable lifecycle state. UI listens but content lives in the DB.
   final ValueNotifier<ChatSessionState> state = ValueNotifier(
@@ -213,7 +219,9 @@ class ChatSession {
     final stored = await deps.messages.getMessages(conversationId);
     final trimmed = trimHistory(stored, deps.budget);
     final history = trimmed.history;
-    final imageIds = _logic.collectImageAttachmentIds(history);
+    // Only what this request sends: a chat carries every image of the
+    // history, an Images API turn the one or two it works from.
+    final imageIds = deps.profile.imageIdsSent(history);
     // Only fetch bytes for ids we don't already hold from an earlier
     // turn — tool-loop recursion revisits the same attachments many
     // times per send, and each image can be several MB.
@@ -238,10 +246,13 @@ class ChatSession {
     _accumulator.reset();
     final messageId = generateId();
     final tools = enabledToolsOf(deps.activeServers);
+    // The profile as this request sends it — one object for the request
+    // and for its stats, so the turn records what it was produced with.
+    final profile = deps.profile.forTurn(() => _random.nextInt(1 << 31));
     final recorder = GenerationRecorder(
       model: deps.llm.model,
       endpoint: deps.llm.endpoint,
-      profile: deps.profile,
+      profile: profile,
       requestContextId: await _storeRequestContext(deps, tools),
       retry: hallucinationRetry,
       droppedRuns: trim.droppedRuns,
@@ -272,7 +283,7 @@ class ChatSession {
     final events = deps.llm.streamChatCompletion(
       history: history,
       systemPrompt: deps.mergedSystemPrompt,
-      profile: deps.profile,
+      profile: profile,
       imageBytes: _imageBytes,
       tools: tools,
       cancellationToken: _cancellation,

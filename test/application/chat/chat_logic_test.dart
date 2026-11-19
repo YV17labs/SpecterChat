@@ -302,36 +302,6 @@ void main() {
     });
   });
 
-  group('ChatLogic.collectImageAttachmentIds', () {
-    test('collects and de-duplicates ids across messages', () {
-      Message msg(String id, List<ContentBlock> content) =>
-          testMessage(MessageRole.tool, content, id: id);
-      const img = ContentBlock.image(
-        attachmentId: 'a',
-        mimeType: 'image/png',
-        byteSize: 1,
-      );
-      final ids = logic.collectImageAttachmentIds([
-        msg('1', [img]),
-        msg('2', [
-          const ContentBlock.toolResult(
-            toolCallId: 't',
-            toolName: 'shot',
-            resultContent: [
-              img,
-              ContentBlock.image(
-                attachmentId: 'b',
-                mimeType: 'image/png',
-                byteSize: 1,
-              ),
-            ],
-          ),
-        ]),
-      ]);
-      expect(ids, {'a', 'b'});
-    });
-  });
-
   group('ChatLogic.generatedImageOrigin', () {
     const photo = PhotoMetadataRef(
       summary: PhotoSummary(camera: CameraInfo(model: 'iPhone 17')),

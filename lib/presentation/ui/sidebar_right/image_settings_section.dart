@@ -11,8 +11,10 @@ import '../widgets/settings_fields.dart';
 /// sections when the selected model is an image generator.
 ///
 /// [value] holds only what the user overrode (`null` = server default);
-/// the controls display the server's defaults from [info] for those. Every
-/// change goes through [onChanged] with the full updated [ImageSettings].
+/// the controls display the server's defaults from [info] for those, and
+/// a number the server gives no default for is a field left empty rather
+/// than a slider set to a guess. Every change goes through [onChanged]
+/// with the full updated [ImageSettings].
 class ImageSettingsSection extends StatefulWidget {
   final ImageModelInfo info;
   final ImageSettings value;
@@ -30,13 +32,11 @@ class ImageSettingsSection extends StatefulWidget {
 }
 
 class _ImageSettingsSectionState extends State<ImageSettingsSection> {
-  late final TextEditingController _seedController;
   late final TextEditingController _negativeController;
 
   @override
   void initState() {
     super.initState();
-    _seedController = TextEditingController(text: _seedText(widget.value));
     _negativeController = TextEditingController(
       text: widget.value.negativePrompt ?? '',
     );
@@ -48,9 +48,6 @@ class _ImageSettingsSectionState extends State<ImageSettingsSection> {
     // Text controllers are not reactive: refill them when the value comes
     // from elsewhere (conversation switch, reset) but never while the
     // text already represents it — that would fight the user's typing.
-    if (int.tryParse(_seedController.text.trim()) != widget.value.seed) {
-      _seedController.text = _seedText(widget.value);
-    }
     final negative = widget.value.negativePrompt ?? '';
     if (_negativeController.text != negative) {
       _negativeController.text = negative;
@@ -59,12 +56,9 @@ class _ImageSettingsSectionState extends State<ImageSettingsSection> {
 
   @override
   void dispose() {
-    _seedController.dispose();
     _negativeController.dispose();
     super.dispose();
   }
-
-  static String _seedText(ImageSettings s) => s.seed?.toString() ?? '';
 
   /// Controls write plain values; a value that merely restates the
   /// server default is folded back to `null` here, in one place.
@@ -77,21 +71,26 @@ class _ImageSettingsSectionState extends State<ImageSettingsSection> {
     final info = widget.info;
     final caps = info.capabilities;
     final defaults = info.defaults;
+    final recommended = info.recommended;
     final v = widget.value;
     final styles = context.specterStyles;
     final canEdit = caps.referenceEdit;
+    final canChat = info.canChat;
+    final mode = switch (v.mode ?? ImageMode.auto) {
+      ImageMode.chat when !canChat => ImageMode.auto,
+      final m => m,
+    };
 
     final sizes = defaults.baseSizes.where((s) => s <= caps.maxSide).toList();
     final baseSize = v.baseSize ?? defaults.baseSize;
     final sizeItems = {
       ...sizes,
-      if (!sizes.contains(baseSize)) baseSize,
+      baseSize,
+      if (recommended.baseSize case final r? when r <= caps.maxSide) r,
     }.toList()..sort();
     final ratios = defaults.aspectRatios;
     final ratio = ratios.contains(v.aspectRatio) ? v.aspectRatio : null;
     final maxSteps = max(defaults.maxSteps, 1);
-    final steps = (v.steps ?? defaults.steps).clamp(1, maxSteps);
-    final guidance = (v.guidance ?? defaults.guidance).clamp(1.0, 10.0);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -124,9 +123,14 @@ class _ImageSettingsSectionState extends State<ImageSettingsSection> {
                   enabled: canEdit,
                   tooltip: canEdit ? null : 'Not available on this backend',
                 ),
-                const ButtonSegment(value: ImageMode.chat, label: Text('Chat')),
+                ButtonSegment(
+                  value: ImageMode.chat,
+                  label: const Text('Chat'),
+                  enabled: canChat,
+                  tooltip: canChat ? null : 'Not available on this backend',
+                ),
               ],
-              selected: {v.mode ?? ImageMode.auto},
+              selected: {mode},
               showSelectedIcon: false,
               style: const ButtonStyle(
                 visualDensity: VisualDensity.compact,
@@ -176,7 +180,11 @@ class _ImageSettingsSectionState extends State<ImageSettingsSection> {
                 DropdownMenuItem<int>(
                   value: size,
                   child: Text(
-                    _sizeLabel(size, isDefault: size == defaults.baseSize),
+                    _sizeLabel(
+                      size,
+                      isDefault: size == defaults.baseSize,
+                      isRecommended: size == recommended.baseSize,
+                    ),
                     style: const TextStyle(fontSize: 13),
                   ),
                 ),
@@ -186,57 +194,77 @@ class _ImageSettingsSectionState extends State<ImageSettingsSection> {
         ),
         const SizedBox(height: 8),
 
-        SliderField(
-          label: 'Steps',
-          value: steps.toDouble(),
-          min: 1,
-          max: maxSteps.toDouble(),
-          divisions: max(maxSteps - 1, 1),
-          fractionDigits: 0,
-          onChanged: (n) => _update((s) => s.copyWith(steps: n.round())),
-        ),
+        if (caps.fixedSteps case final fixed?) ...[
+          LabeledField(
+            label: 'Steps',
+            child: Text('$fixed, fixed by this model', style: styles.small),
+          ),
+          const SizedBox(height: 8),
+        ] else if (defaults.steps case final serverSteps?)
+          SliderField(
+            label: _withRecommended('Steps', recommended.steps),
+            value: (v.steps ?? serverSteps).clamp(1, maxSteps).toDouble(),
+            min: 1,
+            max: maxSteps.toDouble(),
+            divisions: max(maxSteps - 1, 1),
+            fractionDigits: 0,
+            onChanged: (n) => _update((s) => s.copyWith(steps: n.round())),
+          )
+        else ...[
+          _OptionalNumberField<int>(
+            label: _withRecommended('Steps', recommended.steps),
+            hint: 'server default',
+            value: v.steps,
+            parse: _positiveInt,
+            onChanged: (n) => _update((s) => s.copyWith(steps: n)),
+          ),
+          const SizedBox(height: 8),
+        ],
 
-        LabeledField(
+        _OptionalNumberField<int>(
           label: 'Seed',
-          child: TextField(
-            controller: _seedController,
-            keyboardType: TextInputType.number,
-            style: const TextStyle(fontSize: 13),
-            decoration: settingsInputDecoration(context, 'random').copyWith(
-              suffixIcon: IconButton(
-                icon: const Icon(Icons.casino_outlined, size: 18),
-                tooltip: 'Pick a random seed',
-                onPressed: () {
-                  final seed = Random().nextInt(1 << 31);
-                  _seedController.text = seed.toString();
-                  _update((s) => s.copyWith(seed: seed));
-                },
-              ),
-            ),
-            onChanged: (text) {
-              final trimmed = text.trim();
-              if (trimmed.isEmpty) {
-                _update((s) => s.copyWith(seed: null));
-                return;
-              }
-              final parsed = int.tryParse(trimmed);
-              if (parsed != null && parsed >= 0) {
-                _update((s) => s.copyWith(seed: parsed));
-              }
-            },
+          hint: 'random',
+          value: v.seed,
+          parse: (text) => switch (int.tryParse(text)) {
+            final n? when n >= 0 => n,
+            _ => null,
+          },
+          onChanged: (seed) => _update((s) => s.copyWith(seed: seed)),
+          suffixIcon: IconButton(
+            icon: const Icon(Icons.casino_outlined, size: 18),
+            tooltip: 'Pick a random seed',
+            onPressed: () =>
+                _update((s) => s.copyWith(seed: Random().nextInt(1 << 31))),
           ),
         ),
         const SizedBox(height: 8),
 
-        SliderField(
-          label: 'Guidance',
-          value: guidance,
-          min: 1,
-          max: 10,
-          divisions: 18,
-          fractionDigits: 1,
-          onChanged: (g) => _update((s) => s.copyWith(guidance: g)),
-        ),
+        if (defaults.guidance case final serverGuidance?)
+          SliderField(
+            label: _withRecommended(
+              'Guidance',
+              recommended.guidance?.toStringAsFixed(1),
+            ),
+            value: (v.guidance ?? serverGuidance).clamp(1.0, 10.0),
+            min: 1,
+            max: 10,
+            divisions: 18,
+            fractionDigits: 1,
+            onChanged: (g) => _update((s) => s.copyWith(guidance: g)),
+          )
+        else ...[
+          _OptionalNumberField<double>(
+            label: _withRecommended(
+              'Guidance',
+              recommended.guidance?.toStringAsFixed(1),
+            ),
+            hint: 'server default',
+            value: v.guidance,
+            parse: _guidance,
+            onChanged: (g) => _update((s) => s.copyWith(guidance: g)),
+          ),
+          const SizedBox(height: 8),
+        ],
         LabeledField(
           label: 'Negative prompt',
           child: TextField(
@@ -268,9 +296,141 @@ class _ImageSettingsSectionState extends State<ImageSettingsSection> {
     );
   }
 
-  static String _sizeLabel(int size, {required bool isDefault}) {
+  static String _sizeLabel(
+    int size, {
+    required bool isDefault,
+    required bool isRecommended,
+  }) {
     final mp = (size * size) / 1e6;
     final base = '$size px (≈${mp.toStringAsFixed(1)} MP)';
-    return isDefault ? '$base · default' : base;
+    final tags = [if (isDefault) 'default', if (isRecommended) 'recommended'];
+    return tags.isEmpty ? base : '$base · ${tags.join(', ')}';
   }
+
+  /// A control's label with what the model's authors recommend for it.
+  static String _withRecommended(String label, Object? value) =>
+      value == null ? label : '$label · $value recommended';
+
+  // What a model that publishes no range may be asked: anything that is
+  // a step count or a guidance scale at all. Its own limits are the
+  // server's to enforce — it refuses a value by name, and the turn shows
+  // it — rather than this panel's to guess (a distilled model wants a
+  // guidance of 0, which a "1 to 10" check would silently never send).
+
+  static int? _positiveInt(String text) => switch (int.tryParse(text)) {
+    final n? when n >= 1 => n,
+    _ => null,
+  };
+
+  /// A decimal point or a decimal comma: the numeric keypad of half the
+  /// world's keyboards types the latter.
+  static double? _guidance(String text) =>
+      switch (double.tryParse(text.replaceAll(',', '.'))) {
+        final g? when g >= 0 && g.isFinite => g,
+        _ => null,
+      };
+}
+
+/// A number that may be left unset: empty, nothing is sent and [hint]
+/// says what happens then ("server default", "random").
+///
+/// Text that does not [parse] sets nothing, and says so: the field turns
+/// to its error state while it holds such text, and goes back to the
+/// value actually set when it is left — so what it shows at rest is
+/// always what is sent. Owns its controller, refilled when the value
+/// comes from elsewhere (a conversation switch, Reset, a button in
+/// [suffixIcon]) and never while the text already says it.
+class _OptionalNumberField<T extends num> extends StatefulWidget {
+  final String label;
+  final String hint;
+  final T? value;
+
+  /// The number [text] (trimmed, not empty) stands for, `null` when it
+  /// is not one this field takes.
+  final T? Function(String text) parse;
+  final ValueChanged<T?> onChanged;
+  final Widget? suffixIcon;
+
+  const _OptionalNumberField({
+    required this.label,
+    required this.hint,
+    required this.value,
+    required this.parse,
+    required this.onChanged,
+    this.suffixIcon,
+    super.key,
+  });
+
+  @override
+  State<_OptionalNumberField<T>> createState() =>
+      _OptionalNumberFieldState<T>();
+}
+
+class _OptionalNumberFieldState<T extends num>
+    extends State<_OptionalNumberField<T>> {
+  late final TextEditingController _controller = TextEditingController(
+    text: _valueText,
+  );
+  late final FocusNode _focus = FocusNode()..addListener(_onFocusChange);
+
+  String get _valueText => widget.value?.toString() ?? '';
+
+  /// What the text stands for: unset when empty, else what it parses to.
+  ({bool valid, T? value}) get _typed {
+    final text = _controller.text.trim();
+    if (text.isEmpty) return (valid: true, value: null);
+    final value = widget.parse(text);
+    return (valid: value != null, value: value);
+  }
+
+  /// Whether the text says the value — text that does not parse says
+  /// nothing, whatever the value is.
+  bool get _inStep {
+    final typed = _typed;
+    return typed.valid && typed.value == widget.value;
+  }
+
+  void _showValue() {
+    if (!_inStep) _controller.text = _valueText;
+  }
+
+  void _onFocusChange() {
+    if (mounted && !_focus.hasFocus) setState(_showValue);
+  }
+
+  @override
+  void didUpdateWidget(covariant _OptionalNumberField<T> old) {
+    super.didUpdateWidget(old);
+    // While the user types, the text leads: only a value that changed
+    // under it replaces it.
+    if (!_focus.hasFocus || widget.value != old.value) _showValue();
+  }
+
+  @override
+  void dispose() {
+    _focus.dispose();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => LabeledField(
+    label: widget.label,
+    child: TextField(
+      controller: _controller,
+      focusNode: _focus,
+      keyboardType: TextInputType.numberWithOptions(decimal: T == double),
+      style: const TextStyle(fontSize: 13),
+      decoration: settingsInputDecoration(context, widget.hint).copyWith(
+        suffixIcon: widget.suffixIcon,
+        errorText: _typed.valid ? null : 'Not a value this takes: not sent',
+      ),
+      onChanged: (_) {
+        final typed = _typed;
+        if (typed.valid) widget.onChanged(typed.value);
+        // The error state follows the text, valid or not.
+        setState(() {});
+      },
+    ),
+  );
 }

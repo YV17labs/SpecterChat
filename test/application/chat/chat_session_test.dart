@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:specterchat/application/chat/chat_session.dart';
@@ -11,6 +13,7 @@ import 'package:specterchat/domain/models/conversation.dart';
 import 'package:specterchat/domain/models/image_settings.dart';
 import 'package:specterchat/domain/models/message.dart';
 import 'package:specterchat/domain/models/message_stats.dart';
+import 'package:specterchat/domain/models/model_info.dart';
 import 'package:specterchat/domain/models/photo_metadata.dart';
 import 'package:specterchat/domain/models/request_profile.dart';
 import 'package:specterchat/domain/services/i_llm_service.dart';
@@ -52,9 +55,11 @@ void main() {
     RequestProfile profile = const TextRequestProfile(),
     ContextBudget budget = const ContextBudget.unlimited(),
     InMemoryAttachmentRepository? attachments,
+    Random? random,
   }) => ChatSession(
     conversationId: _conv,
     persistenceThrottle: const Duration(milliseconds: 5),
+    random: random,
     resolveDeps: () => depsWith(
       llm: llm,
       messages: messages,
@@ -557,6 +562,115 @@ void main() {
       ).sendMessage('draw');
       expect(statsOf(persisted().last).requestContextId, isNull);
       expect(conversations.requestContexts[_conv], isNull);
+    });
+
+    group('an Images API turn', () {
+      late InMemoryAttachmentRepository attachments;
+      List<StreamEvent> picture() => [
+        ImageDelta(bytes: Uint8List(1), mimeType: 'image/png'),
+        const StreamDone(),
+      ];
+
+      // A picture drawn earlier in the conversation.
+      setUp(() async {
+        attachments = InMemoryAttachmentRepository();
+        await attachments.storeBytes(
+          attachmentId: 'fox',
+          messageId: '001',
+          bytes: Uint8List.fromList([1]),
+          mimeType: 'image/png',
+        );
+        await messages.saveMessage(
+          testMessage(
+            MessageRole.user,
+            const [ContentBlock.text(text: 'a fox')],
+            id: '000',
+            conversationId: _conv,
+          ),
+        );
+        await messages.saveMessage(
+          testMessage(
+            MessageRole.assistant,
+            const [
+              ContentBlock.image(
+                attachmentId: 'fox',
+                mimeType: 'image/png',
+                byteSize: 1,
+              ),
+            ],
+            id: '001',
+            conversationId: _conv,
+          ),
+        );
+      });
+
+      test('draws its own seed, and records the one it sent', () async {
+        final llm = FakeLlmService.events([picture(), picture()]);
+        final s = session(
+          llm,
+          attachments: attachments,
+          profile: const ImageRequestProfile(api: ImageApi.imagesEndpoint),
+          random: Random(7),
+        );
+        await s.sendMessage('a city skyline');
+        await s.sendMessage('another one');
+
+        final expected = Random(7);
+        final seeds = [expected.nextInt(1 << 31), expected.nextInt(1 << 31)];
+        expect(
+          [for (final p in llm.receivedProfiles) p.image!.seed],
+          seeds,
+          reason: 'one seed per turn',
+        );
+        final turns = [
+          for (final m in persisted())
+            if (m.role == MessageRole.assistant && m.stats != null) statsOf(m),
+        ];
+        expect([for (final t in turns) t.image!.seed], seeds);
+        expect(turns.last.imageApi, ImageApi.imagesEndpoint);
+      });
+
+      test('a seed the user set is the one sent', () async {
+        const profile = ImageRequestProfile(
+          image: ImageSettings(seed: 42),
+          api: ImageApi.imagesEndpoint,
+        );
+        final llm = FakeLlmService.events([picture()]);
+        await session(
+          llm,
+          attachments: attachments,
+          profile: profile,
+        ).sendMessage('a city skyline');
+        expect(llm.receivedProfiles.single, same(profile));
+      });
+
+      test('loads the images it works from, not the conversation', () async {
+        Future<Set<String>> loadedFor(ImageMode? mode) async {
+          final llm = FakeLlmService.events([picture()]);
+          await session(
+            llm,
+            attachments: attachments,
+            profile: ImageRequestProfile(
+              image: ImageSettings(mode: mode),
+              api: ImageApi.imagesEndpoint,
+            ),
+          ).sendMessage('make it blue');
+          return llm.receivedImageIds.single;
+        }
+
+        expect(await loadedFor(ImageMode.edit), {'fox'});
+        // Auto with nothing attached is a new picture: nothing is read,
+        // whatever the conversation holds by now.
+        expect(await loadedFor(null), isEmpty);
+      });
+
+      test('a chat model is handed every image of the history', () async {
+        final llm = FakeLlmService.events([
+          [const ContentDelta('a fox'), const StreamDone()],
+        ]);
+        await session(llm, attachments: attachments).sendMessage('describe');
+        expect(llm.receivedImageIds.single, {'fox'});
+      });
     });
 
     test('the placeholder carries the turn so far, unfinished', () async {

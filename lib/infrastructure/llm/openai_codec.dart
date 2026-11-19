@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 
 import '../../domain/models/app_settings.dart';
 import '../../domain/models/image_settings.dart';
@@ -25,6 +26,16 @@ enum AssistantImagePlacement {
   inline,
 }
 
+/// A turn the Images API cannot be asked at all. [message] is for the
+/// user: it is shown as the turn's error, and nothing is sent.
+class UnsendableImageRequest implements Exception {
+  final String message;
+  const UnsendableImageRequest(this.message);
+
+  @override
+  String toString() => message;
+}
+
 /// Translates domain messages and tools into the OpenAI chat/completions
 /// wire format. The only place in the app that knows what an
 /// `image_url` part or a `tool_calls` array looks like.
@@ -40,7 +51,9 @@ class OpenAiCodec {
   /// the request small and unambiguous, and it reads a generated image
   /// back on the assistant turn that made it
   /// ([AssistantImagePlacement.inline]). A new kind of backend is a new
-  /// profile and a new case here, nothing else.
+  /// profile and a new case here — unless it is asked at another endpoint
+  /// altogether, like an [ImageApi.imagesEndpoint] model
+  /// ([imagesRequestBody]), which `LlmService` routes by the profile.
   ///
   /// The text body is written for the local OpenAI-compatible servers this
   /// app targets rather than for api.openai.com: `top_k`, `min_p` and
@@ -184,36 +197,77 @@ class OpenAiCodec {
 
   /// One entry of `GET /models` as a [ModelInfo].
   ///
-  /// An image-generation server (Pictor) tags its models with a
-  /// `generation` object whose `kind` is `"image"` (`specterforge` before
-  /// protocol 0.3.0, still honoured); anything else — a plain OpenAI list,
-  /// another vendor's extension, a malformed block — is a text LLM.
-  /// Missing sub-objects fall back to the model defaults so an older
-  /// server still yields a usable description.
+  /// The OpenAI list says nothing about what a model makes, so every
+  /// server that says it says it its own way. An entry is an image model
+  /// when one of these does, read from the most specific to the most
+  /// general — the first that matches also says how the model is asked
+  /// ([ImageApi]):
+  /// - a `generation` object whose `kind` is `"image"` (Pictor;
+  ///   `specterforge` before protocol 0.3.0, still honoured), which also
+  ///   describes what the model can do. Missing sub-objects fall back to
+  ///   the built-in defaults so an older server still yields a usable
+  ///   description;
+  /// - `"image"` in a `capabilities` list (mlx-serve, where an LLM that
+  ///   reads images says `vision` instead).
+  ///
+  /// Anything else — a plain OpenAI list, a malformed block, a server
+  /// that says nothing — is a text LLM. Nothing is guessed from the name,
+  /// and nothing is asked by request: mlx-serve loads a model before it
+  /// reads the request at all.
+  ///
+  /// `"image"` in `architecture.output_modalities` (OpenRouter) is left
+  /// alone on purpose. Such a model is a chat LLM that can also draw: it
+  /// keeps its system prompt, tools and sampling, and is asked for
+  /// pictures with `modalities: ["image", "text"]`. Until that request is
+  /// written it stays the text LLM it is; calling it an image model
+  /// would take all of that away and send it a Pictor body.
   static ModelInfo parseModelInfo(Map<String, dynamic> entry) {
     final id = entry['id'];
     if (id is! String) throw const FormatException('model entry without id');
     final forge = entry['generation'] ?? entry['specterforge'];
-    if (forge is! Map || forge['kind'] != 'image') return ModelInfo(id: id);
-    final json = Map<String, dynamic>.from(forge);
-    return ModelInfo(
-      id: id,
-      image: ImageModelInfo(
-        backend: json['backend'] is String ? json['backend'] as String : '',
-        device: json['device'] is String ? json['device'] as String : '',
-        capabilities: _section(
-          json['capabilities'],
-          _capabilitiesFromApi,
-          const ImageCapabilities(),
+    if (forge is Map && forge['kind'] == 'image') {
+      final json = Map<String, dynamic>.from(forge);
+      return ModelInfo(
+        id: id,
+        image: ImageModelInfo(
+          backend: json['backend'] is String ? json['backend'] as String : '',
+          device: json['device'] is String ? json['device'] as String : '',
+          capabilities: _section(
+            json['capabilities'],
+            _capabilitiesFromApi,
+            const ImageCapabilities(),
+          ),
+          defaults: _section(
+            json['defaults'],
+            _defaultsFromApi,
+            const ImageDefaults(),
+          ),
+          recommended: _section(
+            json['recommended'],
+            _recommendationsFromApi,
+            const ImageRecommendations(),
+          ),
         ),
-        defaults: _section(
-          json['defaults'],
-          _defaultsFromApi,
-          const ImageDefaults(),
-        ),
-      ),
-    );
+      );
+    }
+    if (_holds(entry['capabilities'], 'image')) {
+      return ModelInfo(id: id, image: _imagesEndpointModel);
+    }
+    return ModelInfo(id: id);
   }
+
+  static bool _holds(Object? list, String value) =>
+      list is List && list.contains(value);
+
+  /// An Images API model as mlx-serve documents the API: nothing is said
+  /// per model, so everything the API takes is offered — instruction
+  /// edits and a transparent background included — and a model that
+  /// cannot honour a field refuses it by name (a 400 the turn shows).
+  /// No default is known beyond the API's own size.
+  static const _imagesEndpointModel = ImageModelInfo(
+    api: ImageApi.imagesEndpoint,
+    capabilities: ImageCapabilities(referenceEdit: true, rgba: true),
+  );
 
   static T _section<T>(
     Object? raw,
@@ -237,8 +291,19 @@ class OpenAiCodec {
           (c['max_reference_images'] as num?)?.toInt() ?? d.maxReferenceImages,
       rgba: c['rgba'] as bool? ?? d.rgba,
       maxSide: (c['max_side'] as num?)?.toInt() ?? d.maxSide,
+      fixedSteps: (c['fixed_steps'] as num?)?.toInt(),
     );
   }
+
+  /// `recommended`: the model authors' settings. Its native `sizes` per
+  /// ratio are left to the server, which applies them to the `base_size`
+  /// and `aspect_ratio` it is sent.
+  static ImageRecommendations _recommendationsFromApi(Map<String, dynamic> r) =>
+      ImageRecommendations(
+        steps: (r['steps'] as num?)?.toInt(),
+        guidance: (r['guidance'] as num?)?.toDouble(),
+        baseSize: (r['base_size'] as num?)?.toInt(),
+      );
 
   static ImageDefaults _defaultsFromApi(Map<String, dynamic> j) {
     const d = ImageDefaults();
@@ -272,6 +337,129 @@ class OpenAiCodec {
       'negative_prompt': s.negativePrompt,
     if (s.transparent != null) 'transparent': s.transparent,
   };
+
+  /// The `images/generations` body for one turn of an
+  /// [ImageApi.imagesEndpoint] model: the OpenAI Images API, with the
+  /// fields mlx-serve adds to it. The API reads no conversation and keeps
+  /// nothing between requests, so a turn comes down to what it takes: the
+  /// last user turn's text as `prompt`, and the images [profile] says it
+  /// works from ([ImageRequestProfile.sourceImagesOf]) — the first as
+  /// `image`, edited from the prompt (`mode: "edit"`), the others as
+  /// `ref_images`.
+  ///
+  /// Throws [UnsendableImageRequest] for a turn the API cannot be asked:
+  /// one without text (it takes no request without a prompt), or Edit
+  /// with nothing to edit — sent anyway, it would come back as a new
+  /// picture drawn from an edit instruction.
+  ///
+  /// Only what the profile holds is sent, the rest is the model's own
+  /// default. That includes the seed: the session draws one per turn
+  /// ([RequestProfile.forTurn]), since the API's default is a fixed one.
+  /// `size` is `"WxH"` from the base size and the ratio; an edit that
+  /// sets no ratio sends none, so the result keeps its reference's shape.
+  Map<String, dynamic> imagesRequestBody({
+    required String model,
+    required ImageRequestProfile profile,
+    required List<Message> history,
+    ImageBytesMap imageBytes = const {},
+  }) {
+    final options = profile.image;
+    final prompt =
+        history
+            .where((m) => m.role == MessageRole.user)
+            .lastOrNull
+            ?.plainText
+            .trim() ??
+        '';
+    if (prompt.isEmpty) {
+      throw const UnsendableImageRequest(
+        'An image model needs a prompt: the last message has no text.',
+      );
+    }
+    final sources = [
+      for (final block in profile.sourceImagesOf(history))
+        if (imageBytes[block.attachmentId] case final image?)
+          base64Encode(image.bytes),
+    ];
+    if (sources.isEmpty && options.mode == ImageMode.edit) {
+      throw const UnsendableImageRequest(
+        'Edit needs an image: attach one, or generate one first.',
+      );
+    }
+    final size = _imagesSize(options, editing: sources.isNotEmpty);
+    return {
+      'model': model,
+      'prompt': prompt,
+      if (sources.isNotEmpty) ...{
+        'image': sources.first,
+        'mode': 'edit',
+        if (sources.length > 1) 'ref_images': sources.sublist(1),
+      },
+      'size': ?size,
+      'steps': ?options.steps,
+      'seed': ?options.seed,
+      'guidance_scale': ?options.guidance,
+      if (options.negativePrompt case final negative? when negative.isNotEmpty)
+        'negative_prompt': negative,
+      if (options.transparent ?? false) 'transparent': true,
+      'stream': true,
+    };
+  }
+
+  /// The Images API's own default size is `1024x1024`: the side a ratio
+  /// applies to when no base size is set.
+  static const _imagesDefaultSide = 1024;
+
+  /// `"WxH"` covering about a base size squared in the chosen ratio, each
+  /// side a multiple of 16 (the server snaps it to what the model takes),
+  /// or `null` to leave the size to the server.
+  static String? _imagesSize(ImageSettings s, {required bool editing}) {
+    final ratio = _ratioOf(s.aspectRatio);
+    if (ratio == null && (editing || s.baseSize == null)) return null;
+    final side = s.baseSize ?? _imagesDefaultSide;
+    final r = sqrt(ratio ?? 1.0);
+    int snap(double v) => max(16, (v / 16).round() * 16);
+    return '${snap(side * r)}x${snap(side / r)}';
+  }
+
+  /// `16:9` → 16/9; `null` for anything else.
+  static double? _ratioOf(String? ratio) {
+    final parts = ratio?.split(':');
+    if (parts == null || parts.length != 2) return null;
+    final w = double.tryParse(parts[0]);
+    final h = double.tryParse(parts[1]);
+    if (w == null || h == null || w <= 0 || h <= 0) return null;
+    return w / h;
+  }
+
+  /// The keys of an Images API answer that hold pictures rather than say
+  /// something about the turn: megabytes of base64 that must not end up
+  /// in what is recorded of it.
+  static const imagesPictureKeys = {'data', 'b64_json', 'url'};
+
+  /// The pictures of an Images API answer, as they come: base64
+  /// (`b64_json`) or an address to fetch (`url`). [answer] is the whole
+  /// body, or the event closing a stream — its `data` array (the
+  /// non-streamed shape, which mlx-serve's `complete` event carries too)
+  /// or the picture on the event itself (OpenAI's
+  /// `image_generation.completed`). A `…partial_image` event is a
+  /// preview of a picture still to come, not one of the answer's.
+  /// Entries holding neither form are skipped.
+  static List<({String? base64, String? url})> imagesResponseData(
+    Map<String, dynamic> answer,
+  ) {
+    final type = answer['type'];
+    if (type is String && type.endsWith('partial_image')) return const [];
+    final data = answer['data'];
+    return [
+      for (final entry in [answer, if (data is List) ...data])
+        if (entry is Map)
+          if (entry['b64_json'] case final String b64 when b64.isNotEmpty)
+            (base64: b64, url: null)
+          else if (entry['url'] case final String url when url.isNotEmpty)
+            (base64: null, url: url),
+    ];
+  }
 
   /// Tools in function-calling format — which tools the model may see is
   /// decided upstream (`enabledToolsOf`); the schema's local `$ref`s are

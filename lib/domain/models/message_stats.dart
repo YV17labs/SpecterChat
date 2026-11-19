@@ -2,6 +2,7 @@ import 'package:freezed_annotation/freezed_annotation.dart';
 
 import 'app_settings.dart';
 import 'image_settings.dart';
+import 'model_info.dart';
 
 part 'message_stats.freezed.dart';
 part 'message_stats.g.dart';
@@ -47,6 +48,13 @@ sealed class MessageStats with _$MessageStats {
 
     /// Image options sent (image model), `null` for a text model.
     ImageSettings? image,
+
+    /// How the image model was asked — which decides what its request
+    /// carried: the conversation (Pictor) or one prompt and the images it
+    /// works from (Images API). `null` for a text model, and for an image
+    /// turn recorded before this existed, which was a Pictor request.
+    @JsonKey(unknownEnumValue: JsonKey.nullForUndefinedEnumValue)
+    ImageApi? imageApi,
 
     /// What the request carried besides its messages — the system prompt
     /// as sent and the tool definitions — stored once per change in the

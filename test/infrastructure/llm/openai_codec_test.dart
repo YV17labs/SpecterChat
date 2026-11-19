@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -5,6 +6,7 @@ import 'package:specterchat/domain/models/app_settings.dart';
 import 'package:specterchat/domain/models/image_settings.dart';
 import 'package:specterchat/domain/models/message.dart';
 import 'package:specterchat/domain/models/model_info.dart';
+import 'package:specterchat/domain/models/request_profile.dart';
 import 'package:specterchat/infrastructure/llm/openai_codec.dart';
 
 import '../../support/fakes.dart';
@@ -524,6 +526,7 @@ void _imageModelTests() {
         },
       });
       final image = m.image!;
+      expect(image.api, ImageApi.chatGeneration);
       expect(image.backend, 'torch');
       expect(image.device, 'mps');
       expect(image.capabilities.referenceEdit, isTrue);
@@ -534,6 +537,43 @@ void _imageModelTests() {
       expect(image.defaults.aspectRatios, ['1:1', '16:9']);
     });
 
+    test("a fixed schedule and the authors' recommendations are read", () {
+      // Pictor 0.3 serving Qwen-Image-2.1-Turbo.
+      final turbo = OpenAiCodec.parseModelInfo(const {
+        'id': 'qwen-image-2.1-turbo',
+        'generation': {
+          'kind': 'image',
+          'capabilities': {'fixed_steps': 8, 'max_side': 2752},
+          'defaults': {'steps': 8, 'guidance': 1.0, 'base_size': 2048},
+          'recommended': {
+            'steps': 8,
+            'guidance': 1.0,
+            'base_size': 2048,
+            'sizes': {
+              '16:9': [2752, 1536],
+            },
+          },
+        },
+      }).image!;
+      expect(turbo.capabilities.fixedSteps, 8);
+      expect(
+        turbo.recommended,
+        const ImageRecommendations(steps: 8, guidance: 1.0, baseSize: 2048),
+      );
+
+      // The base model: no fixed schedule; nothing recommended may be null.
+      final base = OpenAiCodec.parseModelInfo(const {
+        'id': 'qwen-image-2.1',
+        'generation': {
+          'kind': 'image',
+          'capabilities': {'fixed_steps': null},
+          'recommended': {'steps': 40, 'guidance': null, 'base_size': null},
+        },
+      }).image!;
+      expect(base.capabilities.fixedSteps, isNull);
+      expect(base.recommended, const ImageRecommendations(steps: 40));
+    });
+
     test('image model without defaults/capabilities gets built-in ones', () {
       final m = OpenAiCodec.parseModelInfo(const {
         'id': 'img',
@@ -541,6 +581,7 @@ void _imageModelTests() {
       });
       expect(m.image!.defaults, const ImageDefaults());
       expect(m.image!.capabilities, const ImageCapabilities());
+      expect(m.image!.recommended, const ImageRecommendations());
     });
 
     test('pre-0.3 servers tagging with `specterforge` are still image', () {
@@ -578,10 +619,324 @@ void _imageModelTests() {
       );
     });
 
+    // As mlx-serve 26.10.1 lists Qwen-Image-2.1.
+    test('`image` capability is an Images API model', () {
+      final m = OpenAiCodec.parseModelInfo(const {
+        'id': 'ddalcu/Qwen-Image-2.1-Turbo-MLX-Serve-4bit',
+        'object': 'model',
+        'owned_by': 'mlx-serve',
+        'context_length': 0,
+        'capabilities': ['image'],
+        'meta': {'architecture': 'qwen_image21', 'engine': 'mlx'},
+      });
+      // Nothing said per model: everything the API takes is offered, no
+      // default is invented.
+      expect(
+        m.image,
+        const ImageModelInfo(
+          api: ImageApi.imagesEndpoint,
+          capabilities: ImageCapabilities(referenceEdit: true, rgba: true),
+        ),
+      );
+      expect(m.image!.defaults.steps, isNull);
+      expect(m.image!.defaults.guidance, isNull);
+      expect(m.image!.canChat, isFalse);
+    });
+
+    test('`vision` capability reads images, it does not make them', () {
+      final m = OpenAiCodec.parseModelInfo(const {
+        'id': 'qwen3-vl',
+        'capabilities': ['chat', 'tool_use', 'streaming', 'vision'],
+      });
+      expect(m.isImage, isFalse);
+    });
+
+    // OpenRouter's convention. A chat LLM that can also draw keeps its
+    // system prompt, tools and sampling: it is not an image server.
+    test('an image output modality leaves a chat model a chat model', () {
+      final m = OpenAiCodec.parseModelInfo(const {
+        'id': 'google/gemini-2.5-flash-image',
+        'architecture': {
+          'input_modalities': ['image', 'text'],
+          'output_modalities': ['image', 'text'],
+        },
+      });
+      expect(m.isImage, isFalse);
+    });
+
+    test('the most specific signal decides how the model is asked', () {
+      expect(
+        OpenAiCodec.parseModelInfo(const {
+          'id': 'pictor',
+          'generation': {'kind': 'image', 'backend': 'torch'},
+          'capabilities': ['image'],
+        }).image!.api,
+        ImageApi.chatGeneration,
+      );
+      expect(
+        OpenAiCodec.parseModelInfo(const {
+          'id': 'mlx-serve',
+          'capabilities': ['image'],
+        }).image!.api,
+        ImageApi.imagesEndpoint,
+      );
+    });
+
+    test('capabilities of another shape are ignored', () {
+      expect(
+        OpenAiCodec.parseModelInfo(const {
+          'id': 'a',
+          'capabilities': {'vision': true, 'image': true},
+        }).isImage,
+        isFalse,
+      );
+      expect(
+        OpenAiCodec.parseModelInfo(const {
+          'id': 'b',
+          'capabilities': 'image',
+        }).isImage,
+        isFalse,
+      );
+    });
+
     test('entry without id is rejected', () {
       expect(
         () => OpenAiCodec.parseModelInfo(const {'object': 'model'}),
         throwsFormatException,
+      );
+    });
+  });
+
+  group('imagesRequestBody', () {
+    ContentBlock text(String t) => ContentBlock.text(text: t);
+    ContentBlock image(String id) => ContentBlock.image(
+      attachmentId: id,
+      mimeType: 'image/png',
+      byteSize: 1,
+    );
+    // Each id's bytes are its index + 1, so a base64 says which image it is.
+    ImageBytesMap bytesOf(List<String> ids) => {
+      for (final (i, id) in ids.indexed)
+        id: (bytes: Uint8List.fromList([i + 1]), mimeType: 'image/png'),
+    };
+    String b64(int index) => base64Encode([index + 1]);
+    Message user(List<ContentBlock> content) =>
+        testMessage(MessageRole.user, content);
+    Message assistant(List<ContentBlock> content) =>
+        testMessage(MessageRole.assistant, content);
+    Map<String, dynamic> body(
+      List<Message> history, {
+      ImageSettings options = const ImageSettings(),
+      ImageBytesMap imageBytes = const {},
+    }) => codec.imagesRequestBody(
+      model: 'qwen-mlx',
+      profile: ImageRequestProfile(
+        image: options,
+        api: ImageApi.imagesEndpoint,
+      ),
+      history: history,
+      imageBytes: imageBytes,
+    );
+    Matcher refuses(String because) => throwsA(
+      isA<UnsendableImageRequest>().having(
+        (e) => e.message,
+        'message',
+        contains(because),
+      ),
+    );
+    // A fox, then a cat, were drawn before the last message.
+    List<Message> afterTwoPictures(String prompt) => [
+      user([text('a fox')]),
+      assistant([image('first')]),
+      user([text('a cat')]),
+      assistant([image('second')]),
+      user([text(prompt)]),
+    ];
+
+    test('text to image: the last user text, nothing else', () {
+      expect(
+        body([
+          user([text('a fox')]),
+          assistant([text('here')]),
+          user([text(' a red fox in snow ')]),
+        ]),
+        {'model': 'qwen-mlx', 'prompt': 'a red fox in snow', 'stream': true},
+      );
+    });
+
+    test('what the profile holds goes out under the API names', () {
+      expect(
+        body(
+          [
+            user([text('x')]),
+          ],
+          options: const ImageSettings(
+            mode: ImageMode.auto,
+            aspectRatio: '16:9',
+            steps: 8,
+            seed: 7,
+            guidance: 4.0,
+            negativePrompt: 'blurry',
+            transparent: true,
+          ),
+        ),
+        {
+          'model': 'qwen-mlx',
+          'prompt': 'x',
+          'size': '1360x768',
+          'steps': 8,
+          'seed': 7,
+          'guidance_scale': 4.0,
+          'negative_prompt': 'blurry',
+          'transparent': true,
+          'stream': true,
+        },
+      );
+    });
+
+    test('size: about the base size squared in the ratio, sides of 16', () {
+      String? size(ImageSettings s) =>
+          body([
+                user([text('x')]),
+              ], options: s)['size']
+              as String?;
+      expect(size(const ImageSettings()), isNull);
+      expect(size(const ImageSettings(baseSize: 1536)), '1536x1536');
+      expect(size(const ImageSettings(aspectRatio: '9:16')), '768x1360');
+      expect(
+        size(const ImageSettings(baseSize: 768, aspectRatio: '3:2')),
+        '944x624',
+      );
+      expect(size(const ImageSettings(aspectRatio: 'wide')), isNull);
+    });
+
+    test("the last turn's images are edited: the first, then references", () {
+      final b = body(
+        [
+          user([text('put the hat from 2 on 1'), image('a'), image('b')]),
+        ],
+        imageBytes: bytesOf(['a', 'b']),
+        options: const ImageSettings(baseSize: 1536),
+      );
+      expect(b['image'], b64(0));
+      expect(b['ref_images'], [b64(1)]);
+      expect(b['mode'], 'edit');
+      // An edit that sets no ratio keeps its reference's shape.
+      expect(b.containsKey('size'), isFalse);
+    });
+
+    test('Auto with nothing attached draws a new picture', () {
+      // The conversation holds pictures; the prompt is not about them.
+      final b = body(
+        afterTwoPictures('a city skyline at night'),
+        imageBytes: bytesOf(['first', 'second']),
+      );
+      expect(b, {
+        'model': 'qwen-mlx',
+        'prompt': 'a city skyline at night',
+        'stream': true,
+      });
+    });
+
+    test('Edit: "now make it blue" edits the latest picture', () {
+      final b = body(
+        afterTwoPictures('now make it blue'),
+        imageBytes: bytesOf(['first', 'second']),
+        options: const ImageSettings(mode: ImageMode.edit),
+      );
+      expect(b['prompt'], 'now make it blue');
+      expect(b['image'], b64(1));
+      expect(b['mode'], 'edit');
+      expect(b.containsKey('ref_images'), isFalse);
+    });
+
+    test('Generate sends no image; an image not loaded is left out', () {
+      final history = [
+        user([text('again'), image('a'), image('b')]),
+      ];
+      final generate = body(
+        history,
+        imageBytes: bytesOf(['a', 'b']),
+        options: const ImageSettings(mode: ImageMode.generate),
+      );
+      expect(generate.containsKey('image'), isFalse);
+      expect(generate.containsKey('mode'), isFalse);
+
+      final partial = body(
+        history,
+        imageBytes: {
+          'b': bytesOf(['b'])['b']!,
+        },
+      );
+      expect(partial['image'], b64(0));
+      expect(partial.containsKey('ref_images'), isFalse);
+    });
+
+    test('Edit with nothing to edit is refused, not drawn from scratch', () {
+      const edit = ImageSettings(mode: ImageMode.edit);
+      expect(
+        () => body([
+          user([text('remove the lamp post')]),
+        ], options: edit),
+        refuses('Edit needs an image'),
+      );
+      // An image whose bytes are gone is nothing to edit either.
+      expect(
+        () => body(afterTwoPictures('make it blue'), options: edit),
+        refuses('Edit needs an image'),
+      );
+    });
+
+    test('no text, no request', () {
+      expect(
+        () => body([
+          user([image('a')]),
+        ], imageBytes: bytesOf(['a'])),
+        refuses('needs a prompt'),
+      );
+      expect(() => body(const []), refuses('needs a prompt'));
+    });
+  });
+
+  group('imagesResponseData', () {
+    test('the pictures of a `data` array, base64 or address', () {
+      expect(
+        OpenAiCodec.imagesResponseData(const {
+          'created': 0,
+          'data': [
+            {'b64_json': 'AQID'},
+            {'url': 'https://cdn.example/x.png'},
+            {'revised_prompt': 'neither'},
+            {'b64_json': ''},
+            'not an entry',
+          ],
+        }),
+        [
+          (base64: 'AQID', url: null),
+          (base64: null, url: 'https://cdn.example/x.png'),
+        ],
+      );
+      expect(OpenAiCodec.imagesResponseData(const {'data': 'x'}), isEmpty);
+      expect(OpenAiCodec.imagesResponseData(const {}), isEmpty);
+    });
+
+    // OpenAI's own streaming: the picture is on the closing event.
+    test('the picture of a closing event; a partial one is a preview', () {
+      expect(
+        OpenAiCodec.imagesResponseData(const {
+          'type': 'image_generation.completed',
+          'b64_json': 'AQID',
+          'usage': {'total_tokens': 100},
+        }),
+        [(base64: 'AQID', url: null)],
+      );
+      expect(
+        OpenAiCodec.imagesResponseData(const {
+          'type': 'image_generation.partial_image',
+          'b64_json': 'AQID',
+          'partial_image_index': 0,
+        }),
+        isEmpty,
       );
     });
   });

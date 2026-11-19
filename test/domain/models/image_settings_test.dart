@@ -84,7 +84,7 @@ void main() {
   });
 
   group('ImageSettings.normalised', () {
-    const defaults = ImageDefaults();
+    const defaults = ImageDefaults(steps: 20, guidance: 1.0);
 
     test('folds values equal to the server default back to null', () {
       const s = ImageSettings(
@@ -111,6 +111,30 @@ void main() {
         transparent: true,
       );
       expect(s.normalised(defaults), s);
+    });
+
+    test('a model with a fixed schedule is not sent steps', () {
+      const s = ImageSettings(steps: 20, seed: 7);
+      const turbo = ImageModelInfo(
+        capabilities: ImageCapabilities(fixedSteps: 8),
+      );
+      expect(s.sentTo(turbo), const ImageSettings(seed: 7));
+      expect(s.sentTo(const ImageModelInfo()), s);
+    });
+
+    test('a model that only draws is not sent Chat', () {
+      const s = ImageSettings(mode: ImageMode.chat, seed: 7);
+      const drawsOnly = ImageModelInfo(api: ImageApi.imagesEndpoint);
+      expect(s.sentTo(drawsOnly), const ImageSettings(seed: 7));
+      expect(s.sentTo(const ImageModelInfo()), s);
+      // The modes it has are its own to read.
+      const edit = ImageSettings(mode: ImageMode.edit);
+      expect(edit.sentTo(drawsOnly), edit);
+    });
+
+    test('a default the server does not give folds nothing', () {
+      const s = ImageSettings(steps: 20, guidance: 1.0);
+      expect(s.normalised(const ImageDefaults()), s);
     });
   });
 }

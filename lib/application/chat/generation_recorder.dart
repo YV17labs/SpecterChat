@@ -25,6 +25,7 @@ class GenerationRecorder {
          endpoint: endpoint,
          generation: profile.generation,
          image: profile.image,
+         imageApi: profile.imageApi,
          requestContextId: requestContextId,
          retry: retry,
          droppedRuns: droppedRuns,

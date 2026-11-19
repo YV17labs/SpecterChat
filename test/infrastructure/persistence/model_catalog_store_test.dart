@@ -8,8 +8,13 @@ void main() {
   const info = ImageModelInfo(
     backend: 'torch',
     device: 'mps',
-    capabilities: ImageCapabilities(referenceEdit: true, rgba: true),
+    capabilities: ImageCapabilities(
+      referenceEdit: true,
+      rgba: true,
+      fixedSteps: 8,
+    ),
     defaults: ImageDefaults(steps: 30),
+    recommended: ImageRecommendations(steps: 8, baseSize: 2048),
   );
 
   test('empty when nothing was saved', () async {
@@ -24,6 +29,21 @@ void main() {
     final prefs = await SharedPreferences.getInstance();
     expect(prefs.getKeys(), {'model_catalog.image_models'});
     expect(prefs.containsKey('app_settings'), isFalse);
+  });
+
+  test('keeps how a model is asked; older entries were Pictor', () async {
+    SharedPreferences.setMockInitialValues({});
+    const mlx = ImageModelInfo(api: ImageApi.imagesEndpoint);
+    await store.save(const {'mlx': mlx});
+    expect(await store.load(), {'mlx': mlx});
+
+    SharedPreferences.setMockInitialValues({
+      'model_catalog.image_models':
+          '{"old": {"backend": "torch"}, "next": {"api": "videoEndpoint"}}',
+    });
+    final loaded = await store.load();
+    expect(loaded['old']!.api, ImageApi.chatGeneration);
+    expect(loaded['next']!.api, ImageApi.chatGeneration);
   });
 
   test('corrupted or mis-shaped JSON is ignored', () async {

@@ -22,6 +22,31 @@ changes.
   client. Only web and mail links are followed: a link to a file on this
   computer, or to another application, does nothing, since the model or
   an MCP server wrote it.
+- **Image models served by mlx-serve.** A model the server lists as
+  making images now gets the Image settings, not only Pictor's, and an
+  mlx-serve one (Qwen-Image 2.1 and the like) draws through the OpenAI
+  Images API, with the progress bar while it works. The last message is
+  the prompt. Attach an image and it is edited; attach none and a new
+  picture is drawn, whatever was drawn before. To rework the latest
+  picture without attaching it — "now make it blue" — set the mode to
+  Edit; the result keeps the picture's shape. A setting the server gives
+  no default for (steps, guidance) is an empty field rather than a
+  guessed value, and a setting the model cannot honour is refused by
+  name. The seed of each picture is recorded with it, also when it was
+  drawn at random, and a server that answers without a picture is an
+  error rather than an empty reply.
+- **The model authors' settings, marked.** With Pictor, the panel marks
+  what the model's authors recommend next to Steps, Guidance and the size
+  ("Steps · 40 recommended"). A model that runs a fixed number of steps
+  (Qwen-Image-2.1-Turbo: 8) shows that number instead of a slider it
+  would ignore, and is no longer sent a step count it does not run.
+
+### Security
+
+- **The API key stays with the API server.** A picture the server
+  answers with as an address on another host — a CDN, a storage bucket —
+  is now fetched without the key. It used to go out with every request,
+  whatever host the address named.
 
 ## [0.8.0] - 2026-09-23
 

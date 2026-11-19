@@ -172,38 +172,23 @@ class ChatLogic {
   /// when the server does not say — and is an [AiOrigin.editedPhoto] even
   /// when nothing is known about that reference (a screenshot).
   ///
-  /// The references are the images of the last user turn; when that turn
-  /// has none the server reuses the latest image of the conversation ("now
-  /// make it blue"), which may itself have inherited from an earlier photo
-  /// — so the metadata follows a chain of edits. Among several references
-  /// the first one carrying metadata wins.
+  /// The references are [referenceImagesOf]: the images of the last user
+  /// turn, else the latest image of the conversation ("now make it blue"),
+  /// which may itself have inherited from an earlier photo — so the
+  /// metadata follows a chain of edits. Among several references the first
+  /// one carrying metadata wins.
   ({AiOrigin origin, PhotoMetadataRef? metadata}) generatedImageOrigin(
     List<Message> history, {
     bool? textToImage,
   }) {
     const fromPrompt = (origin: AiOrigin.generated, metadata: null);
     if (textToImage ?? false) return fromPrompt;
-    final references = _referenceImages(history);
+    final references = referenceImagesOf(history);
     if (references.isEmpty && textToImage == null) return fromPrompt;
     return (
       origin: AiOrigin.editedPhoto,
       metadata: references.map((b) => b.photoMetadata).nonNulls.firstOrNull,
     );
-  }
-
-  /// The images an image model works from (see [generatedImageOrigin]).
-  List<ImageContentBlock> _referenceImages(List<Message> history) {
-    final lastUser = history.lastIndexWhere((m) => m.role == MessageRole.user);
-    if (lastUser < 0) return const [];
-    final attached = history[lastUser].content
-        .whereType<ImageContentBlock>()
-        .toList();
-    if (attached.isNotEmpty) return attached;
-    for (final message in history.take(lastUser).toList().reversed) {
-      final images = message.content.whereType<ImageContentBlock>();
-      if (images.isNotEmpty) return [images.last];
-    }
-    return const [];
   }
 
   /// Classify a finished turn from its buffers. [hook] is the model-specific
@@ -234,17 +219,6 @@ class ChatLogic {
       hasValidToolCalls: turn.hasValidToolCalls,
       isSendable: turn.isSendable,
     );
-  }
-
-  /// Every image attachment id referenced by [history], de-duplicated.
-  /// Used by the chat pipeline to batch-load bytes from the attachment
-  /// repository before calling the LLM service.
-  Set<String> collectImageAttachmentIds(List<Message> history) {
-    final ids = <String>{};
-    for (final msg in history) {
-      ids.addAll(msg.imageAttachmentIds());
-    }
-    return ids;
   }
 
   /// Generate an auto-title from the first assistant response.

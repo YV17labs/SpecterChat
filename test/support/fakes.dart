@@ -444,6 +444,9 @@ class FakeLlmService implements ILlmService {
   final List<List<Message>> receivedHistories = [];
   final List<List<McpToolInfo>> receivedTools = [];
   final List<RequestProfile> receivedProfiles = [];
+
+  /// The images each call was handed the bytes of, as they were then.
+  final List<Set<String>> receivedImageIds = [];
   int calls = 0;
 
   @override
@@ -493,6 +496,7 @@ class FakeLlmService implements ILlmService {
     receivedHistories.add(history);
     receivedTools.add(tools);
     receivedProfiles.add(profile);
+    receivedImageIds.add({...imageBytes.keys});
     if (calls >= scripts.length) {
       throw StateError('FakeLlmService: no script for call #$calls');
     }

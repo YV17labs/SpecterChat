@@ -167,6 +167,34 @@ extension MessageContentX on Message {
   int get contentBytes => contentBytesOf(content);
 }
 
+/// The images of the last user turn: what the user hands over with the
+/// prompt. Attaching one is asking for an edit — the Images API takes its
+/// images explicitly, and Pictor reads it the same way
+/// (`../pictor/PROTOCOL.md`: "an attached image means edit; none means
+/// generate").
+List<ImageContentBlock> attachedImagesOf(List<Message> history) {
+  final lastUser = history.lastIndexWhere((m) => m.role == MessageRole.user);
+  if (lastUser < 0) return const [];
+  return history[lastUser].content.whereType<ImageContentBlock>().toList();
+}
+
+/// The images an edit works from: those of the last user turn
+/// ([attachedImagesOf]); when that turn has none, the latest image of the
+/// conversation — what "now make it blue" edits. One rule for what an
+/// edit is sent (`ImageRequestProfile.sourceImagesOf`) and for what its
+/// result inherits (`ChatLogic.generatedImageOrigin`).
+List<ImageContentBlock> referenceImagesOf(List<Message> history) {
+  final attached = attachedImagesOf(history);
+  if (attached.isNotEmpty) return attached;
+  final lastUser = history.lastIndexWhere((m) => m.role == MessageRole.user);
+  if (lastUser < 0) return const [];
+  for (final message in history.take(lastUser).toList().reversed) {
+    final images = message.content.whereType<ImageContentBlock>();
+    if (images.isNotEmpty) return [images.last];
+  }
+  return const [];
+}
+
 /// What [blocks] weigh, the content of a tool result included.
 int contentBytesOf(Iterable<ContentBlock> blocks) {
   var bytes = 0;

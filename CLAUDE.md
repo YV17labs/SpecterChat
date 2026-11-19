@@ -136,7 +136,13 @@ Rules that keep it that way:
   `RequestProfile` in `ChatSessionDeps` (resolved by
   `requestProfileProvider`). Moving a slider must not rebuild the HTTP
   client. A new kind of backend is a new profile case in
-  `OpenAiCodec.requestBody`, nothing else.
+  `OpenAiCodec.requestBody`, nothing else — unless it is asked at
+  another endpoint: an `ImageRequestProfile` carries its `ImageApi`, and
+  `LlmService` routes an `imagesEndpoint` turn to `/images/generations`
+  (`OpenAiCodec.imagesRequestBody`), through the same event reader.
+  The profile is also what answers "what does this request carry":
+  `imageIdsSent(history)` (what the session loads) and `forTurn` (the
+  profile as one turn sends it, which is the one its stats record).
 - **Editor and composer logic is not widget state.** `DrawingSession`
   (application) is the annotation editor; `_AnnotationEditorState` only
   maps pixels to normalised points and calls `setState`. `ComposerNotifier`
@@ -344,7 +350,9 @@ itself (`PROTOCOL.md`), which is how it edits what it made.
   it into `SessionStreaming.progress` (transient, never persisted) and
   `MessageBubble` renders a `GenerationProgressBar` instead of the dots
 - `images[]` (OpenRouter shape, `image_url.url` as data URL or a URL fetched
-  through the same Dio client) → `ImageDelta`; the session stores the bytes
+  through the same Dio client — without the API key when it points at
+  another origin than the base URL: the key is the API server's)
+  → `ImageDelta`; the session stores the bytes
   as an attachment bound to the streaming placeholder row *before* the next
   upsert references them, and `ChatLogic.buildAssistantMessage` appends the
   image blocks after the text block. An image-only turn counts as
@@ -353,7 +361,17 @@ itself (`PROTOCOL.md`), which is how it edits what it made.
 
 The SSE reader decodes through `utf8.decoder` (multi-byte characters may
 straddle packets) and only re-scans the buffer when a newline arrives, so a
-multi-megabyte image line does not get re-split on every packet.
+multi-megabyte image line does not get re-split on every packet. `data:`
+is read with or without the space after it.
+
+**A turn's stream ends on exactly one terminal event and never fails.**
+`LlmService._postEvents` is where that is kept: `_readEvents` does the
+request and the parsing with nothing caught, and `_postEvents` turns a
+transport error or a parser that throws into a `StreamError` — the last
+event, whatever the server sends after it. It re-yields with `await for`,
+never `yield*`: that hands a stream's error straight to the listener, past
+the `catch`, and `ChatSession` would then never finish the turn (its row
+left `is_streaming`).
 
 **Annotations (local editing).** Qwen-Image-2.1 edits a region when the
 reference image carries coloured outlines and the prompt names the colour
@@ -483,8 +501,10 @@ it, and can cut a tool call away from the result answering it.
 
 `ContextBudget` (`application/chat/context_budget.dart`) is what one
 request may carry; `trimHistory` is what the history loses to fit it.
-`ChatSession._runPipeline` trims *before* loading image bytes, so a
-picture the model will not see is not read from disk either.
+`ChatSession._runPipeline` trims *before* loading image bytes, and loads
+only `profile.imageIdsSent(history)`, so a picture the model will not see
+is not read from disk either — every image of the history for a chat,
+the one or two it works from for an Images API turn.
 
 - **The window is `AppSettings.contextLength`**, overridable per
   conversation, and the prompt gets it less the answer
@@ -523,7 +543,9 @@ numbers survive restarts and later settings changes.
 
 - `GenerationStats` (assistant turn): model and endpoint as the
   `ILlmService` sends them (`llm.model` / `llm.endpoint`), the sampling
-  parameters or image options actually sent (from the `RequestProfile`),
+  parameters or image options actually sent (from the `RequestProfile`
+  as `forTurn` resolved it — the seed drawn for an Images API turn
+  included), `imageApi` (how an image model was asked),
   `requestContextId`, retry number, `startedAt` (UTC, ms), `durationMs`,
   `firstTokenMs`, `firstAnswerMs` (first non-reasoning output),
   `fragments`, `promptTokens` / `completionTokens` (`null` without
@@ -636,9 +658,39 @@ and duration.
 ## Image models
 
 The server list (`GET /models`) is parsed into `ModelInfo` by
-`OpenAiCodec.parseModelInfo`: an entry whose `generation.kind == "image"`
-carries an `ImageModelInfo` (backend, device, `capabilities`, `defaults`,
-all with built-in fallbacks); anything else is a text LLM.
+`OpenAiCodec.parseModelInfo`. The OpenAI list says nothing about what a
+model makes (a `capabilities` field is only a proposal,
+openai-openapi#537), so an entry is an image model when its server says
+so in one of the ways servers do, most specific first:
+- `generation.kind == "image"` (Pictor): an `ImageModelInfo` with
+  backend, device, `capabilities` (`fixed_steps` → `fixedSteps`: a
+  distilled model's baked-in schedule), `defaults` (the choices with
+  built-in fallbacks, a default the server does not give `null`) and
+  `recommended` (`ImageRecommendations`: the authors' steps, guidance and
+  base size; its native `sizes` stay the server's business);
+- `"image"` in a `capabilities` list (mlx-serve; its `vision` is an LLM
+  that reads images).
+
+Anything else is a text LLM — also what a server that says nothing gets
+(Ollama, vLLM, api.openai.com). Never guess from the name, never probe:
+mlx-serve loads a model before it validates the request. The signal that
+matched also sets `ImageModelInfo.api` (`ImageApi`): how the model is
+asked — `chatGeneration` (Pictor) or `imagesEndpoint` (OpenAI Images API,
+mlx-serve).
+
+`"image"` in `architecture.output_modalities` (OpenRouter) is left alone
+on purpose. Such a model is a chat LLM that can also draw: it keeps its
+system prompt, tools and sampling, and is asked for pictures with
+`modalities: ["image", "text"]` (the `images[]` it answers with are
+already read). Until that request is written it stays the text LLM it
+is — calling it an image model takes all of that away and sends it a
+Pictor body. When it is written, it is a flag on the text profile, not a
+third `ImageApi`.
+
+An Images API model publishes nothing per
+model, so it is offered everything the API takes (edit, transparency)
+with no default: a field the model cannot honour is a 400 that names it,
+shown as the turn's error.
 `ModelCatalogNotifier.refresh()` runs the fetch (startup, base URL / key
 change debounced behind the typing, refresh button — not on model
 selection) and merges the image entries into `IModelCatalogStore` (`SharedPreferencesModelCatalogStore`,
@@ -651,7 +703,15 @@ Settings: `ImageSettings` (all fields nullable = server default) lives in
 debounced write as `generation`. The panel writes plain values and
 `ImageSettings.normalised(defaults)` folds anything equal to the server
 default back to `null` in one place, so `isDefault` / Reset and the request
-payload stay honest. No schema bump: the conversation column is JSON.
+payload stay honest. A default the server does not give (`ImageDefaults.steps`
+/ `guidance` `null`, an Images API model's) folds nothing, and the panel
+shows an empty "server default" field instead of a slider set to a guess.
+What the model decides alone or cannot do is not sent:
+`ImageSettings.sentTo(model)` (in `requestProfileProvider`) drops the
+steps of a `fixedSteps` model and the Chat mode of a model that only
+draws, so the turn's stats do not record what never applied — the
+setting itself is kept for the next model. No schema bump: the
+conversation column is JSON.
 
 Request: `requestProfileProvider` yields an `ImageRequestProfile` for an
 image model; `OpenAiCodec.requestBody` then emits
@@ -660,13 +720,66 @@ image model; `OpenAiCodec.requestBody` then emits
 `auto` is omitted); sampling parameters, the system message and tools are
 left out. A `TextRequestProfile` is the usual body.
 
+An `imagesEndpoint` model is asked at `/images/generations`
+(`OpenAiCodec.imagesRequestBody`, mlx-serve's fields). The API reads no
+conversation and decides nothing — a request with an image is an edit,
+one without is a new picture — so the client says which, and the mode is
+how (`ImageRequestProfile.sourceImagesOf`, the one rule for what is
+loaded, what is sent and, through `ImageDelta.textToImage`, what the
+result is):
+- **Auto** edits the images attached to the last message
+  (`attachedImagesOf`) and draws a new picture when there are none,
+  whatever the conversation holds. That is how both norms read it: the
+  Images API takes its images explicitly, and Pictor's protocol says "an
+  attached image means edit; none means generate". Falling back on the
+  latest picture here made every later prompt an edit of the first one.
+- **Edit** falls back on the conversation's latest picture
+  (`referenceImagesOf`) — "now make it blue". With nothing to edit it is
+  refused rather than drawn from scratch.
+- **Generate** sends none.
+
+The prompt is the last user turn's text. A turn that cannot be asked — no
+text, Edit with no image — throws `UnsendableImageRequest`, shown as the
+turn's error with nothing sent. The first image goes as `image` with
+`mode: "edit"`, the rest as `ref_images`. The seed is drawn per turn by
+the session when unset (`RequestProfile.forTurn`; mlx-serve's own default
+is a fixed 42), which is why the turn's stats hold the seed that made
+the picture. `size` is `"WxH"` from base size and ratio, and left out of
+an edit without a ratio: the server then matches the reference's shape
+(checked on mlx-serve 26.10.1).
+
+The answer is SSE: `progress` → `ProgressDelta` (`total: 0` =
+indeterminate, a field of another type left out), `error` →
+`StreamError`, and the closing event → `ImageDelta` per picture +
+`ServerReport` of the rest. `OpenAiCodec.imagesResponseData` reads the
+pictures from `data[]` (`b64_json`, type sniffed, or `url`) or from the
+event itself (OpenAI's `image_generation.completed`; a `…partial_image`
+is a preview and skipped); the keys holding them never go into the
+report. A body that is not SSE is read as the whole answer, with a
+30-minute receive timeout instead of the client's five: a server that
+does not stream is silent until the picture is drawn. **An answer
+without a picture is a `StreamError`**, not an empty reply — an empty
+`data`, a format the app does not read, a page that is not the API.
+
 UI: `SettingsPanel` shows `ImageSettingsSection` instead of Generation /
 Context Length / System Prompt / MCP Servers for an image model (the
 server ignores all of those); API Connection and About stay. Controls:
-Mode (Edit greyed when `capabilities.referenceEdit` is false), Aspect
-ratio, Size (filtered by `maxSide`), Steps, Seed, Guidance + Negative
-prompt, Transparent background (greyed without `rgba`), Reset; the caption
-is "backend · device · instruction editing: yes/no · transparency: yes/no".
+Mode (Edit greyed when `capabilities.referenceEdit` is false, Chat when
+the model cannot answer in words — `ImageModelInfo.canChat`), Aspect
+ratio, Size (filtered by `maxSide`), Steps (the fixed count as text
+for a `fixedSteps` model), Seed, Guidance + Negative
+prompt, Transparent background (greyed without `rgba`), Reset. The
+authors' settings are marked: "Steps · 40 recommended", "Guidance · 1.0
+recommended", and "· recommended" on the size (offered even when the
+server's base sizes leave it out).
+
+A number that may be left unset — Seed, and Steps / Guidance when the
+server gives no default — is one widget, `_OptionalNumberField`. Text
+that is no value sets nothing and says so (error state), and the field
+goes back to the value actually set when it is left: what it shows at
+rest is what is sent. For a model that publishes no range the panel
+checks none (any step count ≥ 1, any guidance ≥ 0): the limits are the
+server's to refuse by name, not the panel's to guess.
 
 The server runs a single backend (Qwen's native diffusers pipeline) and
 does not rewrite prompts: there is no img2img strength, edit method,

@@ -52,5 +52,42 @@ void main() {
     final profile = container.read(requestProfileProvider);
     expect(profile, isA<ImageRequestProfile>());
     expect((profile as ImageRequestProfile).image.steps, 4);
+    expect(profile.api, ImageApi.chatGeneration);
+  });
+
+  test('a model with a fixed schedule is not sent steps', () async {
+    catalog.stored = const {
+      'turbo': ImageModelInfo(capabilities: ImageCapabilities(fixedSteps: 8)),
+    };
+    container.read(modelCatalogProvider);
+    await settle();
+    await settle();
+    container
+        .read(settingsProvider.notifier)
+        .updateApi(const ApiSettings(selectedModel: 'turbo'));
+    container
+        .read(settingsProvider.notifier)
+        .updateImage(const ImageSettings(steps: 20, seed: 3));
+    final profile = container.read(requestProfileProvider);
+    expect(
+      (profile as ImageRequestProfile).image,
+      const ImageSettings(seed: 3),
+    );
+    // The setting is kept for the next model.
+    expect(container.read(settingsProvider).image.steps, 20);
+  });
+
+  test('the profile says how the selected image model is asked', () async {
+    catalog.stored = const {
+      'mlx': ImageModelInfo(api: ImageApi.imagesEndpoint),
+    };
+    container.read(modelCatalogProvider);
+    await settle();
+    await settle();
+    container
+        .read(settingsProvider.notifier)
+        .updateApi(const ApiSettings(selectedModel: 'mlx'));
+    final profile = container.read(requestProfileProvider);
+    expect((profile as ImageRequestProfile).api, ImageApi.imagesEndpoint);
   });
 }

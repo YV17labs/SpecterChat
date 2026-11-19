@@ -21,6 +21,7 @@ const _torch = ImageModelInfo(
     maxReferenceImages: 10,
     rgba: true,
   ),
+  defaults: ImageDefaults(steps: 20, guidance: 1.0),
 );
 
 const _imageModel = ModelInfo(id: 'qwen-image-2.1', image: _torch);
@@ -30,10 +31,39 @@ const _textModel = ModelInfo(id: 'llama');
 const _limited = ImageModelInfo(backend: 'other', device: 'cuda');
 const _limitedModel = ModelInfo(id: 'limited', image: _limited);
 
+/// Pictor serving Turbo: a fixed schedule, the authors' settings.
+const _turbo = ImageModelInfo(
+  capabilities: ImageCapabilities(referenceEdit: true, fixedSteps: 8),
+  defaults: ImageDefaults(steps: 8, guidance: 1.0, baseSize: 2048),
+  recommended: ImageRecommendations(steps: 8, guidance: 1.0, baseSize: 2048),
+);
+const _turboModel = ModelInfo(id: 'turbo', image: _turbo);
+
+/// Pictor serving the base model: 40 steps recommended, 20 by default.
+const _base = ImageModelInfo(
+  defaults: ImageDefaults(steps: 20, guidance: 1.0),
+  recommended: ImageRecommendations(steps: 40, guidance: 1.0, baseSize: 2048),
+);
+const _baseModel = ModelInfo(id: 'base', image: _base);
+
+/// An Images API model (mlx-serve): no default given, no chat.
+const _imagesApi = ImageModelInfo(
+  api: ImageApi.imagesEndpoint,
+  capabilities: ImageCapabilities(referenceEdit: true, rgba: true),
+);
+const _imagesApiModel = ModelInfo(id: 'qwen-mlx', image: _imagesApi);
+
 Future<TestHarness> _pump(
   WidgetTester tester, {
   required String selected,
-  List<ModelInfo> models = const [_imageModel, _textModel, _limitedModel],
+  List<ModelInfo> models = const [
+    _imageModel,
+    _textModel,
+    _limitedModel,
+    _imagesApiModel,
+    _turboModel,
+    _baseModel,
+  ],
   Map<String, ImageModelInfo> cachedImageModels = const {},
 }) async {
   final harness = TestHarness();
@@ -114,6 +144,121 @@ void main() {
     final edit = seg.segments.singleWhere((s) => s.value == ImageMode.edit);
     expect(edit.enabled, isFalse);
     expect(_transparentSwitch(tester).onChanged, isNull);
+  });
+
+  testWidgets('Images API model: no Chat, unknown defaults left empty', (
+    tester,
+  ) async {
+    final harness = await _pump(tester, selected: 'qwen-mlx');
+    final seg = tester.widget<SegmentedButton<ImageMode>>(
+      find.byType(SegmentedButton<ImageMode>),
+    );
+    bool enabled(ImageMode m) =>
+        seg.segments.singleWhere((s) => s.value == m).enabled;
+    expect(enabled(ImageMode.chat), isFalse);
+    expect(enabled(ImageMode.edit), isTrue);
+    expect(_transparentSwitch(tester).onChanged, isNotNull);
+
+    // No slider pretends to know the model's default: two empty fields.
+    expect(find.byType(Slider), findsNothing);
+    final defaults = find.widgetWithText(TextField, 'server default');
+    expect(defaults, findsNWidgets(2));
+
+    // A value equal to nothing the server said is a real override;
+    // emptied, it is the server's again.
+    await tester.enterText(defaults.first, '8');
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(harness.settingsStore.stored!.image.steps, 8);
+    await tester.enterText(defaults.first, '');
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(harness.settingsStore.stored!.image.steps, isNull);
+
+    // The range is the server's to enforce, not the panel's to guess: a
+    // distilled model takes a guidance of 0, and 500 steps is refused by
+    // the server, by name. A decimal comma is a decimal point.
+    await tester.enterText(defaults.first, '500');
+    await tester.enterText(defaults.last, '0');
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(harness.settingsStore.stored!.image.steps, 500);
+    expect(harness.settingsStore.stored!.image.guidance, 0);
+    await tester.enterText(defaults.last, '3,5');
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(harness.settingsStore.stored!.image.guidance, 3.5);
+  });
+
+  testWidgets('text that is no value says so, and never stays', (tester) async {
+    const refused = 'Not a value this takes: not sent';
+    final harness = await _pump(tester, selected: 'qwen-mlx');
+    final steps = find.widgetWithText(TextField, 'server default').first;
+    String shown() => tester.widget<TextField>(steps).controller!.text;
+
+    await tester.enterText(steps, '8');
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(find.text(refused), findsNothing);
+
+    // "0" is no step count: the field says so and nothing changes…
+    await tester.enterText(steps, '0');
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(find.text(refused), findsOneWidget);
+    expect(harness.settingsStore.stored!.image.steps, 8);
+
+    // …and once left, the field shows what is actually set.
+    FocusManager.instance.primaryFocus!.unfocus();
+    await tester.pump();
+    expect(find.text(refused), findsNothing);
+    expect(shown(), '8');
+
+    // The same with nothing set: the text goes, it does not pass for a
+    // value that Reset or a conversation switch then fails to clear.
+    await tester.enterText(steps, '');
+    await tester.enterText(steps, 'many');
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(harness.settingsStore.stored!.image.steps, isNull);
+    FocusManager.instance.primaryFocus!.unfocus();
+    await tester.pump();
+    expect(shown(), isEmpty);
+  });
+
+  testWidgets('the dice sets a seed and the field shows it', (tester) async {
+    final harness = await _pump(tester, selected: 'qwen-mlx');
+    final seedField = find.widgetWithText(TextField, 'random');
+    await tester.enterText(seedField, '42');
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(harness.settingsStore.stored!.image.seed, 42);
+
+    // Pressed while the field still holds the focus and another value.
+    await tester.tap(find.byIcon(Icons.casino_outlined));
+    await tester.pump(const Duration(milliseconds: 600));
+    final seed = harness.settingsStore.stored!.image.seed;
+    expect(seed, isNotNull);
+    expect(tester.widget<TextField>(seedField).controller!.text, '$seed');
+  });
+
+  testWidgets('a fixed schedule replaces the Steps control', (tester) async {
+    await _pump(tester, selected: 'turbo');
+    expect(find.text('8, fixed by this model'), findsOneWidget);
+    // Guidance is still a slider; there is no Steps one.
+    expect(find.byType(Slider), findsOneWidget);
+    expect(find.textContaining('Steps ·'), findsNothing);
+  });
+
+  testWidgets("the authors' settings are marked next to the controls", (
+    tester,
+  ) async {
+    await _pump(tester, selected: 'base');
+    expect(find.text('Steps · 40 recommended'), findsOneWidget);
+    expect(find.text('Guidance · 1.0 recommended'), findsOneWidget);
+    // The recommended size is offered even when it is not the default.
+    await tester.tap(find.byType(DropdownButtonFormField<int>));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('2048 px (≈4.2 MP) · recommended').hitTestable(),
+      findsOneWidget,
+    );
+    expect(
+      find.text('1024 px (≈1.0 MP) · default').hitTestable(),
+      findsOneWidget,
+    );
   });
 
   testWidgets("text model: today's panel, no Image section", (tester) async {

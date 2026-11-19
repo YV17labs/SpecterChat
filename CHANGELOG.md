@@ -14,6 +14,13 @@ changes.
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-11-19
+
+Image models served by mlx-serve, and links that open. No database change:
+settings and chat history are read as-is, and going back to 0.8.0 keeps
+them too. Drawing through mlx-serve was checked on mlx-serve 26.10.1;
+Pictor servers and text-LLM servers are unaffected.
+
 ### Added
 
 - **Links in a conversation open in the browser.** Clicking a link in a
